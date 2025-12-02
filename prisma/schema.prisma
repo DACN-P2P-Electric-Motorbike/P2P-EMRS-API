@@ -50,7 +50,38 @@ model User {
   createdAt     DateTime    @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 
+  // Relations
+  otpCodes      OtpCode[]
+
   @@index([email])
   @@index([phone])
   @@map("users")
+}
+
+// ==========================================
+// OTP CODE MODEL
+// ==========================================
+
+enum OtpType {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+}
+
+model OtpCode {
+  id          String    @id @default(uuid())
+  code        String    // 5-digit OTP code
+  type        OtpType
+  expiresAt   DateTime  @map("expires_at")
+  isUsed      Boolean   @default(false) @map("is_used")
+  
+  // Relations
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([code])
+  @@map("otp_codes")
 }

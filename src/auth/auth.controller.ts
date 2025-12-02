@@ -16,6 +16,14 @@ import {
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto } from './dto';
+import {
+  ForgotPasswordDto,
+  VerifyOtpDto,
+  ResetPasswordDto,
+  OtpResponseDto,
+  VerifyOtpResponseDto,
+  ResetPasswordResponseDto,
+} from './dto/forgot-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { JwtAuthGuard } from './guards';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -89,5 +97,72 @@ export class AuthController {
   async getProfile(@CurrentUser() user: UserEntity): Promise<UserEntity> {
     return user;
   }
-}
 
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request password reset',
+    description: 'Send OTP code to user email for password reset',
+  })
+  @ApiBody({ type: ForgotPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP sent successfully',
+    type: OtpResponseDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Not Found - Email not registered',
+  })
+  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<OtpResponseDto> {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify OTP code',
+    description: 'Verify the OTP code sent to user email',
+  })
+  @ApiBody({ type: VerifyOtpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP verified successfully',
+    type: VerifyOtpResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Invalid or expired OTP',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Not Found - Email not registered',
+  })
+  async verifyOtp(@Body() dto: VerifyOtpDto): Promise<VerifyOtpResponseDto> {
+    return this.authService.verifyOtp(dto);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reset password',
+    description: 'Reset user password with valid OTP',
+  })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successfully',
+    type: ResetPasswordResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Invalid or expired OTP',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Not Found - Email not registered',
+  })
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<ResetPasswordResponseDto> {
+    return this.authService.resetPassword(dto);
+  }
+}
