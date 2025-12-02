@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,23 +9,48 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  name         String?
-  password     String
-  role         UserRole  @default(USER)
-  isActive     Boolean   @default(true)
-  refreshToken String?   @db.Text
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+// ==========================================
+// ENUMS
+// ==========================================
 
-  @@index([email])
-  @@map("users")
+enum UserRole {
+  RENTER
+  OWNER
+  ADMIN
 }
 
-  enum UserRole {
-    USER
-    ADMIN
-  }
+enum UserStatus {
+  ACTIVE
+  PENDING   // Waiting for KYC/Verification
+  BLOCKED
+}
+
+// ==========================================
+// USER MODEL
+// ==========================================
+
+model User {
+  id            String      @id @default(uuid())
+  email         String      @unique
+  password      String      // Hashed with bcrypt
+  fullName      String      @map("full_name")
+  phone         String      @unique
+  avatarUrl     String?     @map("avatar_url")
+  
+  // Role & Status
+  role          UserRole    @default(RENTER)
+  status        UserStatus  @default(ACTIVE)
+  
+  // Domain Specific Fields (Based on EERD)
+  trustScore    Float       @default(100.0) @map("trust_score")
+  idCardNum     String?     @unique @map("id_card_num") // KYC info - CCCD/CMND
+  address       String?
+  
+  // Timestamps
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@index([email])
+  @@index([phone])
+  @@map("users")
+}
