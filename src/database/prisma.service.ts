@@ -5,6 +5,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool, PoolConfig } from 'pg';
+
+// Disable TLS verification for self-signed certificates (Aiven)
+// This should only be used in development/staging
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 @Injectable()
 export class PrismaService
@@ -12,15 +18,36 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PrismaService.name);
+  private pool: Pool;
 
   constructor() {
+    const connectionString = process.env.DATABASE_URL;
+    
+    if (!connectionString) {
+      throw new Error('DATABASE_URL environment variable is not set');
+    }
+
+    const poolConfig: PoolConfig = {
+      connectionString,
+      ssl: true,
+    };
+
+    const pool = new Pool(poolConfig);
+
+    const adapter = new PrismaPg(pool, {
+      schema: 'public',
+    });
+
     super({
+      adapter,
       log:
         process.env.NODE_ENV === 'development'
-          ? ['query', 'error', 'warn']
+          ? ['error', 'warn']
           : ['error'],
       errorFormat: 'colorless',
     });
+
+    this.pool = pool;
   }
 
   async onModuleInit() {
@@ -35,6 +62,7 @@ export class PrismaService
 
   async onModuleDestroy() {
     await this.$disconnect();
+    await this.pool.end();
     this.logger.log('🔌 Disconnected from database');
   }
 
