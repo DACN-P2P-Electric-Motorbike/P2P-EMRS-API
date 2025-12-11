@@ -11,7 +11,7 @@ import {
   IsBoolean,
 } from 'class-validator';
 import { VehicleType } from '@prisma/client';
-import { VehicleEntity } from '../entites/vehicles.entity';
+import { VehicleEntity } from '../entities/vehicle.entity';
 
 export class SearchVehiclesDto {
   @ApiProperty({

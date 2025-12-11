@@ -5,7 +5,7 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './database/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
-
+import { VehiclesModule } from './vehicles/vehicles.module';
 @Module({
   imports: [
     // Configuration - Load environment variables
@@ -13,15 +13,18 @@ import { MailModule } from './mail/mail.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    
+
     // Database - Prisma ORM
     DatabaseModule,
-    
+
     // Mail Service
     MailModule,
-    
+
     // Feature Modules
     AuthModule,
+
+    // Vehicle Modules
+    VehiclesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
