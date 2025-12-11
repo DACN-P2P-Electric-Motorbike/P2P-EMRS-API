@@ -1,4 +1,10 @@
 -- CreateEnum
+CREATE TYPE "UserRole" AS ENUM ('RENTER', 'OWNER', 'ADMIN');
+
+-- CreateEnum
+CREATE TYPE "UserStatus" AS ENUM ('ACTIVE', 'PENDING', 'BLOCKED');
+
+-- CreateEnum
 CREATE TYPE "VehicleStatus" AS ENUM ('AVAILABLE', 'RENTED', 'MAINTENANCE', 'UNAVAILABLE');
 
 -- CreateEnum
@@ -17,7 +23,42 @@ CREATE TYPE "PaymentMethod" AS ENUM ('VNPAY', 'MOMO', 'CREDIT_CARD', 'CASH');
 CREATE TYPE "TripStatus" AS ENUM ('NOT_STARTED', 'ONGOING', 'COMPLETED', 'CANCELLED');
 
 -- CreateEnum
+CREATE TYPE "OtpType" AS ENUM ('PASSWORD_RESET', 'EMAIL_VERIFICATION');
+
+-- CreateEnum
 CREATE TYPE "NotificationType" AS ENUM ('BOOKING_REQUEST', 'BOOKING_CONFIRMED', 'BOOKING_REJECTED', 'BOOKING_CANCELLED', 'TRIP_STARTED', 'TRIP_COMPLETED', 'PAYMENT_SUCCESS', 'PAYMENT_FAILED', 'SYSTEM_ALERT');
+
+-- CreateTable
+CREATE TABLE "users" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "password" TEXT NOT NULL,
+    "full_name" TEXT NOT NULL,
+    "phone" TEXT NOT NULL,
+    "avatar_url" TEXT,
+    "role" "UserRole" NOT NULL DEFAULT 'RENTER',
+    "status" "UserStatus" NOT NULL DEFAULT 'ACTIVE',
+    "trust_score" DOUBLE PRECISION NOT NULL DEFAULT 100.0,
+    "id_card_num" TEXT,
+    "address" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "otp_codes" (
+    "id" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
+    "type" "OtpType" NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "is_used" BOOLEAN NOT NULL DEFAULT false,
+    "user_id" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "otp_codes_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "vehicles" (
@@ -149,6 +190,33 @@ CREATE TABLE "notifications" (
 );
 
 -- CreateIndex
+CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_phone_key" ON "users"("phone");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_id_card_num_key" ON "users"("id_card_num");
+
+-- CreateIndex
+CREATE INDEX "users_email_idx" ON "users"("email");
+
+-- CreateIndex
+CREATE INDEX "users_phone_idx" ON "users"("phone");
+
+-- CreateIndex
+CREATE INDEX "users_role_idx" ON "users"("role");
+
+-- CreateIndex
+CREATE INDEX "users_status_idx" ON "users"("status");
+
+-- CreateIndex
+CREATE INDEX "otp_codes_user_id_idx" ON "otp_codes"("user_id");
+
+-- CreateIndex
+CREATE INDEX "otp_codes_code_idx" ON "otp_codes"("code");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "vehicles_license_plate_key" ON "vehicles"("license_plate");
 
 -- CreateIndex
@@ -214,11 +282,8 @@ CREATE INDEX "notifications_receiver_id_idx" ON "notifications"("receiver_id");
 -- CreateIndex
 CREATE INDEX "notifications_is_read_idx" ON "notifications"("is_read");
 
--- CreateIndex
-CREATE INDEX "users_role_idx" ON "users"("role");
-
--- CreateIndex
-CREATE INDEX "users_status_idx" ON "users"("status");
+-- AddForeignKey
+ALTER TABLE "otp_codes" ADD CONSTRAINT "otp_codes_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "vehicles" ADD CONSTRAINT "vehicles_owner_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
