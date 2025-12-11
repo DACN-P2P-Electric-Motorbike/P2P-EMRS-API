@@ -1,108 +1,130 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Vehicle, VehicleStatus, VehicleType } from '@prisma/client';
+import { Vehicle, VehicleStatus, VehicleType, VehicleBrand, VehicleFeature } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Expose } from 'class-transformer';
+
 export class VehicleEntity implements Vehicle {
-  @ApiProperty()
+  @ApiProperty({ description: 'Vehicle unique identifier' })
   @Expose()
   id: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Vehicle name' })
   @Expose()
-  name: string;
+  name: string | null;
 
-  @ApiProperty({ enum: VehicleType })
-  @Expose()
-  type: VehicleType;
-
-  @ApiProperty()
-  @Expose()
-  brand: string;
-
-  @ApiProperty()
-  @Expose()
-  model: string;
-
-  @ApiProperty()
-  @Expose()
-  year: number;
-
-  @ApiProperty()
+  @ApiProperty({ description: 'License plate number' })
   @Expose()
   licensePlate: string;
 
-  @ApiPropertyOptional()
+  @ApiProperty({ description: 'Vehicle model name' })
   @Expose()
-  description: string | null;
+  model: string;
 
-  @ApiProperty({ type: [String] })
+  @ApiProperty({ description: 'Vehicle brand', enum: VehicleBrand })
   @Expose()
-  imageUrls: string[];
+  brand: VehicleBrand;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Vehicle type', enum: VehicleType })
   @Expose()
-  batteryCapacity: number;
+  type: VehicleType;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Vehicle year' })
   @Expose()
-  maxSpeed: number;
+  year: number | null;
 
-  @ApiProperty()
-  @Expose()
-  range: number;
-
-  @ApiProperty()
-  @Expose()
-  pricePerHour: number;
-
-  @ApiProperty()
-  @Expose()
-  pricePerDay: number;
-
-  @ApiProperty()
-  @Expose()
-  deposit: number;
-
-  @ApiProperty({ enum: VehicleStatus })
+  @ApiProperty({ description: 'Vehicle status', enum: VehicleStatus })
   @Expose()
   status: VehicleStatus;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Vehicle features', enum: VehicleFeature, isArray: true })
+  @Expose()
+  features: VehicleFeature[];
+
+  @ApiPropertyOptional({ description: 'Battery capacity in kWh' })
+  @Expose()
+  batteryCapacity: number | null;
+
+  @ApiProperty({ description: 'Battery level (0-100)' })
+  @Expose()
+  batteryLevel: number;
+
+  @ApiPropertyOptional({ description: 'Maximum speed in km/h' })
+  @Expose()
+  maxSpeed: number | null;
+
+  @ApiPropertyOptional({ description: 'Range per charge in km' })
+  @Expose()
+  range: number | null;
+
+  @ApiProperty({ description: 'Price per hour in VND' })
+  @Expose()
+  pricePerHour: Prisma.Decimal;
+
+  @ApiPropertyOptional({ description: 'Price per day in VND' })
+  @Expose()
+  pricePerDay: Prisma.Decimal | null;
+
+  @ApiPropertyOptional({ description: 'Deposit amount in VND' })
+  @Expose()
+  deposit: number | null;
+
+  @ApiProperty({ description: 'Is vehicle available for rent' })
   @Expose()
   isAvailable: boolean;
 
-  @ApiProperty()
-  @Expose()
-  latitude: number;
-
-  @ApiProperty()
-  @Expose()
-  longitude: number;
-
-  @ApiProperty()
+  @ApiProperty({ description: 'Location address' })
   @Expose()
   address: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Latitude coordinate' })
   @Expose()
-  ownerId: string;
+  latitude: number | null;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Longitude coordinate' })
+  @Expose()
+  longitude: number | null;
+
+  @ApiPropertyOptional({ description: 'Vehicle description' })
+  @Expose()
+  description: string | null;
+
+  @ApiProperty({ description: 'Array of image URLs', type: [String] })
+  @Expose()
+  images: string[];
+
+  @ApiPropertyOptional({ description: 'Vehicle registration license number' })
+  @Expose()
+  licenseNumber: string | null;
+
+  @ApiPropertyOptional({ description: 'License photo front URL' })
+  @Expose()
+  licenseFront: string | null;
+
+  @ApiPropertyOptional({ description: 'License photo back URL' })
+  @Expose()
+  licenseBack: string | null;
+
+  @ApiProperty({ description: 'Total completed trips' })
   @Expose()
   totalTrips: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Average rating' })
   @Expose()
-  rating: number;
+  totalRating: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Number of reviews' })
   @Expose()
   reviewCount: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Owner user ID' })
+  @Expose()
+  ownerId: string;
+
+  @ApiProperty({ description: 'Creation timestamp' })
   @Expose()
   createdAt: Date;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Last update timestamp' })
   @Expose()
   updatedAt: Date;
 

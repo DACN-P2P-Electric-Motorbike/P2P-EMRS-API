@@ -6,6 +6,8 @@ import { DatabaseModule } from './database/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
+import { UploadModule } from './upload/upload.module';
+
 @Module({
   imports: [
     // Configuration - Load environment variables
@@ -19,11 +21,12 @@ import { VehiclesModule } from './vehicles/vehicles.module';
 
     // Mail Service
     MailModule,
-
+    
+    // File Upload Service
+    UploadModule,
+    
     // Feature Modules
     AuthModule,
-
-    // Vehicle Modules
     VehiclesModule,
   ],
   controllers: [AppController],
