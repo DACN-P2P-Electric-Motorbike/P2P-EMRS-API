@@ -8,6 +8,9 @@ import { MailModule } from './mail/mail.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { UploadModule } from './upload/upload.module';
 import { BookingsModule } from './booking/booking.module';
+import { TripsModule } from './trips/trips.module';
+import { PaymentsModule } from './payments/payments.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -34,6 +37,15 @@ import { BookingsModule } from './booking/booking.module';
 
     // Bookings Module
     BookingsModule,
+
+    // Trips Module,
+    TripsModule,
+
+    // Payments Module
+    PaymentsModule,
+
+    // Reviews Module
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
