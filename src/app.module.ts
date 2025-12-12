@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { UploadModule } from './upload/upload.module';
+import { BookingsModule } from './booking/booking.module';
 
 @Module({
   imports: [
@@ -21,13 +22,18 @@ import { UploadModule } from './upload/upload.module';
 
     // Mail Service
     MailModule,
-    
+
     // File Upload Service
     UploadModule,
-    
+
     // Feature Modules
     AuthModule,
+
+    // Vehicles Module
     VehiclesModule,
+
+    // Bookings Module
+    BookingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
