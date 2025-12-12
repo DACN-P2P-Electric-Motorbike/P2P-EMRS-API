@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -21,21 +18,48 @@ enum UserRole {
 
 enum UserStatus {
   ACTIVE
-  PENDING   // Waiting for KYC/Verification
+  PENDING
   BLOCKED
+}
+
+enum OtpType {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
 }
 
 enum VehicleStatus {
   AVAILABLE
   RENTED
   MAINTENANCE
+  PENDING_APPROVAL
+  REJECTED
+  LOCKED
   UNAVAILABLE
 }
 
 enum VehicleType {
+  VINFAST_KLARA
+  VINFAST_FELIZ
+  VINFAST_VENTO
   ELECTRIC_SCOOTER
   ELECTRIC_MOTORCYCLE
   ELECTRIC_BIKE
+  OTHER
+}
+
+enum VehicleBrand {
+  VINFAST
+  PEGA
+  YADEA
+  OTHER
+}
+
+enum VehicleFeature {
+  REPLACEABLE_BATTERY
+  FAST_CHARGING
+  DIFFICULT_TERRAIN
+  GPS_TRACKING
+  ANTI_THEFT
 }
 
 enum BookingStatus {
@@ -69,6 +93,18 @@ enum TripStatus {
   CANCELLED
 }
 
+enum NotificationType {
+  BOOKING_REQUEST
+  BOOKING_CONFIRMED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  TRIP_STARTED
+  TRIP_COMPLETED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  SYSTEM_ALERT
+}
+
 // ==========================================
 // USER MODEL
 // ==========================================
@@ -96,7 +132,7 @@ model User {
 
   // Relations
   otpCodes              OtpCode[]
-  ownedVehicles         Vehicle[]           @relation("VehicleOwner")
+  vehicles              Vehicle[]           @relation("VehicleOwner")
   bookingsAsRenter      Booking[]           @relation("BookingRenter")
   bookingsAsOwner       Booking[]           @relation("BookingOwner")
   paymentsAsPayer       Payment[]           @relation("PaymentPayer")
@@ -116,11 +152,6 @@ model User {
 // ==========================================
 // OTP CODE MODEL
 // ==========================================
-
-enum OtpType {
-  PASSWORD_RESET
-  EMAIL_VERIFICATION
-}
 
 model OtpCode {
   id          String    @id @default(uuid())
@@ -144,51 +175,60 @@ model OtpCode {
 // ==========================================
 
 model Vehicle {
-  id              String          @id @default(uuid())
+  id              String           @id @default(uuid())
   
   // Basic Info
-  name            String
-  type            VehicleType
-  brand           String
+  name            String?
+  type            VehicleType      @default(OTHER)
+  brand           VehicleBrand     @default(OTHER)
   model           String
-  year            Int
-  licensePlate    String          @unique @map("license_plate")
+  year            Int?
+  licensePlate    String           @unique @map("license_plate")
   
   // Description & Media
   description     String?
-  imageUrls       String[]        @map("image_urls")
+  images          String[]
+  
+  // Features
+  features        VehicleFeature[]
   
   // Technical Specs
-  batteryCapacity Float           @map("battery_capacity") // kWh
-  maxSpeed        Float           @map("max_speed") // km/h
-  range           Float           // km per charge
+  batteryCapacity Float?           @map("battery_capacity") // kWh
+  batteryLevel    Int              @default(100) @map("battery_level")
+  maxSpeed        Float?           @map("max_speed") // km/h
+  range           Float?           // km per charge
   
   // Pricing
-  pricePerHour    Float           @map("price_per_hour") // VND
-  pricePerDay     Float           @map("price_per_day") // VND
-  deposit         Float           // VND
+  pricePerHour    Decimal          @map("price_per_hour") @db.Decimal(10, 2)
+  pricePerDay     Decimal?         @map("price_per_day") @db.Decimal(10, 2)
+  deposit         Float?           // VND
   
   // Status & Availability
-  status          VehicleStatus   @default(AVAILABLE)
-  isAvailable     Boolean         @default(true) @map("is_available")
+  status          VehicleStatus    @default(PENDING_APPROVAL)
+  isAvailable     Boolean          @default(true) @map("is_available")
   
-  // Location (stored as latitude, longitude)
-  latitude        Float
-  longitude       Float
+  // Location
+  latitude        Float?
+  longitude       Float?
   address         String
   
+  // License Documents
+  licenseNumber   String?          @map("license_number")
+  licenseFront    String?          @map("license_front")
+  licenseBack     String?          @map("license_back")
+  
   // Owner
-  ownerId         String          @map("owner_id")
-  owner           User            @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId         String           @map("owner_id")
+  owner           User             @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   
   // Stats
-  totalTrips      Int             @default(0) @map("total_trips")
-  rating          Float           @default(0)
-  reviewCount     Int             @default(0) @map("review_count")
+  totalTrips      Int              @default(0) @map("total_trips")
+  totalRating     Float            @default(5.0) @map("total_rating")
+  reviewCount     Int              @default(0) @map("review_count")
   
   // Timestamps
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
 
   // Relations
   bookings        Booking[]
@@ -198,6 +238,9 @@ model Vehicle {
   @@index([ownerId])
   @@index([status])
   @@index([isAvailable])
+  @@index([brand])
+  @@index([type])
+  @@index([licensePlate])
   @@index([latitude, longitude])
   @@map("vehicles")
 }
@@ -376,18 +419,6 @@ model Review {
 // ==========================================
 // NOTIFICATION MODEL
 // ==========================================
-
-enum NotificationType {
-  BOOKING_REQUEST
-  BOOKING_CONFIRMED
-  BOOKING_REJECTED
-  BOOKING_CANCELLED
-  TRIP_STARTED
-  TRIP_COMPLETED
-  PAYMENT_SUCCESS
-  PAYMENT_FAILED
-  SYSTEM_ALERT
-}
 
 model Notification {
   id              String            @id @default(uuid())
