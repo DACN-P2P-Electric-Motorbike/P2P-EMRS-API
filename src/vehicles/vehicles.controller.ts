@@ -37,7 +37,8 @@ export class VehiclesController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Register a new vehicle',
-    description: 'Owner only. Creates a new vehicle with PENDING_APPROVAL status.',
+    description:
+      'Owner only. Creates a new vehicle with PENDING_APPROVAL status.',
   })
   @ApiResponse({
     status: 201,
@@ -52,7 +53,7 @@ export class VehiclesController {
     @CurrentUser() user: UserEntity,
     @Body() dto: CreateVehicleDto,
   ): Promise<VehicleEntity> {
-    return this.vehiclesService.registerVehicle(user.id, user.role, dto);
+    return this.vehiclesService.registerVehicle(user.id, user.roles, dto);
   }
 
   @Get('my-vehicles')
@@ -68,7 +69,9 @@ export class VehiclesController {
     type: [VehicleEntity],
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getMyVehicles(@CurrentUser() user: UserEntity): Promise<VehicleEntity[]> {
+  async getMyVehicles(
+    @CurrentUser() user: UserEntity,
+  ): Promise<VehicleEntity[]> {
     return this.vehiclesService.getMyVehicles(user.id);
   }
 
@@ -77,11 +80,31 @@ export class VehiclesController {
     summary: 'Get available vehicles',
     description: 'Get all available vehicles for renting. Public endpoint.',
   })
-  @ApiQuery({ name: 'type', required: false, description: 'Filter by vehicle type' })
-  @ApiQuery({ name: 'minPrice', required: false, description: 'Minimum price per hour' })
-  @ApiQuery({ name: 'maxPrice', required: false, description: 'Maximum price per hour' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Number of results (default: 20)' })
-  @ApiQuery({ name: 'offset', required: false, description: 'Offset for pagination' })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    description: 'Filter by vehicle type',
+  })
+  @ApiQuery({
+    name: 'minPrice',
+    required: false,
+    description: 'Minimum price per hour',
+  })
+  @ApiQuery({
+    name: 'maxPrice',
+    required: false,
+    description: 'Maximum price per hour',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Number of results (default: 20)',
+  })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    description: 'Offset for pagination',
+  })
   @ApiResponse({
     status: 200,
     description: 'List of available vehicles',
@@ -123,7 +146,8 @@ export class VehiclesController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Update vehicle',
-    description: 'Owner only. Update vehicle information. Owners can only set status to AVAILABLE or MAINTENANCE.',
+    description:
+      'Owner only. Update vehicle information. Owners can only set status to AVAILABLE or MAINTENANCE.',
   })
   @ApiParam({ name: 'id', description: 'Vehicle ID' })
   @ApiResponse({
@@ -131,7 +155,10 @@ export class VehiclesController {
     description: 'Vehicle updated successfully',
     type: VehicleEntity,
   })
-  @ApiResponse({ status: 400, description: 'Validation error or invalid status change' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error or invalid status change',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden - Not the owner' })
   @ApiResponse({ status: 404, description: 'Vehicle not found' })
@@ -140,7 +167,7 @@ export class VehiclesController {
     @CurrentUser() user: UserEntity,
     @Body() dto: UpdateVehicleDto,
   ): Promise<VehicleEntity> {
-    return this.vehiclesService.updateVehicle(id, user.id, user.role, dto);
+    return this.vehiclesService.updateVehicle(id, user.id, user.roles, dto);
   }
 
   @Delete(':id')
@@ -149,11 +176,15 @@ export class VehiclesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete vehicle',
-    description: 'Owner only. Delete a vehicle. Cannot delete if currently rented.',
+    description:
+      'Owner only. Delete a vehicle. Cannot delete if currently rented.',
   })
   @ApiParam({ name: 'id', description: 'Vehicle ID' })
   @ApiResponse({ status: 204, description: 'Vehicle deleted successfully' })
-  @ApiResponse({ status: 400, description: 'Cannot delete - vehicle is currently rented' })
+  @ApiResponse({
+    status: 400,
+    description: 'Cannot delete - vehicle is currently rented',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden - Not the owner' })
   @ApiResponse({ status: 404, description: 'Vehicle not found' })
@@ -161,6 +192,6 @@ export class VehiclesController {
     @Param('id') id: string,
     @CurrentUser() user: UserEntity,
   ): Promise<void> {
-    return this.vehiclesService.deleteVehicle(id, user.id, user.role);
+    return this.vehiclesService.deleteVehicle(id, user.id, user.roles);
   }
 }

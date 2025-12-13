@@ -22,13 +22,18 @@ export class VehiclesService {
    */
   async registerVehicle(
     ownerId: string,
-    ownerRole: UserRole,
+    ownerRole: UserRole[],
     dto: CreateVehicleDto,
   ): Promise<VehicleEntity> {
-    this.logger.log(`User ${ownerId} attempting to register vehicle: ${dto.licensePlate}`);
+    this.logger.log(
+      `User ${ownerId} attempting to register vehicle: ${dto.licensePlate}`,
+    );
 
     // Check if user has OWNER role
-    if (ownerRole !== UserRole.OWNER && ownerRole !== UserRole.ADMIN) {
+    if (
+      !ownerRole.includes(UserRole.OWNER) &&
+      !ownerRole.includes(UserRole.ADMIN)
+    ) {
       throw new ForbiddenException(
         'Only users with OWNER role can register vehicles. Please upgrade your account.',
       );
@@ -40,7 +45,9 @@ export class VehiclesService {
     });
 
     if (existingVehicle) {
-      throw new ConflictException('A vehicle with this license plate already exists');
+      throw new ConflictException(
+        'A vehicle with this license plate already exists',
+      );
     }
 
     // Create vehicle with PENDING_APPROVAL status
@@ -67,7 +74,9 @@ export class VehiclesService {
       },
     });
 
-    this.logger.log(`Vehicle registered: ${vehicle.id} with status PENDING_APPROVAL`);
+    this.logger.log(
+      `Vehicle registered: ${vehicle.id} with status PENDING_APPROVAL`,
+    );
     return VehicleEntity.fromPrisma(vehicle);
   }
 
@@ -115,10 +124,12 @@ export class VehiclesService {
   async updateVehicle(
     vehicleId: string,
     userId: string,
-    userRole: UserRole,
+    userRole: UserRole[],
     dto: UpdateVehicleDto,
   ): Promise<VehicleEntity> {
-    this.logger.log(`User ${userId} attempting to update vehicle: ${vehicleId}`);
+    this.logger.log(
+      `User ${userId} attempting to update vehicle: ${vehicleId}`,
+    );
 
     // Find vehicle
     const vehicle = await this.prisma.vehicle.findUnique({
@@ -130,12 +141,12 @@ export class VehiclesService {
     }
 
     // Check ownership (Admin can update any vehicle)
-    if (vehicle.ownerId !== userId && userRole !== UserRole.ADMIN) {
+    if (vehicle.ownerId !== userId && !userRole.includes(UserRole.ADMIN)) {
       throw new ForbiddenException('You can only update your own vehicles');
     }
 
     // Validate status change for non-admin users
-    if (dto.status && userRole !== UserRole.ADMIN) {
+    if (dto.status && !userRole.includes(UserRole.ADMIN)) {
       const allowedOwnerStatuses: VehicleStatus[] = [
         VehicleStatus.AVAILABLE,
         VehicleStatus.MAINTENANCE,
@@ -161,7 +172,10 @@ export class VehiclesService {
       }
 
       // Cannot set to AVAILABLE if vehicle is currently RENTED
-      if (vehicle.status === VehicleStatus.RENTED && dto.status === VehicleStatus.AVAILABLE) {
+      if (
+        vehicle.status === VehicleStatus.RENTED &&
+        dto.status === VehicleStatus.AVAILABLE
+      ) {
         throw new BadRequestException(
           'Cannot set status to AVAILABLE while vehicle is being rented',
         );
@@ -170,12 +184,14 @@ export class VehiclesService {
 
     // Build update data
     const updateData: any = {};
-    
+
     if (dto.model !== undefined) updateData.model = dto.model;
     if (dto.type !== undefined) updateData.type = dto.type;
     if (dto.status !== undefined) updateData.status = dto.status;
-    if (dto.batteryLevel !== undefined) updateData.batteryLevel = dto.batteryLevel;
-    if (dto.pricePerHour !== undefined) updateData.pricePerHour = dto.pricePerHour;
+    if (dto.batteryLevel !== undefined)
+      updateData.batteryLevel = dto.batteryLevel;
+    if (dto.pricePerHour !== undefined)
+      updateData.pricePerHour = dto.pricePerHour;
     if (dto.address !== undefined) updateData.address = dto.address;
     if (dto.latitude !== undefined) updateData.latitude = dto.latitude;
     if (dto.longitude !== undefined) updateData.longitude = dto.longitude;
@@ -197,9 +213,11 @@ export class VehiclesService {
   async deleteVehicle(
     vehicleId: string,
     userId: string,
-    userRole: UserRole,
+    userRole: UserRole[],
   ): Promise<void> {
-    this.logger.log(`User ${userId} attempting to delete vehicle: ${vehicleId}`);
+    this.logger.log(
+      `User ${userId} attempting to delete vehicle: ${vehicleId}`,
+    );
 
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { id: vehicleId },
@@ -210,13 +228,15 @@ export class VehiclesService {
     }
 
     // Check ownership
-    if (vehicle.ownerId !== userId && userRole !== UserRole.ADMIN) {
+    if (vehicle.ownerId !== userId && !userRole.includes(UserRole.ADMIN)) {
       throw new ForbiddenException('You can only delete your own vehicles');
     }
 
     // Cannot delete if currently rented
     if (vehicle.status === VehicleStatus.RENTED) {
-      throw new BadRequestException('Cannot delete a vehicle that is currently being rented');
+      throw new BadRequestException(
+        'Cannot delete a vehicle that is currently being rented',
+      );
     }
 
     await this.prisma.vehicle.delete({

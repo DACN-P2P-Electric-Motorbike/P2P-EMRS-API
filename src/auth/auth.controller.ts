@@ -28,6 +28,7 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 import { JwtAuthGuard } from './guards';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { UserEntity } from './entities/user.entity';
+import { CreateVehicleDto } from 'src/vehicles';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -36,9 +37,10 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Register a new user',
-    description: 'Create a new user account with email, password, and profile information',
+    description:
+      'Create a new user account with email, password, and profile information',
   })
   @ApiBody({ type: RegisterDto })
   @ApiResponse({
@@ -60,7 +62,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Login user',
     description: 'Authenticate user with email and password',
   })
@@ -81,7 +83,7 @@ export class AuthController {
   @Get('profile')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Get current user profile',
     description: 'Returns the profile of the currently authenticated user',
   })
@@ -114,7 +116,9 @@ export class AuthController {
     status: 404,
     description: 'Not Found - Email not registered',
   })
-  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<OtpResponseDto> {
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+  ): Promise<OtpResponseDto> {
     return this.authService.forgotPassword(dto);
   }
 
@@ -162,7 +166,32 @@ export class AuthController {
     status: 404,
     description: 'Not Found - Email not registered',
   })
-  async resetPassword(@Body() dto: ResetPasswordDto): Promise<ResetPasswordResponseDto> {
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+  ): Promise<ResetPasswordResponseDto> {
     return this.authService.resetPassword(dto);
+  }
+
+  @Post('become-owner')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Upgrade user to OWNER',
+    description: 'User becomes vehicle owner and registers a vehicle',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User successfully upgraded to OWNER',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  async becomeOwner(
+    @CurrentUser() user: UserEntity,
+    @Body() vehicleData: CreateVehicleDto,
+  ) {
+    return this.authService.becomeOwner(user.id, user.roles, vehicleData);
   }
 }

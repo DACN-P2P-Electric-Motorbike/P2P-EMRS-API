@@ -7,6 +7,7 @@ import {
   IsString,
   MinLength,
   IsEnum,
+  IsArray,
 } from 'class-validator';
 import { UserRole } from '@prisma/client';
 
@@ -40,18 +41,26 @@ export class RegisterDto {
     description: 'Vietnamese phone number',
     example: '+84912345678',
   })
-  @IsPhoneNumber('VN', { message: 'Please provide a valid Vietnamese phone number' })
+  @IsPhoneNumber('VN', {
+    message: 'Please provide a valid Vietnamese phone number',
+  })
   @IsNotEmpty({ message: 'Phone number is required' })
   phone: string;
 
   @ApiPropertyOptional({
-    description: 'User role (defaults to RENTER)',
+    description: 'User roles (defaults to [RENTER] if not provided)',
     enum: UserRole,
-    default: UserRole.RENTER,
+    isArray: true,
+    example: ['RENTER'],
+    default: ['RENTER'],
   })
   @IsOptional()
-  @IsEnum(UserRole, { message: 'Role must be RENTER, OWNER, or ADMIN' })
-  role?: UserRole;
+  @IsArray()
+  @IsEnum(UserRole, {
+    each: true,
+    message: 'Each role must be RENTER, OWNER, or ADMIN',
+  })
+  roles?: UserRole[];
 
   @ApiPropertyOptional({
     description: 'Vietnamese ID card number (CCCD/CMND)',
@@ -69,4 +78,3 @@ export class RegisterDto {
   @IsString()
   address?: string;
 }
-
