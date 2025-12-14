@@ -9,7 +9,7 @@ import { PrismaService } from '../database/prisma.service';
 import { BookingEntity } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
-import { BookingStatus, VehicleStatus, UserRole } from '@prisma/client';
+import { BookingStatus, VehicleStatus } from '@prisma/client';
 
 @Injectable()
 export class BookingsService {

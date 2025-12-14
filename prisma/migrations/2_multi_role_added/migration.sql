@@ -1,0 +1,2 @@
+ALTER TABLE users ADD COLUMN roles TEXT[] DEFAULT ARRAY['RENTER']::TEXT[];
+UPDATE users SET roles = ARRAY[role]::TEXT[];

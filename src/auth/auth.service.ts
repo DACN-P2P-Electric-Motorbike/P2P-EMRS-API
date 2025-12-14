@@ -22,11 +22,12 @@ import {
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { UserEntity } from './entities/user.entity';
 import { UserRole, UserStatus, OtpType } from '@prisma/client';
+import { CreateVehicleDto, VehiclesService } from 'src/vehicles';
 
 export interface JwtPayload {
   sub: string;
   email: string;
-  role: UserRole;
+  roles: UserRole[];
 }
 
 @Injectable()
@@ -39,6 +40,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
+    private readonly vehiclesService: VehiclesService,
   ) {}
 
   /**
@@ -61,11 +63,15 @@ export class AuthService {
   /**
    * Generate JWT access token
    */
-  private generateAccessToken(user: { id: string; email: string; role: UserRole }): string {
+  private generateAccessToken(user: {
+    id: string;
+    email: string;
+    roles: UserRole[];
+  }): string {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
-      role: user.role,
+      roles: user.roles,
     };
     return this.jwtService.sign(payload);
   }
@@ -122,7 +128,7 @@ export class AuthService {
         password: hashedPassword,
         fullName: dto.fullName,
         phone: dto.phone,
-        role: dto.role || UserRole.RENTER,
+        roles: dto.roles || ['RENTER'],
         idCardNum: dto.idCardNum,
         address: dto.address,
         status: UserStatus.ACTIVE,
@@ -156,7 +162,10 @@ export class AuthService {
     }
 
     // Verify password
-    const isPasswordValid = await this.comparePassword(dto.password, user.password);
+    const isPasswordValid = await this.comparePassword(
+      dto.password,
+      user.password,
+    );
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password');
@@ -164,7 +173,9 @@ export class AuthService {
 
     // Check if user is blocked
     if (user.status === UserStatus.BLOCKED) {
-      throw new UnauthorizedException('Your account has been blocked. Please contact support.');
+      throw new UnauthorizedException(
+        'Your account has been blocked. Please contact support.',
+      );
     }
 
     this.logger.log(`Successfully logged in user: ${user.id}`);
@@ -236,7 +247,9 @@ export class AuthService {
 
     // Generate new OTP
     const otpCode = this.generateOtpCode();
-    const expiresAt = new Date(Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000);
+    const expiresAt = new Date(
+      Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000,
+    );
 
     // Save OTP to database
     await this.prisma.otpCode.create({
@@ -261,7 +274,7 @@ export class AuthService {
     }
 
     return {
-      message: emailSent 
+      message: emailSent
         ? `OTP has been sent to your email. Valid for ${this.OTP_EXPIRY_MINUTES} minutes.`
         : `OTP has been sent to your email. Valid for ${this.OTP_EXPIRY_MINUTES} minutes. (Dev mode: OTP is ${otpCode})`,
       email: dto.email,
@@ -309,7 +322,9 @@ export class AuthService {
   /**
    * Reset password with OTP
    */
-  async resetPassword(dto: ResetPasswordDto): Promise<ResetPasswordResponseDto> {
+  async resetPassword(
+    dto: ResetPasswordDto,
+  ): Promise<ResetPasswordResponseDto> {
     this.logger.log(`Resetting password for email: ${dto.email}`);
 
     // Find user by email
@@ -358,6 +373,48 @@ export class AuthService {
     return {
       message: 'Password has been reset successfully',
       success: true,
+    };
+  }
+
+  // src/users/users.service.ts
+
+  async becomeOwner(
+    userId: string,
+    roles: UserRole[],
+    vehicleData: CreateVehicleDto,
+  ): Promise<any> {
+    // 0. Return if OWNER
+    if (roles.includes(UserRole.OWNER))
+      return {
+        message: 'User has been OWNER',
+      };
+
+    // 1. Add OWNER role to user
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        roles: {
+          push: UserRole.OWNER, // Add OWNER to roles array
+        },
+      },
+    });
+
+    const vehicle = await this.vehiclesService.registerVehicle(
+      userId,
+      user.roles,
+      vehicleData,
+    );
+
+    // 2. Generate new JWT with updated roles
+    const newToken = this.generateAccessToken(user);
+
+    return {
+      user: {
+        id: user.id,
+        roles: user.roles,
+      },
+      accessToken: newToken,
+      message: 'Successfully upgraded to OWNER',
     };
   }
 }

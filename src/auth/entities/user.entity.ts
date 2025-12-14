@@ -26,9 +26,14 @@ export class UserEntity implements Omit<User, 'password'> {
   @Expose()
   avatarUrl: string | null;
 
-  @ApiProperty({ description: 'User role', enum: UserRole })
+  @ApiProperty({
+    description: 'User roles (array)',
+    enum: UserRole,
+    isArray: true,
+    example: ['RENTER', 'OWNER'],
+  })
   @Expose()
-  role: UserRole;
+  roles: UserRole[];
 
   @ApiProperty({ description: 'User status', enum: UserStatus })
   @Expose()
@@ -62,5 +67,38 @@ export class UserEntity implements Omit<User, 'password'> {
     const { password, ...userWithoutPassword } = user;
     return new UserEntity(userWithoutPassword);
   }
-}
+  /**
+   * Check if user has a specific role
+   */
+  hasRole(role: UserRole): boolean {
+    return this.roles.includes(role);
+  }
 
+  /**
+   * Check if user is a renter
+   */
+  get isRenter(): boolean {
+    return this.hasRole(UserRole.RENTER);
+  }
+
+  /**
+   * Check if user is an owner
+   */
+  get isOwner(): boolean {
+    return this.hasRole(UserRole.OWNER);
+  }
+
+  /**
+   * Check if user is an admin
+   */
+  get isAdmin(): boolean {
+    return this.hasRole(UserRole.ADMIN);
+  }
+
+  /**
+   * Check if user has multiple roles
+   */
+  get hasMultipleRoles(): boolean {
+    return this.roles.length > 1;
+  }
+}
