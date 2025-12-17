@@ -30,6 +30,7 @@ model User {
   reviews               Review[]
   trips                 Trip[]
   vehicles              Vehicle[]      @relation("VehicleOwner")
+  fcmTokens             FcmToken[]
 
   @@index([email])
   @@index([phone])
@@ -317,4 +318,21 @@ enum NotificationType {
   PAYMENT_SUCCESS
   PAYMENT_FAILED
   SYSTEM_ALERT
+}
+
+model FcmToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String
+  platform  String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], name: "fcm_tokens_user_id_idx")
+  @@index([token], name: "fcm_tokens_token_idx")
+  @@unique([userId, platform], name: "fcm_tokens_user_id_platform_key")
+  @@map("fcm_tokens")
 }
