@@ -5,18 +5,26 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { BookingEntity } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { BookingStatus, VehicleStatus } from '@prisma/client';
+import {
+  BookingCreatedEvent,
+  BookingCancelledEvent,
+} from '../events/booking.events';
 
 @Injectable()
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Calculate total price based on vehicle pricing and duration
@@ -160,12 +168,30 @@ export class BookingsService {
         notes: dto.notes,
         status: BookingStatus.PENDING,
       },
+      include: {
+        vehicle: true,
+        renter: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true,
+          },
+        },
+      },
     });
 
     this.logger.log(`Booking ${booking.id} created successfully`);
 
-    // TODO: Send notification to owner about new booking request
-    // await this.notificationService.sendBookingRequest(booking);
+    // Emit event for notifications
+    this.eventEmitter.emit(
+      'booking.created',
+      new BookingCreatedEvent(
+        booking.id,
+        userId,
+        vehicle.ownerId,
+        dto.vehicleId,
+      ),
+    );
 
     return BookingEntity.fromPrisma(booking);
   }
@@ -290,8 +316,17 @@ export class BookingsService {
 
     this.logger.log(`Booking ${bookingId} cancelled by renter ${userId}`);
 
-    // TODO: Send notification to owner about cancellation
-    // TODO: Process refund if payment was made
+    // Emit event
+    this.eventEmitter.emit(
+      'booking.cancelled',
+      new BookingCancelledEvent(
+        bookingId,
+        userId,
+        booking.ownerId,
+        dto.reason,
+        'renter',
+      ),
+    );
 
     return BookingEntity.fromPrisma(updatedBooking);
   }

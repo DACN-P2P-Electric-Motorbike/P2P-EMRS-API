@@ -11,6 +11,7 @@ import { BookingsModule } from './booking/booking.module';
 import { TripsModule } from './trips/trips.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ReviewsModule } from './reviews/reviews.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -37,6 +38,9 @@ import { ReviewsModule } from './reviews/reviews.module';
 
     // Bookings Module
     BookingsModule,
+
+    // Notification Module
+    NotificationModule,
 
     // Trips Module,
     TripsModule,
