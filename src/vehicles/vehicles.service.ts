@@ -197,6 +197,7 @@ export class VehiclesService {
     if (dto.longitude !== undefined) updateData.longitude = dto.longitude;
     if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.images !== undefined) updateData.images = dto.images;
+    if (dto.isAvailable !== undefined) updateData.isAvailable = dto.isAvailable;
 
     const updatedVehicle = await this.prisma.vehicle.update({
       where: { id: vehicleId },
@@ -294,6 +295,70 @@ export class VehiclesService {
       vehicles: vehicles.map(VehicleEntity.fromPrisma),
       total,
     };
+  }
+
+  /**
+   * Toggle vehicle availability (Owner only)
+   * This is the quick on/off switch for owners to make their vehicle available for rent
+   */
+  async toggleAvailability(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+  ): Promise<VehicleEntity> {
+    this.logger.log(
+      `User ${userId} toggling availability for vehicle: ${vehicleId}`,
+    );
+
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Vehicle not found');
+    }
+
+    // Check ownership
+    if (vehicle.ownerId !== userId && !userRole.includes(UserRole.ADMIN)) {
+      throw new ForbiddenException('You can only toggle your own vehicles');
+    }
+
+    // Cannot toggle if vehicle is in restricted status
+    const restrictedStatuses: VehicleStatus[] = [
+      VehicleStatus.PENDING_APPROVAL,
+      VehicleStatus.REJECTED,
+      VehicleStatus.LOCKED,
+      VehicleStatus.RENTED,
+    ];
+
+    if (restrictedStatuses.includes(vehicle.status)) {
+      throw new BadRequestException(
+        `Cannot toggle availability while vehicle is ${vehicle.status}. ${
+          vehicle.status === VehicleStatus.RENTED
+            ? 'Please wait until the rental is complete.'
+            : 'Contact admin for assistance.'
+        }`,
+      );
+    }
+
+    // Toggle: if currently available, make unavailable; otherwise make available
+    const newIsAvailable = !vehicle.isAvailable;
+    const newStatus = newIsAvailable
+      ? VehicleStatus.AVAILABLE
+      : VehicleStatus.UNAVAILABLE;
+
+    const updatedVehicle = await this.prisma.vehicle.update({
+      where: { id: vehicleId },
+      data: {
+        isAvailable: newIsAvailable,
+        status: newStatus,
+      },
+    });
+
+    this.logger.log(
+      `Vehicle ${vehicleId} availability toggled: isAvailable=${newIsAvailable}, status=${newStatus}`,
+    );
+    return VehicleEntity.fromPrisma(updatedVehicle);
   }
 
   /**

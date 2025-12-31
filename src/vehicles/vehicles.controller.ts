@@ -170,6 +170,30 @@ export class VehiclesController {
     return this.vehiclesService.updateVehicle(id, user.id, user.roles, dto);
   }
 
+  @Patch(':id/toggle-availability')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Toggle vehicle availability',
+    description:
+      'Owner only. Quick toggle to enable/disable vehicle for rent. When toggled ON, vehicle appears in renter search. When toggled OFF, vehicle is hidden.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Vehicle availability toggled successfully',
+    type: VehicleEntity,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Not the owner' })
+  @ApiResponse({ status: 404, description: 'Vehicle not found' })
+  async toggleAvailability(
+    @Param('id') id: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<VehicleEntity> {
+    return this.vehiclesService.toggleAvailability(id, user.id, user.roles);
+  }
+
   @Delete(':id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
