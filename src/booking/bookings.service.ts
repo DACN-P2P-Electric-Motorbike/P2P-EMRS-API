@@ -387,4 +387,34 @@ export class BookingsService {
 
     return bookings.map((b) => BookingEntity.fromPrisma(b));
   }
+
+  /**
+   * Get booking schedule for a specific vehicle (public endpoint for renters)
+   * Returns confirmed/ongoing bookings to show occupied time slots
+   */
+  async getVehicleSchedule(vehicleId: string): Promise<BookingEntity[]> {
+    const now = new Date();
+
+    const bookings = await this.prisma.booking.findMany({
+      where: {
+        vehicleId,
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.ONGOING,
+          ],
+        },
+        // Only get bookings that haven't ended yet
+        endTime: {
+          gte: now,
+        },
+      },
+      orderBy: { startTime: 'asc' },
+      take: 30, // Limit to upcoming 30 bookings
+    });
+
+    // Return bookings without sensitive renter info
+    return bookings.map((b) => BookingEntity.fromPrisma(b));
+  }
 }

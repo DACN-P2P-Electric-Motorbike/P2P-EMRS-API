@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsArray,
+  IsBoolean,
   Min,
   Max,
   IsLatitude,
@@ -97,5 +98,14 @@ export class UpdateVehicleDto {
   @IsArray()
   @IsString({ each: true })
   images?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Whether the vehicle is available for rent (toggle on/off)',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  isAvailable?: boolean;
 }
 
