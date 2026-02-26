@@ -6,4 +6,5 @@ export * from './dto/auth-response.dto';
 export * from './entities/user.entity';
 export * from './guards';
 export * from './decorators/current-user.decorator';
+export * from './decorators/roles.decorator';
 

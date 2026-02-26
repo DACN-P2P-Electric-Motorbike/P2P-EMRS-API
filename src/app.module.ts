@@ -13,6 +13,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { NotificationModule } from './notification/notification.module';
 import { EventListenerModule } from './events/events.modules';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -53,6 +54,9 @@ import { EventListenerModule } from './events/events.modules';
     ReviewsModule,
 
     EventListenerModule,
+
+    // Admin Module
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],
