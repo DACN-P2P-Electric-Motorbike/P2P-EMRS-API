@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    # Pull production image compiled beforehand instead of building it
+    image: ${DOCKER_USERNAME:-your-dockerhub-user}/p2p-emrs:latest
+    container_name: p2p_emrs_app_prod
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    networks:
+      - emrs-network
+    # Exposing the port is optional, typically only accessed via nginx
+    # ports:
+    #   - "3000:3000"
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: p2p_emrs_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - emrs-network
+    restart: unless-stopped
+
+networks:
+  emrs-network:
+    name: p2p_emrs_network_prod
+    driver: bridge
+
+# Note: In production, MySQL / PostgreSQL should be managed by RDS or Aiven.
+# We do not deploy the database container here to avoid managing stateful data on EC2/VPS.

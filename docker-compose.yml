@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      target: builder # Use builder stage for dev (has devDependencies)
+    container_name: p2p_emrs_app_dev
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules # Avoid overriding node_modules inside container
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-emrs_user}:${POSTGRES_PASSWORD:-emrs_secret}@postgres:5432/${POSTGRES_DB:-emrs_db}?schema=public
+      - JWT_SECRET=${JWT_SECRET:-dev_secret_key}
+    command: npm run start:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - emrs-network
+    restart: always
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: p2p_emrs_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-emrs_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-emrs_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-emrs_db}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - emrs-network
+    restart: always
+
+volumes:
+  pg-data:
+    name: p2p_emrs_pg_data
+
+networks:
+  emrs-network:
+    name: p2p_emrs_network
+    driver: bridge
