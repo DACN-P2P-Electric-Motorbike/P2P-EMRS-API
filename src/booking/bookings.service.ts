@@ -316,6 +316,9 @@ export class BookingsService {
 
     this.logger.log(`Booking ${bookingId} cancelled by renter ${userId}`);
 
+    // Decrease renter trust score by 5 for cancellation
+    await this.decreaseTrustScore(userId, 5);
+
     // Emit event
     this.eventEmitter.emit(
       'booking.cancelled',
@@ -329,6 +332,20 @@ export class BookingsService {
     );
 
     return BookingEntity.fromPrisma(updatedBooking);
+  }
+
+  /**
+   * Decrease user trust score by a given amount (min 0)
+   */
+  private async decreaseTrustScore(userId: string, amount: number): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+    const newScore = Math.max(0, user.trustScore - amount);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { trustScore: newScore },
+    });
+    this.logger.log(`Trust score for user ${userId} decreased to ${newScore}`);
   }
 
   /**

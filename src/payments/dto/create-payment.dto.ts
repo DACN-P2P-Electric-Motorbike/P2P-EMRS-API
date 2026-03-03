@@ -14,7 +14,7 @@ export class CreatePaymentDto {
   @ApiProperty({
     description: 'Payment method',
     enum: PaymentMethod,
-    example: PaymentMethod.VNPAY,
+    example: PaymentMethod.PAYOS,
   })
   @IsEnum(PaymentMethod)
   @IsNotEmpty()
