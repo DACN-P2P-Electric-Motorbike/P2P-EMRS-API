@@ -164,4 +164,25 @@ export class BookingsController {
   ): Promise<BookingEntity> {
     return this.bookingsService.cancelBooking(id, userId, dto);
   }
+
+  @Get('vehicle/:vehicleId/schedule')
+  @ApiOperation({
+    summary: 'Get vehicle booking schedule',
+    description:
+      'Get all active/upcoming bookings for a vehicle to show availability',
+  })
+  @ApiParam({
+    name: 'vehicleId',
+    description: 'Vehicle ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Vehicle booking schedule',
+    type: [BookingEntity],
+  })
+  async getVehicleSchedule(
+    @Param('vehicleId') vehicleId: string,
+  ): Promise<BookingEntity[]> {
+    return this.bookingsService.getVehicleSchedule(vehicleId);
+  }
 }

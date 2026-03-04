@@ -36,6 +36,7 @@
     "@nestjs/platform-socket.io": "^11.1.9",
     "@nestjs/swagger": "^11.2.3",
     "@nestjs/websockets": "^11.1.9",
+    "@payos/node": "^2.0.4",
     "@prisma/adapter-pg": "^7.0.1",
     "@prisma/client": "^7.1.0",
     "@types/uuid": "^10.0.0",

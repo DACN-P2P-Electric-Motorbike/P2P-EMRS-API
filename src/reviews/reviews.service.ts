@@ -74,6 +74,9 @@ export class ReviewsService {
     // Update vehicle rating
     await this.updateVehicleRating(dto.vehicleId);
 
+    // Slightly boost renter trust score for leaving a review
+    await this.updateRenterTrustScore(userId, 1);
+
     this.logger.log(`Review ${review.id} created successfully`);
 
     return ReviewEntity.fromPrisma(review);
@@ -96,6 +99,20 @@ export class ReviewsService {
         totalRating: averageRating,
         reviewCount: reviews.length,
       },
+    });
+  }
+
+  /**
+   * Slightly adjust renter trust score after leaving a review
+   */
+  private async updateRenterTrustScore(userId: string, delta: number): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+
+    const newScore = Math.min(100, Math.max(0, user.trustScore + delta));
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { trustScore: newScore },
     });
   }
 

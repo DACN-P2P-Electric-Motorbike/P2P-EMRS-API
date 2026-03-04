@@ -295,7 +295,7 @@ enum PaymentStatus {
 }
 
 enum PaymentMethod {
-  VNPAY
+  PAYOS
   MOMO
   CREDIT_CARD
   CASH

@@ -316,6 +316,9 @@ export class BookingsService {
 
     this.logger.log(`Booking ${bookingId} cancelled by renter ${userId}`);
 
+    // Decrease renter trust score by 5 for cancellation
+    await this.decreaseTrustScore(userId, 5);
+
     // Emit event
     this.eventEmitter.emit(
       'booking.cancelled',
@@ -329,6 +332,20 @@ export class BookingsService {
     );
 
     return BookingEntity.fromPrisma(updatedBooking);
+  }
+
+  /**
+   * Decrease user trust score by a given amount (min 0)
+   */
+  private async decreaseTrustScore(userId: string, amount: number): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+    const newScore = Math.max(0, user.trustScore - amount);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { trustScore: newScore },
+    });
+    this.logger.log(`Trust score for user ${userId} decreased to ${newScore}`);
   }
 
   /**
@@ -385,6 +402,36 @@ export class BookingsService {
       take: 50,
     });
 
+    return bookings.map((b) => BookingEntity.fromPrisma(b));
+  }
+
+  /**
+   * Get booking schedule for a specific vehicle (public endpoint for renters)
+   * Returns confirmed/ongoing bookings to show occupied time slots
+   */
+  async getVehicleSchedule(vehicleId: string): Promise<BookingEntity[]> {
+    const now = new Date();
+
+    const bookings = await this.prisma.booking.findMany({
+      where: {
+        vehicleId,
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.ONGOING,
+          ],
+        },
+        // Only get bookings that haven't ended yet
+        endTime: {
+          gte: now,
+        },
+      },
+      orderBy: { startTime: 'asc' },
+      take: 30, // Limit to upcoming 30 bookings
+    });
+
+    // Return bookings without sensitive renter info
     return bookings.map((b) => BookingEntity.fromPrisma(b));
   }
 }
