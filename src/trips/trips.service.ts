@@ -300,13 +300,27 @@ export class TripsService {
       },
     });
 
+    // Decrease renter trust score for violation (-3)
+    await this.adjustTrustScore(trip.renterId, -3);
+
     this.logger.log(
       `Issue reported for trip ${tripId}: ${dto.issueDescription}`,
     );
 
-    // TODO: Send notification to owner about the issue
-
     return TripEntity.fromPrisma(updatedTrip);
+  }
+
+  private async adjustTrustScore(userId: string, delta: number): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+    const newScore = Math.min(100, Math.max(0, user.trustScore + delta));
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { trustScore: newScore },
+    });
+    this.logger.log(
+      `Trust score for user ${userId}: ${user.trustScore} -> ${newScore} (delta: ${delta})`,
+    );
   }
 
   /**
