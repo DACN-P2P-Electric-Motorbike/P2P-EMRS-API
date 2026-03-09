@@ -249,6 +249,9 @@ export class OwnerBookingsService {
 
     this.logger.log(`Booking ${bookingId} rejected by owner ${ownerId}`);
 
+    // Decrease owner trust score for rejection (-2)
+    await this.adjustTrustScore(ownerId, -2);
+
     // Emit event
     this.eventEmitter.emit(
       'booking.rejected',
@@ -261,5 +264,18 @@ export class OwnerBookingsService {
     );
 
     return BookingEntity.fromPrisma(updatedBooking);
+  }
+
+  private async adjustTrustScore(userId: string, delta: number): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+    const newScore = Math.min(100, Math.max(0, user.trustScore + delta));
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { trustScore: newScore },
+    });
+    this.logger.log(
+      `Trust score for user ${userId}: ${user.trustScore} -> ${newScore} (delta: ${delta})`,
+    );
   }
 }
