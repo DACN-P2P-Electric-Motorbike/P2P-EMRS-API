@@ -12,7 +12,7 @@ import { MailService } from './mail.service';
         const port = configService.get<number>('EMAIL_PORT', 587);
         // Port 465 uses SSL, port 587 uses STARTTLS (secure should be false)
         const secure = port === 465;
-        
+
         return {
           transport: {
             host: configService.get<string>('EMAIL_HOST', 'smtp.gmail.com'),
@@ -24,7 +24,10 @@ import { MailService } from './mail.service';
             },
           },
           defaults: {
-            from: configService.get<string>('EMAIL_FROM', '"Dream Ride" <noreply@dreamride.com>'),
+            from: configService.get<string>(
+              'EMAIL_FROM',
+              '"Dream Ride" <noreply@dreamride.com>',
+            ),
           },
         };
       },
@@ -34,4 +37,3 @@ import { MailService } from './mail.service';
   exports: [MailService],
 })
 export class MailModule {}
-

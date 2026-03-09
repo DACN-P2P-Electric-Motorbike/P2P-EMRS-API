@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { UserStatus } from '@prisma/client';
 import { AdminUsersRepository } from '../repositories/admin-users.repository';
 import { QueryUsersDto } from '../dto/query-users.dto';

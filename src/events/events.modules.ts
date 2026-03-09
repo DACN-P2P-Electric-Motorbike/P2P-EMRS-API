@@ -7,6 +7,7 @@ import { BookingsModule } from 'src/booking/booking.module';
 import { NotificationModule } from 'src/notification/notification.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { BookingEventListener } from './booking.listener';
+import { AdminEventListener } from './admin.event.listener';
 
 @Module({
   imports: [
@@ -27,6 +28,6 @@ import { BookingEventListener } from './booking.listener';
   ],
 
   // ✅ ADD: Register listener
-  providers: [BookingEventListener],
+  providers: [BookingEventListener, AdminEventListener],
 })
 export class EventListenerModule {}

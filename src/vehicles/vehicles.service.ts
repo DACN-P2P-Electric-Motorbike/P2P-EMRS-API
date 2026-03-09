@@ -6,16 +6,21 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { CreateVehicleDto, UpdateVehicleDto } from './dto';
 import { VehicleEntity } from './entities/vehicle.entity';
 import { VehicleStatus, UserRole } from '@prisma/client';
+import { VehicleSubmittedForApprovalEvent } from '../events/admin.events';
 
 @Injectable()
 export class VehiclesService {
   private readonly logger = new Logger(VehiclesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Register a new vehicle (Owner only)
@@ -77,6 +82,19 @@ export class VehiclesService {
     this.logger.log(
       `Vehicle registered: ${vehicle.id} with status PENDING_APPROVAL`,
     );
+
+    // Emit admin alert event
+    const vehicleName = `${vehicle.brand} ${vehicle.model}`;
+    this.eventEmitter.emit(
+      'vehicle.submitted',
+      new VehicleSubmittedForApprovalEvent(
+        vehicle.id,
+        ownerId,
+        vehicleName,
+        vehicle.licensePlate,
+      ),
+    );
+
     return VehicleEntity.fromPrisma(vehicle);
   }
 

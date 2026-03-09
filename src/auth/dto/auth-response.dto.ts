@@ -13,4 +13,3 @@ export class AuthResponseDto {
     this.accessToken = accessToken;
   }
 }
-

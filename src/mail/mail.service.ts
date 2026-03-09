@@ -18,7 +18,11 @@ export class MailService {
   /**
    * Send OTP code for password reset
    */
-  async sendPasswordResetOtp(email: string, otp: string, fullName: string): Promise<boolean> {
+  async sendPasswordResetOtp(
+    email: string,
+    otp: string,
+    fullName: string,
+  ): Promise<boolean> {
     if (!this.isEmailEnabled) {
       this.logger.warn(`Email not configured. OTP for ${email}: ${otp}`);
       return false;
@@ -91,7 +95,10 @@ export class MailService {
       this.logger.log(`Password reset OTP sent to ${email}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send password reset email to ${email}`, error);
+      this.logger.error(
+        `Failed to send password reset email to ${email}`,
+        error,
+      );
       return false;
     }
   }
@@ -101,7 +108,9 @@ export class MailService {
    */
   async sendWelcomeEmail(email: string, fullName: string): Promise<boolean> {
     if (!this.isEmailEnabled) {
-      this.logger.warn(`Email not configured. Skipping welcome email for ${email}`);
+      this.logger.warn(
+        `Email not configured. Skipping welcome email for ${email}`,
+      );
       return false;
     }
 
@@ -172,4 +181,3 @@ export class MailService {
     }
   }
 }
-

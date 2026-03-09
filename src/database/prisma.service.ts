@@ -22,7 +22,7 @@ export class PrismaService
 
   constructor() {
     const connectionString = process.env.DATABASE_URL;
-    
+
     if (!connectionString) {
       throw new Error('DATABASE_URL environment variable is not set');
     }
@@ -41,9 +41,7 @@ export class PrismaService
     super({
       adapter,
       log:
-        process.env.NODE_ENV === 'development'
-          ? ['error', 'warn']
-          : ['error'],
+        process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
       errorFormat: 'colorless',
     });
 

@@ -4,18 +4,23 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { TripEntity } from './entities/trip.entity';
 import { StartTripDto } from './dto/start-trip.dto';
 import { EndTripDto } from './dto/end-trip.dto';
 import { ReportIssueDto } from './dto/report-issue.dto';
 import { TripStatus, BookingStatus } from '@prisma/client';
+import { TripIssueReportedEvent } from '../events/admin.events';
 
 @Injectable()
 export class TripsService {
   private readonly logger = new Logger(TripsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Calculate distance between two coordinates using Haversine formula
@@ -304,7 +309,16 @@ export class TripsService {
       `Issue reported for trip ${tripId}: ${dto.issueDescription}`,
     );
 
-    // TODO: Send notification to owner about the issue
+    // Emit admin alert event
+    this.eventEmitter.emit(
+      'trip.issue_reported',
+      new TripIssueReportedEvent(
+        updatedTrip.id,
+        updatedTrip.renterId,
+        updatedTrip.vehicleId,
+        dto.issueDescription,
+      ),
+    );
 
     return TripEntity.fromPrisma(updatedTrip);
   }

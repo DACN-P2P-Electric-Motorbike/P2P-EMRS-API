@@ -63,7 +63,12 @@ export class AdminUsersController {
     schema: {
       example: {
         status: 'success',
-        data: { id: 'uuid', fullName: 'Nguyen Van A', email: '...', status: 'BLOCKED' },
+        data: {
+          id: 'uuid',
+          fullName: 'Nguyen Van A',
+          email: '...',
+          status: 'BLOCKED',
+        },
         message: 'User status updated successfully',
       },
     },

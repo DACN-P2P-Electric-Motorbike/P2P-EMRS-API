@@ -6,7 +6,10 @@ import { UserEntity } from '../entities/user.entity';
  * Usage: @CurrentUser() user: UserEntity
  */
 export const CurrentUser = createParamDecorator(
-  (data: keyof UserEntity | undefined, ctx: ExecutionContext): UserEntity | any => {
+  (
+    data: keyof UserEntity | undefined,
+    ctx: ExecutionContext,
+  ): UserEntity | any => {
     const request = ctx.switchToHttp().getRequest();
     const user = request.user as UserEntity;
 
@@ -17,4 +20,3 @@ export const CurrentUser = createParamDecorator(
     return user;
   },
 );
-

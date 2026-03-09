@@ -22,19 +22,24 @@ export class UploadService {
   private readonly region: string;
 
   constructor(private configService: ConfigService) {
-    this.region = this.configService.get<string>('AWS_REGION') || 'ap-southeast-1';
-    this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME') || '';
+    this.region =
+      this.configService.get<string>('AWS_REGION') || 'ap-southeast-1';
+    this.bucketName =
+      this.configService.get<string>('AWS_S3_BUCKET_NAME') || '';
     this.bucketUrl = this.configService.get<string>('AWS_S3_BUCKET_URL') || '';
 
     this.s3Client = new S3Client({
       region: this.region,
       credentials: {
         accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID') || '',
-        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY') || '',
+        secretAccessKey:
+          this.configService.get<string>('AWS_SECRET_ACCESS_KEY') || '',
       },
     });
 
-    this.logger.log(`S3 Upload Service initialized for bucket: ${this.bucketName}`);
+    this.logger.log(
+      `S3 Upload Service initialized for bucket: ${this.bucketName}`,
+    );
   }
 
   /**
@@ -49,7 +54,12 @@ export class UploadService {
     }
 
     // Validate file type
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedMimeTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+    ];
     if (!allowedMimeTypes.includes(file.mimetype)) {
       throw new BadRequestException(
         `Invalid file type. Allowed: ${allowedMimeTypes.join(', ')}`,
@@ -79,7 +89,7 @@ export class UploadService {
       await this.s3Client.send(command);
 
       // Use bucket URL if provided, otherwise construct from bucket name and region
-      const url = this.bucketUrl 
+      const url = this.bucketUrl
         ? `${this.bucketUrl}/${uniqueFileName}`
         : `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${uniqueFileName}`;
 
@@ -129,4 +139,3 @@ export class UploadService {
     }
   }
 }
-

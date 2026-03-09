@@ -19,7 +19,9 @@ import { ConfigService } from '@nestjs/config';
   },
   namespace: '/notifications',
 })
-export class NotificationGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class NotificationGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -34,7 +36,9 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
   async handleConnection(client: Socket) {
     try {
       // Extract JWT token from handshake
-      const token = client.handshake.auth.token || client.handshake.headers.authorization?.split(' ')[1];
+      const token =
+        client.handshake.auth.token ||
+        client.handshake.headers.authorization?.split(' ')[1];
 
       if (!token) {
         this.logger.warn(`Client ${client.id} rejected: No token provided`);
@@ -61,14 +65,17 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
       }
       this.userSockets.get(userId)!.add(client.id);
 
-      // Store userId in socket data
+      // Store userId and role in socket data
       client.data.userId = userId;
+      client.data.role = payload.roles || payload.role;
 
       // Join user's personal room
       client.join(`user_${userId}`);
 
       this.logger.log(`User ${userId} connected via socket ${client.id}`);
-      this.logger.debug(`Active connections for user ${userId}: ${this.userSockets.get(userId)!.size}`);
+      this.logger.debug(
+        `Active connections for user ${userId}: ${this.userSockets.get(userId)!.size}`,
+      );
 
       // Send connection confirmation
       client.emit('connected', {
@@ -76,7 +83,10 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
         userId,
       });
     } catch (error) {
-      this.logger.error(`Connection error for client ${client.id}:`, error.message);
+      this.logger.error(
+        `Connection error for client ${client.id}:`,
+        error.message,
+      );
       client.disconnect();
     }
   }
@@ -120,7 +130,9 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
    * Check if user is online
    */
   isUserOnline(userId: string): boolean {
-    return this.userSockets.has(userId) && this.userSockets.get(userId)!.size > 0;
+    return (
+      this.userSockets.has(userId) && this.userSockets.get(userId)!.size > 0
+    );
   }
 
   /**
@@ -165,5 +177,43 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
     const room = `booking_${bookingId}`;
     this.server.to(room).emit(event, data);
     this.logger.debug(`Broadcast ${event} to ${room}`);
+  }
+
+  /**
+   * Broadcast to admin room
+   */
+  broadcastToAdmins(event: string, data: any) {
+    this.server.to('admin_room').emit(event, data);
+    this.logger.debug(`Broadcast ${event} to admin_room`);
+  }
+
+  /**
+   * Client joins admin room (admin only)
+   */
+  @SubscribeMessage('join_admin_room')
+  handleJoinAdminRoom(@ConnectedSocket() client: Socket) {
+    const userRole = client.data.role;
+
+    // Check if user is admin
+    if (
+      Array.isArray(userRole)
+        ? userRole.includes('ADMIN')
+        : userRole === 'ADMIN'
+    ) {
+      client.join('admin_room');
+      this.logger.log(`User ${client.data.userId} joined admin_room`);
+      return {
+        event: 'joined_admin_room',
+        data: { success: true },
+      };
+    } else {
+      this.logger.warn(
+        `Unauthorized attempt to join admin_room by user ${client.data.userId}`,
+      );
+      return {
+        event: 'error',
+        data: { message: 'Unauthorized' },
+      };
+    }
   }
 }

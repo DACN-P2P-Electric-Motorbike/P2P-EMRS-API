@@ -121,8 +121,10 @@ export class BookingEventListener {
     this.logger.log(`Handling booking.cancelled event: ${event.bookingId}`);
 
     // Determine who to notify (opposite of who cancelled)
-    const receiverId = event.cancelledBy === 'renter' ? event.ownerId : event.renterId;
-    const senderId = event.cancelledBy === 'renter' ? event.renterId : event.ownerId;
+    const receiverId =
+      event.cancelledBy === 'renter' ? event.ownerId : event.renterId;
+    const senderId =
+      event.cancelledBy === 'renter' ? event.renterId : event.ownerId;
 
     // Create notification
     const notification = await this.notificationService.createNotification({

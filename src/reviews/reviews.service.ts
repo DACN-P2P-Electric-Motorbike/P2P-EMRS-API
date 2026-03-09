@@ -105,7 +105,10 @@ export class ReviewsService {
   /**
    * Slightly adjust renter trust score after leaving a review
    */
-  private async updateRenterTrustScore(userId: string, delta: number): Promise<void> {
+  private async updateRenterTrustScore(
+    userId: string,
+    delta: number,
+  ): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) return;
 
