@@ -11,9 +11,7 @@ interface DateRange {
 export class AdminDashboardService {
   private readonly logger = new Logger(AdminDashboardService.name);
 
-  constructor(
-    private readonly dashboardRepository: AdminDashboardRepository,
-  ) {}
+  constructor(private readonly dashboardRepository: AdminDashboardRepository) {}
 
   /**
    * Resolve period string or custom dates into DateRange objects
@@ -45,33 +43,85 @@ export class AdminDashboardService {
     switch (period) {
       case DashboardPeriod.THIS_MONTH: {
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const end = new Date(
+          now.getFullYear(),
+          now.getMonth() + 1,
+          0,
+          23,
+          59,
+          59,
+          999,
+        );
         const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const prevEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-        return { current: { start, end }, previous: { start: prevStart, end: prevEnd } };
+        const prevEnd = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          0,
+          23,
+          59,
+          59,
+          999,
+        );
+        return {
+          current: { start, end },
+          previous: { start: prevStart, end: prevEnd },
+        };
       }
 
       case DashboardPeriod.LAST_MONTH: {
         const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+        const end = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          0,
+          23,
+          59,
+          59,
+          999,
+        );
         const prevStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-        const prevEnd = new Date(now.getFullYear(), now.getMonth() - 1, 0, 23, 59, 59, 999);
-        return { current: { start, end }, previous: { start: prevStart, end: prevEnd } };
+        const prevEnd = new Date(
+          now.getFullYear(),
+          now.getMonth() - 1,
+          0,
+          23,
+          59,
+          59,
+          999,
+        );
+        return {
+          current: { start, end },
+          previous: { start: prevStart, end: prevEnd },
+        };
       }
 
       case DashboardPeriod.THIS_YEAR: {
         const start = new Date(now.getFullYear(), 0, 1);
         const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
         const prevStart = new Date(now.getFullYear() - 1, 0, 1);
-        const prevEnd = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
-        return { current: { start, end }, previous: { start: prevStart, end: prevEnd } };
+        const prevEnd = new Date(
+          now.getFullYear() - 1,
+          11,
+          31,
+          23,
+          59,
+          59,
+          999,
+        );
+        return {
+          current: { start, end },
+          previous: { start: prevStart, end: prevEnd },
+        };
       }
 
       case DashboardPeriod.ALL_TIME:
       default: {
         const start = new Date(0); // epoch
         const end = now;
-        return { current: { start, end }, previous: { start: new Date(0), end: new Date(0) } };
+        return {
+          current: { start, end },
+          previous: { start: new Date(0), end: new Date(0) },
+        };
       }
     }
   }
@@ -94,49 +144,64 @@ export class AdminDashboardService {
       `Fetching dashboard: ${current.start.toISOString()} → ${current.end.toISOString()}`,
     );
 
-    const [revenueStats, bookingStats, userStats, vehicleStats, chartData, recentTransactions] =
-      await Promise.all([
-        this.dashboardRepository.getRevenueStats(
-          current.start,
-          current.end,
-          previous.start,
-          previous.end,
-        ),
-        this.dashboardRepository.getBookingStats(
-          current.start,
-          current.end,
-          previous.start,
-          previous.end,
-        ),
-        this.dashboardRepository.getUserStats(
-          current.start,
-          current.end,
-          previous.start,
-          previous.end,
-        ),
-        this.dashboardRepository.getVehicleStats(),
-        this.dashboardRepository.getChartData(12),
-        this.dashboardRepository.getRecentTransactions(10),
-      ]);
+    const [
+      revenueStats,
+      bookingStats,
+      userStats,
+      vehicleStats,
+      chartData,
+      recentTransactions,
+    ] = await Promise.all([
+      this.dashboardRepository.getRevenueStats(
+        current.start,
+        current.end,
+        previous.start,
+        previous.end,
+      ),
+      this.dashboardRepository.getBookingStats(
+        current.start,
+        current.end,
+        previous.start,
+        previous.end,
+      ),
+      this.dashboardRepository.getUserStats(
+        current.start,
+        current.end,
+        previous.start,
+        previous.end,
+      ),
+      this.dashboardRepository.getVehicleStats(),
+      this.dashboardRepository.getChartData(12),
+      this.dashboardRepository.getRecentTransactions(10),
+    ]);
 
     return {
       metrics: {
         revenue: {
           total: revenueStats.current,
           previous_period: revenueStats.previous,
-          growth_percent: this.calcGrowth(revenueStats.current, revenueStats.previous),
+          growth_percent: this.calcGrowth(
+            revenueStats.current,
+            revenueStats.previous,
+          ),
         },
         bookings: {
           total: bookingStats.total,
           active: bookingStats.active,
           pending: bookingStats.pending,
           this_period: bookingStats.current,
-          growth_percent: this.calcGrowth(bookingStats.current, bookingStats.previous),
+          growth_percent: this.calcGrowth(
+            bookingStats.current,
+            bookingStats.previous,
+          ),
         },
         users: {
           total: userStats.total,
           new_this_period: userStats.currentNew,
-          growth_percent: this.calcGrowth(userStats.currentNew, userStats.prevNew),
+          growth_percent: this.calcGrowth(
+            userStats.currentNew,
+            userStats.prevNew,
+          ),
         },
         vehicles: vehicleStats,
       },
@@ -144,9 +209,7 @@ export class AdminDashboardService {
       recent_transactions: recentTransactions.map((b) => ({
         id: b.id,
         user_name: b.renter?.fullName ?? '',
-        vehicle_name: b.vehicle
-          ? `${b.vehicle.brand} ${b.vehicle.model}`
-          : '',
+        vehicle_name: b.vehicle ? `${b.vehicle.brand} ${b.vehicle.model}` : '',
         amount: b.payment?.amount ?? b.totalPrice,
         status: b.status,
         date: b.createdAt.toISOString(),

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { AdminBookingsRepository } from '../repositories/admin-bookings.repository';
 import { QueryBookingsDto } from '../dto/query-bookings.dto';
 import { UpdateBookingStatusDto } from '../dto/update-booking-status.dto';
@@ -11,9 +7,7 @@ import { UpdateBookingStatusDto } from '../dto/update-booking-status.dto';
 export class AdminBookingsService {
   private readonly logger = new Logger(AdminBookingsService.name);
 
-  constructor(
-    private readonly bookingsRepository: AdminBookingsRepository,
-  ) {}
+  constructor(private readonly bookingsRepository: AdminBookingsRepository) {}
 
   /**
    * Get paginated list of all bookings with optional filters

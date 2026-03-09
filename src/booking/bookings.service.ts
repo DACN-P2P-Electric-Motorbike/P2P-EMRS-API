@@ -337,7 +337,10 @@ export class BookingsService {
   /**
    * Decrease user trust score by a given amount (min 0)
    */
-  private async decreaseTrustScore(userId: string, amount: number): Promise<void> {
+  private async decreaseTrustScore(
+    userId: string,
+    amount: number,
+  ): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) return;
     const newScore = Math.max(0, user.trustScore - amount);

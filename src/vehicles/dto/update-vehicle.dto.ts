@@ -108,4 +108,3 @@ export class UpdateVehicleDto {
   @Type(() => Boolean)
   isAvailable?: boolean;
 }
-

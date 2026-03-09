@@ -84,9 +84,13 @@ export class AdminBookingsRepository {
     return this.prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
-        renter: { select: { id: true, fullName: true, email: true, phone: true } },
+        renter: {
+          select: { id: true, fullName: true, email: true, phone: true },
+        },
         owner: { select: { id: true, fullName: true, email: true } },
-        vehicle: { select: { id: true, model: true, brand: true, licensePlate: true } },
+        vehicle: {
+          select: { id: true, model: true, brand: true, licensePlate: true },
+        },
         payment: true,
       },
     });

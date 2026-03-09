@@ -41,7 +41,8 @@ export class AdminReportsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Top vehicles by booking count (Admin)',
-    description: 'Returns the most rented vehicles ranked by completed booking count.',
+    description:
+      'Returns the most rented vehicles ranked by completed booking count.',
   })
   @ApiQuery({
     name: 'limit',
@@ -64,7 +65,11 @@ export class AdminReportsController {
               model: 'Klara',
               brand: 'VINFAST',
               licensePlate: '59A-12345',
-              owner: { id: 'uuid', fullName: 'Nguyen Van A', email: 'a@gmail.com' },
+              owner: {
+                id: 'uuid',
+                fullName: 'Nguyen Van A',
+                email: 'a@gmail.com',
+              },
             },
           },
         ],
@@ -82,7 +87,8 @@ export class AdminReportsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Top owners by revenue (Admin)',
-    description: 'Returns the highest-earning vehicle owners ranked by total revenue.',
+    description:
+      'Returns the highest-earning vehicle owners ranked by total revenue.',
   })
   @ApiQuery({
     name: 'limit',

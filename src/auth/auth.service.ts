@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
@@ -23,6 +24,7 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 import { UserEntity } from './entities/user.entity';
 import { UserRole, UserStatus, OtpType } from '@prisma/client';
 import { CreateVehicleDto, VehiclesService } from 'src/vehicles';
+import { NewUserRegisteredEvent } from '../events/admin.events';
 
 export interface JwtPayload {
   sub: string;
@@ -41,6 +43,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
     private readonly vehiclesService: VehiclesService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -137,6 +140,12 @@ export class AuthService {
     });
 
     this.logger.log(`Successfully registered user: ${user.id}`);
+
+    // Emit admin alert event
+    this.eventEmitter.emit(
+      'user.registered',
+      new NewUserRegisteredEvent(user.id, user.fullName, user.email),
+    );
 
     // Generate access token
     const accessToken = this.generateAccessToken(user);

@@ -5,9 +5,7 @@ import { AdminReportsRepository } from '../repositories/admin-reports.repository
 export class AdminReportsService {
   private readonly logger = new Logger(AdminReportsService.name);
 
-  constructor(
-    private readonly reportsRepository: AdminReportsRepository,
-  ) {}
+  constructor(private readonly reportsRepository: AdminReportsRepository) {}
 
   /**
    * Top vehicles by completed booking count

@@ -344,9 +344,7 @@ export class PaymentsService implements OnModuleInit {
         );
       }
 
-      this.logger.log(
-        `MoMo payment URL generated for payment ${paymentId}`,
-      );
+      this.logger.log(`MoMo payment URL generated for payment ${paymentId}`);
       return {
         paymentUrl: data.payUrl ?? '',
         deeplink: data.deeplink ?? '',
@@ -444,7 +442,9 @@ export class PaymentsService implements OnModuleInit {
           where: { id: payment.id },
           data: { status: PaymentStatus.PENDING },
         });
-        this.logger.log(`PayOS payment ${payment.id} cancelled, reset to pending`);
+        this.logger.log(
+          `PayOS payment ${payment.id} cancelled, reset to pending`,
+        );
         return 'cancelled';
       }
     }
@@ -455,7 +455,10 @@ export class PaymentsService implements OnModuleInit {
   /**
    * Refund a completed payment
    */
-  async refundPayment(paymentId: string, userId: string): Promise<PaymentEntity> {
+  async refundPayment(
+    paymentId: string,
+    userId: string,
+  ): Promise<PaymentEntity> {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
       include: { booking: true },
@@ -463,10 +466,7 @@ export class PaymentsService implements OnModuleInit {
 
     if (!payment) throw new NotFoundException('Payment not found');
 
-    if (
-      payment.payerId !== userId &&
-      payment.receiverId !== userId
-    ) {
+    if (payment.payerId !== userId && payment.receiverId !== userId) {
       throw new BadRequestException('Access denied');
     }
 

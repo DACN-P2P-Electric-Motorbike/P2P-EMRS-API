@@ -41,32 +41,49 @@ export class AdminDashboardRepository {
   /**
    * Get booking stats for a given period
    */
-  async getBookingStats(currentStart: Date, currentEnd: Date, prevStart: Date, prevEnd: Date) {
-    const [total, active, pending, currentPeriodCount, prevPeriodCount] = await Promise.all([
-      this.prisma.booking.count(),
-      this.prisma.booking.count({
-        where: {
-          status: { in: [BookingStatus.CONFIRMED, BookingStatus.ONGOING] },
-        },
-      }),
-      this.prisma.booking.count({
-        where: { status: BookingStatus.PENDING },
-      }),
-      this.prisma.booking.count({
-        where: { createdAt: { gte: currentStart, lte: currentEnd } },
-      }),
-      this.prisma.booking.count({
-        where: { createdAt: { gte: prevStart, lte: prevEnd } },
-      }),
-    ]);
+  async getBookingStats(
+    currentStart: Date,
+    currentEnd: Date,
+    prevStart: Date,
+    prevEnd: Date,
+  ) {
+    const [total, active, pending, currentPeriodCount, prevPeriodCount] =
+      await Promise.all([
+        this.prisma.booking.count(),
+        this.prisma.booking.count({
+          where: {
+            status: { in: [BookingStatus.CONFIRMED, BookingStatus.ONGOING] },
+          },
+        }),
+        this.prisma.booking.count({
+          where: { status: BookingStatus.PENDING },
+        }),
+        this.prisma.booking.count({
+          where: { createdAt: { gte: currentStart, lte: currentEnd } },
+        }),
+        this.prisma.booking.count({
+          where: { createdAt: { gte: prevStart, lte: prevEnd } },
+        }),
+      ]);
 
-    return { total, active, pending, current: currentPeriodCount, previous: prevPeriodCount };
+    return {
+      total,
+      active,
+      pending,
+      current: currentPeriodCount,
+      previous: prevPeriodCount,
+    };
   }
 
   /**
    * Get user stats
    */
-  async getUserStats(currentStart: Date, currentEnd: Date, prevStart: Date, prevEnd: Date) {
+  async getUserStats(
+    currentStart: Date,
+    currentEnd: Date,
+    prevStart: Date,
+    prevEnd: Date,
+  ) {
     const [total, currentNew, prevNew] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({
@@ -84,13 +101,14 @@ export class AdminDashboardRepository {
    * Get vehicle stats (count by status)
    */
   async getVehicleStats() {
-    const [total, available, rented, maintenance, pendingApproval] = await Promise.all([
-      this.prisma.vehicle.count(),
-      this.prisma.vehicle.count({ where: { status: 'AVAILABLE' } }),
-      this.prisma.vehicle.count({ where: { status: 'RENTED' } }),
-      this.prisma.vehicle.count({ where: { status: 'MAINTENANCE' } }),
-      this.prisma.vehicle.count({ where: { status: 'PENDING_APPROVAL' } }),
-    ]);
+    const [total, available, rented, maintenance, pendingApproval] =
+      await Promise.all([
+        this.prisma.vehicle.count(),
+        this.prisma.vehicle.count({ where: { status: 'AVAILABLE' } }),
+        this.prisma.vehicle.count({ where: { status: 'RENTED' } }),
+        this.prisma.vehicle.count({ where: { status: 'MAINTENANCE' } }),
+        this.prisma.vehicle.count({ where: { status: 'PENDING_APPROVAL' } }),
+      ]);
 
     return { total, available, rented, maintenance, pendingApproval };
   }
@@ -98,15 +116,24 @@ export class AdminDashboardRepository {
   /**
    * Get monthly chart data (revenue + booking count) for the last N months
    */
-  async getChartData(months: number): Promise<
-    Array<{ month: string; revenue: number; bookings: number }>
-  > {
-    const results: Array<{ month: string; revenue: number; bookings: number }> = [];
+  async getChartData(
+    months: number,
+  ): Promise<Array<{ month: string; revenue: number; bookings: number }>> {
+    const results: Array<{ month: string; revenue: number; bookings: number }> =
+      [];
     const now = new Date();
 
     for (let i = months - 1; i >= 0; i--) {
       const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999);
+      const end = new Date(
+        now.getFullYear(),
+        now.getMonth() - i + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
 
       const [revenueAgg, bookingCount] = await Promise.all([
         this.prisma.payment.aggregate({

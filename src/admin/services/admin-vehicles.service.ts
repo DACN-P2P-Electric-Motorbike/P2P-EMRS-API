@@ -23,9 +23,7 @@ const ALLOWED_TRANSITIONS: Partial<Record<VehicleStatus, VehicleStatus[]>> = {
 export class AdminVehiclesService {
   private readonly logger = new Logger(AdminVehiclesService.name);
 
-  constructor(
-    private readonly vehiclesRepository: AdminVehiclesRepository,
-  ) {}
+  constructor(private readonly vehiclesRepository: AdminVehiclesRepository) {}
 
   /**
    * Get paginated list of vehicles with optional filters
@@ -66,10 +64,7 @@ export class AdminVehiclesService {
   /**
    * Update vehicle status with transition validation
    */
-  async updateVehicleStatus(
-    vehicleId: string,
-    dto: UpdateVehicleStatusDto,
-  ) {
+  async updateVehicleStatus(vehicleId: string, dto: UpdateVehicleStatusDto) {
     const vehicle = await this.vehiclesRepository.findById(vehicleId);
 
     if (!vehicle) {

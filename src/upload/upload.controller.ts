@@ -52,7 +52,10 @@ export class UploadController {
     schema: {
       type: 'object',
       properties: {
-        url: { type: 'string', example: 'https://bucket.s3.region.amazonaws.com/vehicles/uuid.jpg' },
+        url: {
+          type: 'string',
+          example: 'https://bucket.s3.region.amazonaws.com/vehicles/uuid.jpg',
+        },
         key: { type: 'string', example: 'vehicles/uuid.jpg' },
         fileName: { type: 'string', example: 'my-bike.jpg' },
       },
@@ -131,4 +134,3 @@ export class UploadController {
     return { message: 'File deleted successfully' };
   }
 }
-

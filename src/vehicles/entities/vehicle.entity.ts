@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Vehicle, VehicleStatus, VehicleType, VehicleBrand, VehicleFeature } from '@prisma/client';
+import {
+  Vehicle,
+  VehicleStatus,
+  VehicleType,
+  VehicleBrand,
+  VehicleFeature,
+} from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { Expose } from 'class-transformer';
 
@@ -36,7 +42,11 @@ export class VehicleEntity implements Vehicle {
   @Expose()
   status: VehicleStatus;
 
-  @ApiProperty({ description: 'Vehicle features', enum: VehicleFeature, isArray: true })
+  @ApiProperty({
+    description: 'Vehicle features',
+    enum: VehicleFeature,
+    isArray: true,
+  })
   @Expose()
   features: VehicleFeature[];
 
