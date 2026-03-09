@@ -26,6 +26,44 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 export class ReviewsController {
   constructor(private readonly reviewsService: ReviewsService) {}
 
+  @Get('my-reviews')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get my reviews',
+    description: 'Get all reviews created by the current user',
+  })
+  @ApiResponse({ status: 200, type: [ReviewEntity] })
+  async getMyReviews(
+    @CurrentUser('id') userId: string,
+  ): Promise<ReviewEntity[]> {
+    return this.reviewsService.getUserReviews(userId);
+  }
+
+  @Get('trust-score')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get trust score breakdown',
+    description:
+      'Get current user trust score with detailed breakdown (rating, cancellations, violations)',
+  })
+  @ApiResponse({ status: 200 })
+  async getTrustScoreBreakdown(@CurrentUser('id') userId: string) {
+    return this.reviewsService.getTrustScoreBreakdown(userId);
+  }
+
+  @Get('trust-score/:userId')
+  @ApiOperation({
+    summary: 'Get trust score breakdown for a user',
+    description: 'Get trust score with breakdown for any user (public)',
+  })
+  @ApiParam({ name: 'userId', description: 'User ID' })
+  @ApiResponse({ status: 200 })
+  async getUserTrustScore(@Param('userId') userId: string) {
+    return this.reviewsService.getTrustScoreBreakdown(userId);
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

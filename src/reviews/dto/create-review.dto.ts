@@ -18,6 +18,14 @@ export class CreateReviewDto {
   @IsNotEmpty()
   vehicleId: string;
 
+  @ApiPropertyOptional({
+    description: 'Booking ID (to tie review to a specific booking/trip)',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsOptional()
+  @IsUUID()
+  bookingId?: string;
+
   @ApiProperty({
     description: 'Rating (1-5 stars)',
     example: 5,

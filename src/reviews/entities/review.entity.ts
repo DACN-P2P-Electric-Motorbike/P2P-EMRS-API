@@ -31,11 +31,19 @@ export class ReviewEntity implements Review {
   @Expose()
   updatedAt: Date;
 
+  @ApiPropertyOptional({ description: 'Reviewer info' })
+  @Expose()
+  user?: { fullName: string; avatarUrl: string | null };
+
+  @ApiPropertyOptional({ description: 'Vehicle info' })
+  @Expose()
+  vehicle?: { name: string; brand: string; model: string; images: string[] };
+
   constructor(partial: Partial<ReviewEntity>) {
     Object.assign(this, partial);
   }
 
-  static fromPrisma(review: Review): ReviewEntity {
+  static fromPrisma(review: any): ReviewEntity {
     return new ReviewEntity(review);
   }
 }
