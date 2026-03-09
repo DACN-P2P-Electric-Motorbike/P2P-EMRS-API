@@ -265,7 +265,6 @@ export class OwnerBookingsService {
 
     return BookingEntity.fromPrisma(updatedBooking);
   }
-}
 
   private async adjustTrustScore(userId: string, delta: number): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
