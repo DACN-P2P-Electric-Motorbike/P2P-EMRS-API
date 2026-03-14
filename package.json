@@ -18,9 +18,15 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:unit": "jest --config jest.config.ts --testPathPattern=spec --runInBand",
+    "test:integration": "jest --config jest.config.ts --testPathPattern=e2e-spec --runInBand",
+    "test:coverage": "jest --config jest.config.ts --coverage --coverageDirectory=coverage/member-a",
+    "test:member-a": "jest --config jest.config.ts --testPathPattern='vehicle|booking' --coverage --coverageDirectory=coverage/member-a --collectCoverageFrom='src/vehicles/**/*.ts' --collectCoverageFrom='src/booking/**/*.ts'",
     "docker:dev": "docker compose up --build",
     "docker:prod": "docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "test:db:up": "docker compose -f docker-compose.test.yml up -d",
+    "test:db:down": "docker compose -f docker-compose.test.yml down"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.948.0",
@@ -84,22 +90,5 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
-  },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
   }
 }

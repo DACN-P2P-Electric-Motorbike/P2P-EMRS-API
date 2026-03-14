@@ -1,0 +1,39 @@
+version: '3.9'
+
+# Isolated PostgreSQL instance with PostGIS extension for integration tests.
+# DB name: p2p_test | Port: 5433
+services:
+  postgres-test:
+    image: postgis/postgis:15-3.3
+    container_name: p2p_emrs_test_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: p2p_test
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d p2p_test']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: p2p_emrs_test_redis
+    restart: unless-stopped
+    ports:
+      - '6380:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_test_data:
+    name: p2p_emrs_test_postgres_data
