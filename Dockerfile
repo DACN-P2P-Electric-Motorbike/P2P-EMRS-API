@@ -55,13 +55,18 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # Copy built artifacts from builder
-COPY --from=builder --chown=nodeuser:nodegroup /app/dist ./dist
+COPY --from=builder /app/dist ./dist
 
 # Copy production dependencies from deps stage
-COPY --from=deps --chown=nodeuser:nodegroup /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
 
 # Copy Prisma schema (required for some Prisma ops like migrate if needed, though usually run separately)
-COPY --from=builder --chown=nodeuser:nodegroup /app/prisma ./prisma
+COPY --from=builder /app/prisma ./prisma
+
+# Set ownership and restrict permissions for security
+RUN chown -R nodeuser:nodegroup ./dist ./node_modules ./prisma \
+    && chmod -R 550 ./dist ./prisma \
+    && chmod -R 555 ./node_modules
 
 # Change to non-root user
 USER nodeuser
