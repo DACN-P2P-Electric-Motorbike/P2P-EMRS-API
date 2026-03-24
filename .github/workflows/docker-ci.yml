@@ -16,14 +16,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js 
+        uses: actions/setup-node@v4 
+        with: 
+          node-version: 18
+      
+      - name: Install dependencies 
+        run: npm install
+      
       - name: Run tests with coverage
         run: npm run test:cov
 
       - name: SonarQube Scan
         run: sonar-scanner
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
