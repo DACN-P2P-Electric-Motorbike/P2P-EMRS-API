@@ -55,8 +55,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # Copy built artifacts from builder
-COPY --from=builder --chown=nodeuser:nodegroup /app/dist ./dist
-
+COPY --from=builder /app/dist ./dist
+RUN chown -R nodeuser:nodegroup ./dist \
+    && chmod -R 550 ./dist 
 # Copy production dependencies from deps stage
 COPY --from=deps --chown=nodeuser:nodegroup /app/node_modules ./node_modules
 
