@@ -131,7 +131,9 @@ export class AdminDashboardService {
    */
   private calcGrowth(current: number, previous: number): number {
     if (previous === 0) return current > 0 ? 100 : 0;
-    return parseFloat((((current - previous) / previous) * 100).toFixed(2));
+    return Number.parseFloat(
+      (((current - previous) / previous) * 100).toFixed(2),
+    );
   }
 
   /**

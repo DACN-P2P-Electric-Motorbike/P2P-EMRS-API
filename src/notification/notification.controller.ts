@@ -49,8 +49,8 @@ export class NotificationController {
   ): Promise<{ notifications: NotificationEntity[]; unreadCount: number }> {
     return this.notificationService.getUserNotifications(
       userId,
-      limit ? parseInt(String(limit)) : 50,
-      offset ? parseInt(String(offset)) : 0,
+      limit ? Number.parseInt(String(limit)) : 50,
+      offset ? Number.parseInt(String(offset)) : 0,
     );
   }
 
