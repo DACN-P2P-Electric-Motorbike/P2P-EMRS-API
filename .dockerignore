@@ -28,10 +28,8 @@ logs
 
 # Configuration files
 docker-compose*.yml
-Dockerfile
 .dockerignore
 Makefile
-nest-cli.json
 
 # Documentation
 README*
