@@ -1,16 +1,49 @@
+# Build artifacts
 node_modules
 npm-debug.log
 dist
 build
+coverage
+
+# Version control
 .git
 .gitignore
+.github
+
+# IDE and editors
 .vscode
 .idea
+*.swp
+*.swo
+*~
+
+# Environment files (sensitive!)
 .env
 .env.*
 !.env.example
-coverage
+
+# Logs
+logs
+*.log
+
+# Configuration files
 docker-compose*.yml
 Dockerfile
-README.md
+.dockerignore
 Makefile
+nest-cli.json
+
+# Documentation
+README*
+*.md
+
+# Testing
+test
+jest.config.ts
+*.spec.ts
+jest-e2e.json
+
+# Other
+.prettierrc
+.DS_Store
+*.pem

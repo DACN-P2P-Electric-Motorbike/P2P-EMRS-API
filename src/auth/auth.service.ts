@@ -9,6 +9,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as bcrypt from 'bcrypt';
+import { randomInt } from 'crypto'; // Security: Cryptographically secure random generation
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto, LoginDto } from './dto';
@@ -81,9 +82,12 @@ export class AuthService {
 
   /**
    * Generate 5-digit OTP code
+   * Security: Uses cryptographically secure random number generation
+   * Math.random() is NOT suitable for security-sensitive operations
    */
   private generateOtpCode(): string {
-    return Math.floor(10000 + Math.random() * 90000).toString();
+    // randomInt(10000, 100000) returns a random integer in range [10000, 99999]
+    return randomInt(10000, 100000).toString();
   }
 
   /**

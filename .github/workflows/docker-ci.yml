@@ -17,19 +17,24 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # Security: Pin to full commit SHA to prevent supply chain attacks
+        # v4 points to the latest v4.x.x, but commits can be modified
+        uses: actions/checkout@c85c95e3d7251135ab7dc9d055be0fb1f3039537 # v4.1.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        # Security: Pin to full commit SHA instead of version tag
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa601ebf42355a # v3.3.0
 
-      - name: Log in to Docker Hub
+      - # Security: Pin to full commit SHA instead of version tag
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52ea9cf2b2f1b1 # v3.0.0
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels) for Docker
-        id: meta
+        # Security: Pin to full commit SHA instead of version tag
+        uses: docker/metadata-action@8e5442c4ef9f78752691e7d7d0b67c9d60ce73f1 # v5.5.1
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/p2p-emrs
@@ -38,7 +43,8 @@ jobs:
             type=sha
             type=ref,event=branch
 
-      - name: Build and push Docker image
+      - # Security: Pin to full commit SHA instead of version tag
+        uses: docker/build-push-action@2cdde995de11925a030ce8070c3e77a23c8c38c8 # v5.3.0
         uses: docker/build-push-action@v5
         with:
           context: .
