@@ -13,7 +13,7 @@ services:
       - /app/node_modules # Avoid overriding node_modules inside container
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-emrs_user}:${POSTGRES_PASSWORD:-emrs_secret}@postgres:5432/${POSTGRES_DB:-emrs_db}?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-emrs_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-emrs_db}?schema=public
       - JWT_SECRET=${JWT_SECRET:-dev_secret_key}
     command: npm run start:dev
     depends_on:
