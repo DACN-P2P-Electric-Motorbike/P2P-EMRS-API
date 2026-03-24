@@ -39,6 +39,11 @@ jobs:
 
       - name: SonarQube Scan
         uses: SonarSource/sonarcloud-github-action@v2
+        with:
+          args: >
+            -Dsonar.projectKey=dacn-p2p-electric-motorbike
+            -Dsonar.organization=dacn-p2p-electric-motorbike
+            -Dsonar.host.url=https://sonarcloud.io
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
