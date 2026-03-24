@@ -16,6 +16,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Run tests with coverage
+        run: npm run test:cov
+
+      - name: SonarQube Scan
+        run: sonar-scanner
+        
       - name: Checkout repository
         # Security: Pin to full commit SHA to prevent supply chain attacks
         # v4 points to the latest v4.x.x, but commits can be modified
