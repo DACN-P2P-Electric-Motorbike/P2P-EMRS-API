@@ -237,7 +237,7 @@ export class NotificationService implements OnModuleInit {
     ]);
 
     return {
-      notifications: notifications.map(NotificationEntity.fromPrisma),
+      notifications: notifications.map((notification) => NotificationEntity.fromPrisma(notification)),
       unreadCount,
     };
   }

@@ -107,7 +107,7 @@ export class VehiclesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return vehicles.map(VehicleEntity.fromPrisma);
+    return vehicles.map((vehicle) => VehicleEntity.fromPrisma(vehicle));
   }
 
   /**
@@ -331,7 +331,7 @@ export class VehiclesService {
     ]);
 
     return {
-      vehicles: vehicles.map(VehicleEntity.fromPrisma),
+      vehicles: vehicles.map((vehicle) => VehicleEntity.fromPrisma(vehicle)),
       total,
     };
   }
