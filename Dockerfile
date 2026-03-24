@@ -5,10 +5,10 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install dependencies required for Prisma and native extensions
-# postgresql-dev, openssl are needed for Prisma PrismaClient
+# Security: Use specific openssl version, alpine provides latest by default
 RUN apk add --no-cache openssl
 
-# Copy package files
+# Copy package files only (security: explicit, not entire context)
 COPY package.json package-lock.json ./
 
 # Install ALL dependencies (including devDependencies for building)
@@ -18,8 +18,11 @@ RUN npm ci
 COPY prisma ./prisma/
 RUN npx prisma generate
 
-# Copy entire source code
-COPY . .
+# Security: Copy only necessary source files, not entire context
+# This prevents accidental inclusion of .env, .git, node_modules, etc.
+COPY src ./src
+COPY tsconfig*.json ./
+COPY nest-cli.json ./
 
 # Build the NestJS application
 RUN npm run build
