@@ -51,7 +51,11 @@ export class ReviewsService {
 
     if (dto.bookingId) {
       const completedTrips = await this.prisma.trip.count({
-        where: { renterId: userId, vehicleId: dto.vehicleId, status: 'COMPLETED' },
+        where: {
+          renterId: userId,
+          vehicleId: dto.vehicleId,
+          status: 'COMPLETED',
+        },
       });
       const reviewCount = await this.prisma.review.count({
         where: { userId, vehicleId: dto.vehicleId },

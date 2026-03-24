@@ -76,7 +76,7 @@ export class AdminVehiclesService {
 
     // Validate the transition
     const allowedNext = ALLOWED_TRANSITIONS[currentStatus];
-    if (!allowedNext || !allowedNext.includes(newStatus)) {
+    if (!allowedNext?.includes(newStatus)) {
       throw new BadRequestException(
         `Invalid status transition: ${currentStatus} → ${newStatus}. ` +
           `Allowed transitions from ${currentStatus}: [${allowedNext?.join(', ') ?? 'none'}]`,

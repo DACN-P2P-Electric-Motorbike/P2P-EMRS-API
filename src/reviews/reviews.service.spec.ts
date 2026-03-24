@@ -62,10 +62,7 @@ describe('ReviewsService', () => {
     prisma = mockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ReviewsService,
-        { provide: PrismaService, useValue: prisma },
-      ],
+      providers: [ReviewsService, { provide: PrismaService, useValue: prisma }],
     }).compile();
 
     service = module.get<ReviewsService>(ReviewsService);
@@ -95,7 +92,10 @@ describe('ReviewsService', () => {
 
     it('should throw BadRequestException when review already exists (no bookingId)', async () => {
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.review.findFirst.mockResolvedValue(makeReview());
 
       await expect(service.createReview(USER_ID, dto)).rejects.toThrow(
@@ -106,7 +106,10 @@ describe('ReviewsService', () => {
     it('should throw BadRequestException when all trips already reviewed (with bookingId)', async () => {
       const dtoWithBooking = { ...dto, bookingId: 'booking-uuid' };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.trip.count.mockResolvedValue(2);
       prisma.review.count.mockResolvedValue(2);
 
@@ -118,7 +121,10 @@ describe('ReviewsService', () => {
     it('should allow review when reviewCount < completedTrips (with bookingId)', async () => {
       const dtoWithBooking = { ...dto, bookingId: 'booking-uuid' };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.trip.count.mockResolvedValue(3);
       prisma.review.count.mockResolvedValue(2);
       prisma.review.create.mockResolvedValue(makeReview());
@@ -141,7 +147,10 @@ describe('ReviewsService', () => {
 
     beforeEach(() => {
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.review.findFirst.mockResolvedValue(null);
       prisma.review.create.mockResolvedValue(makeReview({ rating: 4 }));
       prisma.review.findMany.mockResolvedValue([makeReview({ rating: 4 })]);
@@ -191,12 +200,17 @@ describe('ReviewsService', () => {
     const createReviewWithRating = async (rating: number) => {
       const dto = { vehicleId: VEHICLE_ID, rating, comment: null };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.review.findFirst.mockResolvedValue(null);
       prisma.review.create.mockResolvedValue(makeReview({ rating }));
       prisma.review.findMany.mockResolvedValue([makeReview({ rating })]);
       prisma.vehicle.update.mockResolvedValue(makeVehicle());
-      prisma.user.findUnique.mockResolvedValue(makeUser({ id: OWNER_ID, trustScore: 80 }));
+      prisma.user.findUnique.mockResolvedValue(
+        makeUser({ id: OWNER_ID, trustScore: 80 }),
+      );
       prisma.user.update.mockResolvedValue(makeUser());
 
       await service.createReview(USER_ID, dto);
@@ -253,7 +267,10 @@ describe('ReviewsService', () => {
     it('should not exceed 100', async () => {
       const dto = { vehicleId: VEHICLE_ID, rating: 5 };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.review.findFirst.mockResolvedValue(null);
       prisma.review.create.mockResolvedValue(makeReview());
       prisma.review.findMany.mockResolvedValue([makeReview()]);
@@ -272,12 +289,17 @@ describe('ReviewsService', () => {
     it('should not go below 0', async () => {
       const dto = { vehicleId: VEHICLE_ID, rating: 1 };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.review.findFirst.mockResolvedValue(null);
       prisma.review.create.mockResolvedValue(makeReview({ rating: 1 }));
       prisma.review.findMany.mockResolvedValue([makeReview({ rating: 1 })]);
       prisma.vehicle.update.mockResolvedValue(makeVehicle());
-      prisma.user.findUnique.mockResolvedValue(makeUser({ id: OWNER_ID, trustScore: 1 }));
+      prisma.user.findUnique.mockResolvedValue(
+        makeUser({ id: OWNER_ID, trustScore: 1 }),
+      );
       prisma.user.update.mockResolvedValue(makeUser());
 
       await service.createReview(USER_ID, dto);
@@ -296,7 +318,10 @@ describe('ReviewsService', () => {
     it('should calculate average from multiple reviews', async () => {
       const dto = { vehicleId: VEHICLE_ID, rating: 4 };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      prisma.trip.findFirst.mockResolvedValue({ id: 'trip-1', status: 'COMPLETED' });
+      prisma.trip.findFirst.mockResolvedValue({
+        id: 'trip-1',
+        status: 'COMPLETED',
+      });
       prisma.review.findFirst.mockResolvedValue(null);
       prisma.review.create.mockResolvedValue(makeReview({ rating: 4 }));
       prisma.review.findMany.mockResolvedValue([
@@ -331,10 +356,7 @@ describe('ReviewsService', () => {
     it('should return full breakdown with correct penalty calculations', async () => {
       prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 72 }));
       prisma.review.count.mockResolvedValue(5);
-      prisma.vehicle.findMany.mockResolvedValue([
-        { id: 'v1' },
-        { id: 'v2' },
-      ]);
+      prisma.vehicle.findMany.mockResolvedValue([{ id: 'v1' }, { id: 'v2' }]);
       prisma.review.aggregate.mockResolvedValue({
         _avg: { rating: 4.2 },
         _count: { id: 8 },
@@ -413,7 +435,12 @@ describe('ReviewsService', () => {
       prisma.review.findMany.mockResolvedValue([
         makeReview({
           user: { fullName: 'Test', avatarUrl: null },
-          vehicle: { name: 'EV1', brand: 'VinFast', model: 'Klara', images: [] },
+          vehicle: {
+            name: 'EV1',
+            brand: 'VinFast',
+            model: 'Klara',
+            images: [],
+          },
         }),
       ]);
 

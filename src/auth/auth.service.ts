@@ -135,7 +135,7 @@ export class AuthService {
         idCardNum: dto.idCardNum,
         address: dto.address,
         status: UserStatus.ACTIVE,
-        trustScore: 100.0,
+        trustScore: 100,
       },
     });
 
@@ -407,12 +407,6 @@ export class AuthService {
         },
       },
     });
-
-    const vehicle = await this.vehiclesService.registerVehicle(
-      userId,
-      user.roles,
-      vehicleData,
-    );
 
     // 2. Generate new JWT with updated roles
     const newToken = this.generateAccessToken(user);

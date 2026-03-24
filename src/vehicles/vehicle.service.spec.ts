@@ -20,7 +20,6 @@ import {
   VehicleStatus,
   VehicleType,
   VehicleBrand,
-  VehicleFeature,
   UserRole,
   Prisma,
 } from '@prisma/client';

@@ -529,27 +529,6 @@ describe('FLOW 3 — Cancel and Re-availability', () => {
  * we simulate the auth verification logic directly.
  */
 describe('WebSocket Security — booking:track', () => {
-  /** Simulates the server-side JWT guard logic for WS handshake */
-  function simulateWsAuth(token: string | undefined): {
-    connected: boolean;
-    error?: string;
-  } {
-    if (!token) {
-      return { connected: false, error: 'Missing authentication token' };
-    }
-
-    // Simulate token validation
-    if (token === 'invalid-token' || token === 'expired-token') {
-      return { connected: false, error: 'Invalid or expired token' };
-    }
-
-    if (token.startsWith('valid-')) {
-      return { connected: true };
-    }
-
-    return { connected: false, error: 'Unauthorized' };
-  }
-
   it('should reject connection WITHOUT token → error event and disconnect', () => {
     // Arrange
     const noToken = undefined;
@@ -602,19 +581,6 @@ describe('WebSocket Security — booking:track', () => {
       },
     };
 
-    // Simulate gateway handler
-    function handleTrackBooking(
-      data: { bookingId: string; lat: number; lng: number },
-      ownerId: string,
-      ownerSocket: any,
-    ) {
-      ownerSocket.emit('location:update', {
-        bookingId: data.bookingId,
-        lat: data.lat,
-        lng: data.lng,
-      });
-    }
-
     const trackData = { bookingId: BOOKING_ID, lat: 10.77, lng: 106.69 };
 
     // Act
@@ -638,4 +604,38 @@ function futureDate(offsetHours: number): Date {
   const d = new Date();
   d.setHours(d.getHours() + offsetHours);
   return d;
+}
+
+/** Simulates the server-side JWT guard logic for WS handshake */
+function simulateWsAuth(token: string | undefined): {
+  connected: boolean;
+  error?: string;
+} {
+  if (!token) {
+    return { connected: false, error: 'Missing authentication token' };
+  }
+
+  // Simulate token validation
+  if (token === 'invalid-token' || token === 'expired-token') {
+    return { connected: false, error: 'Invalid or expired token' };
+  }
+
+  if (token.startsWith('valid-')) {
+    return { connected: true };
+  }
+
+  return { connected: false, error: 'Unauthorized' };
+}
+
+// Simulate gateway handler
+function handleTrackBooking(
+  data: { bookingId: string; lat: number; lng: number },
+  ownerId: string,
+  ownerSocket: any,
+) {
+  ownerSocket.emit('location:update', {
+    bookingId: data.bookingId,
+    lat: data.lat,
+    lng: data.lng,
+  });
 }

@@ -89,7 +89,7 @@ export function createMockVehicle(
     licenseBack: 'https://example.com/license-back.jpg',
     ownerId: OWNER_ID,
     totalTrips: 0,
-    totalRating: 5.0,
+    totalRating: 5,
     reviewCount: 0,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),

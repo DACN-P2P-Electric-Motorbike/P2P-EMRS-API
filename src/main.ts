@@ -63,4 +63,7 @@ async function bootstrap() {
   logger.log(`📚 Swagger documentation: http://localhost:${port}/api/docs`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error('Failed to start application:', err);
+  process.exit(1);
+});

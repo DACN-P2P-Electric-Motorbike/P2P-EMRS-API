@@ -5,8 +5,8 @@ import {
   VehicleType,
   VehicleBrand,
   VehicleFeature,
+  Prisma,
 } from '@prisma/client';
-import { Prisma } from '@prisma/client';
 import { Expose } from 'class-transformer';
 
 export class VehicleEntity implements Vehicle {
