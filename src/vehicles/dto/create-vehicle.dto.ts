@@ -22,7 +22,7 @@ export class CreateVehicleDto {
   })
   @IsString()
   @IsNotEmpty({ message: 'License plate is required' })
-  @Matches(/^[0-9]{2}[A-Z]?-?[A-Z]?[0-9]{4,6}$/, {
+  @Matches(/^\d{2}[A-Z]?-?[A-Z]?\d{4,6}$/, {
     message:
       'License plate must be in Vietnamese format (e.g., 59A-12345 or 64-K28685)',
   })

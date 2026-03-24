@@ -65,7 +65,7 @@ export function resetPrismaMock(): void {
           (methodKey) => {
             const method = delegate[methodKey];
             if (typeof method === 'function' && 'mockReset' in method) {
-              (method as jest.Mock).mockReset();
+              method.mockReset();
             }
           },
         );
@@ -73,7 +73,7 @@ export function resetPrismaMock(): void {
     },
   );
   // Re-setup $transaction so it still delegates by default
-  (prismaMock.$transaction as jest.Mock).mockImplementation(
-    (fn: (prisma: any) => any) => fn(prismaMock),
+  prismaMock.$transaction.mockImplementation((fn: (prisma: any) => any) =>
+    fn(prismaMock),
   );
 }

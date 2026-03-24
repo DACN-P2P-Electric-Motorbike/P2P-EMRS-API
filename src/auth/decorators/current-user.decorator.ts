@@ -9,7 +9,7 @@ export const CurrentUser = createParamDecorator(
   (
     data: keyof UserEntity | undefined,
     ctx: ExecutionContext,
-  ): UserEntity | any => {
+  ): UserEntity | unknown => {
     const request = ctx.switchToHttp().getRequest();
     const user = request.user as UserEntity;
 

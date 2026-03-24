@@ -590,7 +590,7 @@ describe('BookingsService', () => {
       expect(succeeded).toHaveLength(1);
       expect(failed).toHaveLength(1);
 
-      const failedResult = failed[0] as PromiseRejectedResult;
+      const failedResult = failed[0];
       expect(failedResult.reason).toBeInstanceOf(ConflictException);
     });
 

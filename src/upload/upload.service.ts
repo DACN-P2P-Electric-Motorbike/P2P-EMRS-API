@@ -21,7 +21,7 @@ export class UploadService {
   private readonly bucketUrl: string;
   private readonly region: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(private readonly configService: ConfigService) {
     this.region =
       this.configService.get<string>('AWS_REGION') || 'ap-southeast-1';
     this.bucketName =

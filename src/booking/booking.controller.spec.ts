@@ -11,7 +11,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { BookingStatus } from '@prisma/client';
@@ -22,7 +21,6 @@ import { BookingEntity } from './entities/booking.entity';
 import {
   createMockBooking,
   RENTER_ID,
-  BOOKING_OWNER_ID,
   BOOKED_VEHICLE_ID,
   BOOKING_ID,
 } from '../../test/factories/booking.factory';

@@ -14,12 +14,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  VehicleStatus,
-  VehicleType,
-  VehicleBrand,
-  UserRole,
-} from '@prisma/client';
+import { VehicleStatus, VehicleBrand, UserRole } from '@prisma/client';
 
 import { VehiclesController } from './vehicles.controller';
 import { VehiclesService } from './vehicles.service';

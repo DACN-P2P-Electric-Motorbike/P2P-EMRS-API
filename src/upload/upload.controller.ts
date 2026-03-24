@@ -2,14 +2,10 @@ import {
   Controller,
   Post,
   Delete,
-  Body,
   UseGuards,
   UseInterceptors,
   UploadedFile,
   UploadedFiles,
-  ParseFilePipe,
-  FileTypeValidator,
-  MaxFileSizeValidator,
   Query,
 } from '@nestjs/common';
 import {
