@@ -41,7 +41,7 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@v2
         with:
           args: >
-            -Dsonar.projectKey=dacn-p2p-electric-motorbike
+            -Dsonar.projectKey=DACN-P2P-Electric-Motorbike_P2P-EMRS-API
             -Dsonar.organization=dacn-p2p-electric-motorbike
             -Dsonar.host.url=https://sonarcloud.io
         env:
