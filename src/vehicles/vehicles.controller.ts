@@ -118,10 +118,10 @@ export class VehiclesController {
   ): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     return this.vehiclesService.getAvailableVehicles({
       type,
-      minPrice: minPrice ? parseFloat(minPrice) : undefined,
-      maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-      limit: limit ? parseInt(limit) : undefined,
-      offset: offset ? parseInt(offset) : undefined,
+      minPrice: minPrice ? Number.parseFloat(minPrice) : undefined,
+      maxPrice: maxPrice ? Number.parseFloat(maxPrice) : undefined,
+      limit: limit ? Number.parseInt(limit) : undefined,
+      offset: offset ? Number.parseInt(offset) : undefined,
     });
   }
 
