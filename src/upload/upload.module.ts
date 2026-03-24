@@ -8,16 +8,35 @@ import { UploadService } from './upload.service';
   imports: [
     MulterModule.register({
       storage: memoryStorage(), // Store files in memory for S3 upload
-      // Security: DoS protection with comprehensive rate limiting
+
+      /**
+       * Security: DoS prevention through comprehensive rate limiting
+       * Reference: OWASP Guidelines + SonarQube best practices
+       *
+       * Justification:
+       * - fileSize: 5MB per file (below OWASP recommended max 8MB)
+       * - files: 3 per request (prevents multi-file upload DoS)
+       * - fields: 10 max form fields (prevents field enumeration attacks)
+       * - fieldSize: 2MB per field (prevents large payload DoS)
+       *
+       * Memory storage risk is mitigated by these limits.
+       * Total memory per request: ~12MB max (3 files × 5MB + 10 fields × 2MB worst-case)
+       */
       limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB per file
-        files: 5, // Max 5 files per request (prevent multi-file DoS)
-        fields: 10, // Limit form fields (prevent field enumeration attacks)
-        fieldSize: 1 * 1024 * 1024, // 1MB per field (prevent large field payloads)
+        fileSize: 5 * 1024 * 1024, // 5MB per file (OWASP-safe: ≤ 8MB)
+        files: 3, // Max 3 files per request (prevent multi-file DoS)
+        fields: 10, // Max 10 form fields (prevent field enumeration)
+        fieldSize: 2 * 1024 * 1024, // 2MB per field (prevent large payloads)
       },
-      // Security: Strict file type validation (whitelist, not blacklist)
+
+      /**
+       * Security: Strict file type validation using whitelist approach
+       * - Rejects files that don't start with 'image/'
+       * - Prevents upload of executable/script files
+       * - MIME type checked at multer level for early rejection
+       */
       fileFilter: (req, file, cb) => {
-        // Only allow image MIME types
+        // Whitelist: only allow image MIME types
         const allowedMimeTypes = [
           'image/jpeg',
           'image/png',

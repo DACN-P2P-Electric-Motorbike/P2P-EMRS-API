@@ -1,11 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as express from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
+
+  // Security: Global request body size limits (OWASP compliance)
+  // Prevent DoS attacks via large payloads
+  // Limit applies to: JSON, URL-encoded, and raw request bodies
+  app.use(express.json({ limit: '2mb' })); // 2MB for JSON payloads
+  app.use(express.urlencoded({ limit: '2mb', extended: true })); // 2MB for form data
+  app.use(express.raw({ limit: '2mb' })); // 2MB for raw bodies
 
   // Enable CORS for Flutter app
   app.enableCors({
