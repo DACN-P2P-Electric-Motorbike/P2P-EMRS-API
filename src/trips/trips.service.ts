@@ -121,8 +121,14 @@ export class TripsService {
 
     this.logger.log(`Trip ${trip.id} started successfully`);
 
-    // TODO: Send notification to owner that trip has started
-    // TODO: Start tracking vehicle location in real-time
+    /**
+     * ISSUE: Notification and real-time tracking not yet implemented
+     * - Send notification to owner that trip has started
+     * - Start tracking vehicle location in real-time via WebSocket
+     * - Consider event-driven architecture (EventEmitter2) for decoupling
+     */
+    // this.eventEmitter.emit('trip.started', { tripId: trip.id, userId });
+    // this.notificationService.notifyOwner(...);
 
     return TripEntity.fromPrisma(trip);
   }
@@ -211,8 +217,14 @@ export class TripsService {
       `Trip ${tripId} completed. Distance: ${distanceTraveled.toFixed(2)}km, Duration: ${durationMinutes}min`,
     );
 
-    // TODO: Send notification to owner that trip has ended
-    // TODO: Trigger payment processing
+    /**
+     * ISSUE: Payment and owner notification not yet implemented
+     * - Send notification to owner that trip has ended
+     * - Trigger payment processing through PaymentsService
+     * - Consider async event handling to prevent blocking
+     */
+    // this.eventEmitter.emit('trip.completed', { tripId, distanceTraveled, duration: durationMinutes });
+    // await this.paymentsService.processPaymentForTrip(trip.bookingId);
 
     return TripEntity.fromPrisma(updatedTrip);
   }

@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional } from 'class-validator';
 
 export enum DashboardPeriod {
   THIS_MONTH = 'this_month',

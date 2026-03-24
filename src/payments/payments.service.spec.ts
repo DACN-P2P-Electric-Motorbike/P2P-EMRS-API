@@ -217,20 +217,14 @@ describe('PaymentsService', () => {
     it('should return null when no payment exists for the booking', async () => {
       prisma.booking.findUnique.mockResolvedValue(makeBooking());
       prisma.payment.findUnique.mockResolvedValue(null);
-      const result = await service.getPaymentByBookingId(
-        BOOKING_ID,
-        RENTER_ID,
-      );
+      const result = await service.getPaymentByBookingId(BOOKING_ID, RENTER_ID);
       expect(result).toBeNull();
     });
 
     it('should return the payment when one exists', async () => {
       prisma.booking.findUnique.mockResolvedValue(makeBooking());
       prisma.payment.findUnique.mockResolvedValue(makePayment());
-      const result = await service.getPaymentByBookingId(
-        BOOKING_ID,
-        RENTER_ID,
-      );
+      const result = await service.getPaymentByBookingId(BOOKING_ID, RENTER_ID);
       expect(result).not.toBeNull();
       expect(result!.id).toBe(PAYMENT_ID);
     });
@@ -497,9 +491,9 @@ describe('PaymentsService', () => {
         new Error('Invalid signature'),
       );
 
-      await expect(
-        service.handlePayOSWebhook({ data: 'bad' }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.handlePayOSWebhook({ data: 'bad' })).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should mark payment COMPLETED when webhook code is "00"', async () => {
@@ -565,25 +559,22 @@ describe('PaymentsService', () => {
       BookingStatus.COMPLETED,
       BookingStatus.CANCELLED,
       BookingStatus.REJECTED,
-    ])(
-      'should reject booking with status %s',
-      async (status) => {
-        prisma.booking.findUnique.mockResolvedValue(makeBooking({ status }));
-        await expect(service.createPayment(RENTER_ID, dto)).rejects.toThrow(
-          BadRequestException,
-        );
-      },
-    );
+    ])('should reject booking with status %s', async (status) => {
+      prisma.booking.findUnique.mockResolvedValue(makeBooking({ status }));
+      await expect(service.createPayment(RENTER_ID, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
   });
 
   // =========================================================================
   // Day 4 — initiateMoMoPayment
   // =========================================================================
   describe('initiateMoMoPayment', () => {
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
 
     afterEach(() => {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     });
 
     it('should throw NotFoundException when payment not found', async () => {
@@ -611,7 +602,7 @@ describe('PaymentsService', () => {
 
     it('should return paymentUrl and deeplink on success', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         json: () =>
           Promise.resolve({
             resultCode: 0,
@@ -629,7 +620,7 @@ describe('PaymentsService', () => {
 
     it('should throw BadRequestException when MoMo returns non-zero resultCode', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         json: () =>
           Promise.resolve({
             resultCode: 49,
@@ -644,9 +635,9 @@ describe('PaymentsService', () => {
 
     it('should throw BadRequestException when fetch fails (network error)', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
-      global.fetch = jest.fn().mockRejectedValue(
-        new Error('Network timeout'),
-      ) as any;
+      globalThis.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('Network timeout')) as any;
 
       await expect(
         service.initiateMoMoPayment(PAYMENT_ID, RENTER_ID),
@@ -655,7 +646,7 @@ describe('PaymentsService', () => {
 
     it('should handle missing payUrl/deeplink in MoMo response', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         json: () =>
           Promise.resolve({
             resultCode: 0,

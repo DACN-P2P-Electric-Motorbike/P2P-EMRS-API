@@ -387,7 +387,7 @@ export class PaymentsService implements OnModuleInit {
             data: {
               status: PaymentStatus.COMPLETED,
               paidAt: new Date(),
-              gatewayResponse: JSON.parse(JSON.stringify(body)),
+              gatewayResponse: structuredClone(body) as any,
             },
           });
           this.logger.log(`PayOS payment ${payment.id} completed via webhook`);
