@@ -8,7 +8,7 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, UseGuards } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 
@@ -26,7 +26,7 @@ export class NotificationGateway
   server: Server;
 
   private readonly logger = new Logger(NotificationGateway.name);
-  private userSockets: Map<string, Set<string>> = new Map(); // userId -> Set of socketIds
+  private readonly userSockets: Map<string, Set<string>> = new Map(); // userId -> Set of socketIds
 
   constructor(
     private readonly jwtService: JwtService,
@@ -130,9 +130,7 @@ export class NotificationGateway
    * Check if user is online
    */
   isUserOnline(userId: string): boolean {
-    return (
-      this.userSockets.has(userId) && this.userSockets.get(userId)!.size > 0
-    );
+    return (this.userSockets.get(userId)?.size ?? 0) > 0;
   }
 
   /**

@@ -137,6 +137,75 @@ export class VehiclesService {
   }
 
   /**
+   * Validate status change permissions for non-admin users
+   */
+  private validateStatusChange(
+    currentStatus: VehicleStatus,
+    newStatus: VehicleStatus | undefined,
+    isAdmin: boolean,
+  ): void {
+    if (!newStatus || isAdmin) return;
+
+    const ALLOWED_OWNER_STATUSES: VehicleStatus[] = [
+      VehicleStatus.AVAILABLE,
+      VehicleStatus.MAINTENANCE,
+    ];
+    if (!ALLOWED_OWNER_STATUSES.includes(newStatus)) {
+      throw new BadRequestException(
+        'Owners can only set status to AVAILABLE or MAINTENANCE',
+      );
+    }
+
+    const RESTRICTED_STATUSES: VehicleStatus[] = [
+      VehicleStatus.PENDING_APPROVAL,
+      VehicleStatus.REJECTED,
+      VehicleStatus.LOCKED,
+    ];
+    if (RESTRICTED_STATUSES.includes(currentStatus)) {
+      throw new BadRequestException(
+        `Cannot change status while vehicle is ${currentStatus}. Contact admin for assistance.`,
+      );
+    }
+
+    if (
+      currentStatus === VehicleStatus.RENTED &&
+      newStatus === VehicleStatus.AVAILABLE
+    ) {
+      throw new BadRequestException(
+        'Cannot set status to AVAILABLE while vehicle is being rented',
+      );
+    }
+  }
+
+  /**
+   * Build partial update data from DTO, excluding undefined fields
+   */
+  private buildUpdateData(dto: UpdateVehicleDto): Record<string, unknown> {
+    const updateData: Record<string, unknown> = {};
+    const fieldsToMap: (keyof UpdateVehicleDto)[] = [
+      'model',
+      'type',
+      'status',
+      'batteryLevel',
+      'pricePerHour',
+      'address',
+      'latitude',
+      'longitude',
+      'description',
+      'images',
+      'isAvailable',
+    ];
+
+    fieldsToMap.forEach((field) => {
+      if (dto[field] !== undefined) {
+        updateData[field] = dto[field];
+      }
+    });
+
+    return updateData;
+  }
+
+  /**
    * Update vehicle (Owner only)
    */
   async updateVehicle(
@@ -163,59 +232,11 @@ export class VehiclesService {
       throw new ForbiddenException('You can only update your own vehicles');
     }
 
-    // Validate status change for non-admin users
-    if (dto.status && !userRole.includes(UserRole.ADMIN)) {
-      const allowedOwnerStatuses: VehicleStatus[] = [
-        VehicleStatus.AVAILABLE,
-        VehicleStatus.MAINTENANCE,
-      ];
+    const isAdmin = userRole.includes(UserRole.ADMIN);
+    this.validateStatusChange(vehicle.status, dto.status, isAdmin);
 
-      if (!allowedOwnerStatuses.includes(dto.status)) {
-        throw new BadRequestException(
-          'Owners can only set status to AVAILABLE or MAINTENANCE',
-        );
-      }
-
-      // Owner cannot change status if currently PENDING_APPROVAL, REJECTED, or LOCKED
-      const restrictedStatuses: VehicleStatus[] = [
-        VehicleStatus.PENDING_APPROVAL,
-        VehicleStatus.REJECTED,
-        VehicleStatus.LOCKED,
-      ];
-
-      if (restrictedStatuses.includes(vehicle.status)) {
-        throw new BadRequestException(
-          `Cannot change status while vehicle is ${vehicle.status}. Contact admin for assistance.`,
-        );
-      }
-
-      // Cannot set to AVAILABLE if vehicle is currently RENTED
-      if (
-        vehicle.status === VehicleStatus.RENTED &&
-        dto.status === VehicleStatus.AVAILABLE
-      ) {
-        throw new BadRequestException(
-          'Cannot set status to AVAILABLE while vehicle is being rented',
-        );
-      }
-    }
-
-    // Build update data
-    const updateData: any = {};
-
-    if (dto.model !== undefined) updateData.model = dto.model;
-    if (dto.type !== undefined) updateData.type = dto.type;
-    if (dto.status !== undefined) updateData.status = dto.status;
-    if (dto.batteryLevel !== undefined)
-      updateData.batteryLevel = dto.batteryLevel;
-    if (dto.pricePerHour !== undefined)
-      updateData.pricePerHour = dto.pricePerHour;
-    if (dto.address !== undefined) updateData.address = dto.address;
-    if (dto.latitude !== undefined) updateData.latitude = dto.latitude;
-    if (dto.longitude !== undefined) updateData.longitude = dto.longitude;
-    if (dto.description !== undefined) updateData.description = dto.description;
-    if (dto.images !== undefined) updateData.images = dto.images;
-    if (dto.isAvailable !== undefined) updateData.isAvailable = dto.isAvailable;
+    // Build update data only from provided fields
+    const updateData = this.buildUpdateData(dto);
 
     const updatedVehicle = await this.prisma.vehicle.update({
       where: { id: vehicleId },
