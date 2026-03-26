@@ -1,98 +1,194 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+<div align="center">
+  <img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" />
+  <h1>P2P Electric Motorcycle Sharing (EMRS) API</h1>
+  <p>A robust backend service for a Peer-to-Peer Electric Motorcycle Sharing platform, built with NestJS, TypeScript, and Prisma ORM.</p>
+</div>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+---
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 📖 Overview
 
-## Description
+The **P2P Electric Motorcycle Sharing API** addresses the growing demand for sustainable, accessible, and affordable urban transportation. By enabling a platform where motorcycle owners can rent out their electric vehicles directly to users, it promotes an eco-friendly sharing economy.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+**Problem it solves:** 
+Provides a secure and scalable backend ecosystem that seamlessly connects vehicle owners with renters, handling real-time availability, secure payments, vehicle tracking, and automated booking lifecycles.
 
-## Project setup
+**Target users:**
+- **Vehicle Owners:** Easily list, manage, track, and earn from idle electric motorcycles.
+- **Renters:** Discover, book, and intuitively navigate short-term rentals.
+- **Administrators:** Oversee platform activity, manage user disputes, verify vehicles, and analyze statistics.
 
-```bash
-$ npm install
+---
+
+## ✨ Features
+
+- **Robust Authentication & Roles:** Secure user sign-up/login with JWTs, Passport strategies, and role-based access control (Admin, User, Owner).
+- **Vehicle Listing & Search:** Advanced filtering, geographic mapping, and availability checking for electric motorcycles.
+- **Seamless Bookings & Trips:** Complete lifecycle management from booking requests to confirmed reservations and active trip tracking.
+- **Real-Time Integration:** In-app notifications using Socket.IO and push notifications integrated with Firebase Admin.
+- **Secure Payments:** Payment processing and transaction management via `@payos/node`.
+- **Media & File Uploads:** Direct-to-S3 secure file uploads (`@aws-sdk/client-s3`) and image processing using Multer.
+- **Event-Driven Architecture:** Asynchronous task processing (e.g., automated email confirmations) using `@nestjs/event-emitter`.
+- **Containerized Workflows:** Structured Docker/Docker Compose environments for fast development, testing, and production deployments.
+
+---
+
+## 🛠️ Tech Stack
+
+- **Framework:** NestJS (Node.js)
+- **Language:** TypeScript
+- **Database:** PostgreSQL
+- **ORM:** Prisma Client (`@prisma/client`, `@prisma/adapter-pg`)
+- **Real-time Engine:** Socket.io, Firebase Admin
+- **Payment Gateway:** PayOS (`@payos/node`)
+- **Cloud Storage:** Amazon S3
+- **Validation:** `class-validator`, `class-transformer`
+- **Testing:** Jest, Supertest
+- **Containerization:** Docker, Docker Compose
+
+---
+
+## 📂 Project Structure
+
+A structured, modular approach ensuring scalability and maintainability:
+
+```text
+src/
+├── admin/          # Admin portal API (user/vehicle management & disputes)
+├── auth/           # Authentication strategies, guards, and JWT logic
+├── booking/        # Motorcycle booking logic, validations, and lifecycle
+├── database/       # Prisma ORM and database connection configuration
+├── events/         # Handlers for asynchronous events and background jobs
+├── mail/           # Email templates, Nodemailer config, AWS SES setup
+├── notification/   # Real-time WebSocket and Firebase push notifications
+├── payments/       # PayOS payment gateway integration and webhooks
+├── reviews/        # User and vehicle rating systems
+├── trips/          # Active trip tracking, start/end trip logic
+├── types/          # Shared global TypeScript interfaces and DTOs
+├── upload/         # File, document, and image upload service via AWS S3
+├── user/           # User profile management and account settings
+├── vehicles/       # Electric motorcycle listings, inventory, and location data
+└── main.ts         # Application entry point and bootstrap configuration
 ```
 
-## Compile and run the project
+---
 
+## 🚀 Getting Started
+
+Follow these instructions to set up the project locally.
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- [PostgreSQL](https://www.postgresql.org/) (if running without Docker)
+- [Docker](https://www.docker.com/) & Docker Compose
+- API Keys for AWS S3, PayOS, and Firebase.
+
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/DACN-P2P-Electric-Motorbike/P2P-EMRS-API.git
+   cd P2P-EMRS-API
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+### Environment Setup
+
+Create a `.env` file based on the provided `.env.example`:
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+cp .env.example .env
 ```
 
-## Run tests
+## 💻 Usage
 
+### Running with Docker (Recommended for Local Dev)
+
+To start the complete application setup along with the PostgreSQL database:
 ```bash
-# unit tests
-$ npm run test
+# Build and start development containers
+npm run docker:dev
 
-# e2e tests
-$ npm run test:e2e
+# If you only need the testing db:
+npm run test:db:up
 
-# test coverage
-$ npm run test:cov
+# Apply Prisma Database Migrations
+npx prisma migrate dev
+
+# Start development server
+npm run start
+
+# Start development server in watch mode
+npm run start:dev
+
+# Start production server
+npm run start:prod
 ```
 
-## Deployment
+---
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## 📖 API Documentation
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+The backend API exposes an interactive Swagger documentation page.
+Once the server is running natively or via Docker, visit:
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```
+http://localhost:3000/api
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## 🚢 Build & Deployment
 
-## Resources
+The application includes robust deployment configurations via Docker.
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+# Build the application
+npm run build
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+# Deploy using Production Docker Compose (downloads images & runs detached)
+npm run docker:prod
 
-## Support
+# Stop the containers
+npm run docker:down
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+---
 
-## Stay in touch
+## 🧪 Testing
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+The platform includes comprehensive test suites spanning from unit, End-to-End, and integration layers.
 
-## License
+```bash
+# Run unit tests
+npm run test:unit
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+# Run specific feature tests (e.g., member-a functionality)
+npm run test:member-a
+
+# Run end-to-end tests
+npm run test:e2e
+
+# Get continuous test coverage
+npm run test:cov
+```
+
+---
+
+## 🤝 Contributing
+
+Guidelines to step into the project and improve the Electric Motorcycle Sharing platform.
+
+1. Fork the Project.
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`).
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
+4. Push to the Branch (`git push origin feature/AmazingFeature`).
+5. Open a Pull Request.
+
+---
+
+## 📜 License
+
+Distributed under the **UNLICENSED** License (as defined in `package.json`). See `LICENSE` inside the repository for more details. Include a proper Open-Source license (e.g., MIT, Apache) depending on the project's strategy.
