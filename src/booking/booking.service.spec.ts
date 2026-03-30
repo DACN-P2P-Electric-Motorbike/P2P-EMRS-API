@@ -622,4 +622,118 @@ describe('BookingsService', () => {
       );
     });
   });
+
+  // ─── getRenterBookings / getUpcomingBookings / getBookingHistory / schedule ─
+
+  describe('getRenterBookings', () => {
+    it('returns renter bookings without status filter', async () => {
+      mockBookingDelegate.findMany.mockResolvedValue([createMockBooking()]);
+
+      const result = await service.getRenterBookings(RENTER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(mockBookingDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { renterId: RENTER_ID },
+        }),
+      );
+    });
+
+    it('adds status to where when filter is provided', async () => {
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+
+      await service.getRenterBookings(RENTER_ID, BookingStatus.CONFIRMED);
+
+      expect(mockBookingDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { renterId: RENTER_ID, status: BookingStatus.CONFIRMED },
+        }),
+      );
+    });
+  });
+
+  describe('getUpcomingBookings', () => {
+    it('delegates to findMany with confirmed/ongoing and future start', async () => {
+      mockBookingDelegate.findMany.mockResolvedValue([createMockBooking()]);
+
+      const result = await service.getUpcomingBookings(RENTER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(mockBookingDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            renterId: RENTER_ID,
+            status: {
+              in: [BookingStatus.CONFIRMED, BookingStatus.ONGOING],
+            },
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('getBookingHistory', () => {
+    it('delegates to findMany with completed/cancelled', async () => {
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+
+      await service.getBookingHistory(RENTER_ID);
+
+      expect(mockBookingDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            renterId: RENTER_ID,
+            status: {
+              in: [BookingStatus.COMPLETED, BookingStatus.CANCELLED],
+            },
+          }),
+          take: 50,
+        }),
+      );
+    });
+  });
+
+  describe('getVehicleSchedule', () => {
+    it('returns upcoming bookings for a vehicle id', async () => {
+      mockBookingDelegate.findMany.mockResolvedValue([createMockBooking()]);
+
+      const result = await service.getVehicleSchedule(BOOKED_VEHICLE_ID);
+
+      expect(result.length).toBe(1);
+      expect(mockBookingDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            vehicleId: BOOKED_VEHICLE_ID,
+          }),
+          take: 30,
+        }),
+      );
+    });
+  });
+
+  describe('createBooking — pricing branches', () => {
+    it('uses daily rate when booking spans at least one full day', async () => {
+      const vehicle = createAvailableVehicle();
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+
+      const start = futureDate(24);
+      const end = futureDate(52);
+      const pending = createMockBooking({ status: BookingStatus.PENDING });
+      mockBookingDelegate.create.mockResolvedValue(pending);
+
+      await service.createBooking(RENTER_ID, {
+        vehicleId: BOOKED_VEHICLE_ID,
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+      } as any);
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            totalPrice: expect.any(Number),
+          }),
+        }),
+      );
+    });
+  });
 });

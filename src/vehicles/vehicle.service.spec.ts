@@ -2,7 +2,7 @@
  * @module Vehicle Tests
  * @member Member A — Dương Hoàng Long
  * @coverage target ≥80%
- * @testCount 23
+ * @testCount 39
  *
  * Unit tests for VehiclesService.
  * All Prisma calls are mocked — no real DB connection required.
@@ -421,6 +421,114 @@ describe('VehiclesService', () => {
         ),
       ).rejects.toThrow('You can only update your own vehicles');
     });
+
+    it('should allow ADMIN to update another user vehicle', async () => {
+      const vehicle = createMockVehicle({ ownerId: OTHER_OWNER_ID });
+      const updated = createMockVehicle({ model: 'Admin edit' });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      const result = await service.updateVehicle(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.ADMIN],
+        { model: 'Admin edit' } as any,
+      );
+
+      expect(result.model).toBe('Admin edit');
+    });
+
+    it('should reject owner setting disallowed status', async () => {
+      const vehicle = createMockVehicle({
+        ownerId: OWNER_ID,
+        status: VehicleStatus.AVAILABLE,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      await expect(
+        service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+          status: VehicleStatus.PENDING_APPROVAL,
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject owner status change while vehicle is PENDING_APPROVAL', async () => {
+      const vehicle = createMockVehicle({
+        ownerId: OWNER_ID,
+        status: VehicleStatus.PENDING_APPROVAL,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      await expect(
+        service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+          status: VehicleStatus.AVAILABLE,
+        } as any),
+      ).rejects.toThrow(/Cannot change status while vehicle is PENDING_APPROVAL/);
+    });
+
+    it('should reject owner setting AVAILABLE while vehicle is RENTED', async () => {
+      const vehicle = createMockVehicle({
+        ownerId: OWNER_ID,
+        status: VehicleStatus.RENTED,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      await expect(
+        service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+          status: VehicleStatus.AVAILABLE,
+        } as any),
+      ).rejects.toThrow(
+        'Cannot set status to AVAILABLE while vehicle is being rented',
+      );
+    });
+
+    it('should merge multiple optional fields into update', async () => {
+      const vehicle = createMockVehicle({ ownerId: OWNER_ID });
+      const updated = createMockVehicle({ address: 'New', latitude: 11 });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      await service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+        address: 'New',
+        latitude: 11,
+        description: 'x',
+        images: ['a'],
+      } as any);
+
+      expect(mockVehicleDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            address: 'New',
+            latitude: 11,
+            description: 'x',
+            images: ['a'],
+          }),
+        }),
+      );
+    });
+
+    it('should include type, batteryLevel, and pricePerHour when provided', async () => {
+      const vehicle = createMockVehicle({ ownerId: OWNER_ID });
+      const updated = createMockVehicle();
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      await service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+        type: VehicleType.ELECTRIC_BIKE,
+        batteryLevel: 42,
+        pricePerHour: 30000,
+      } as any);
+
+      expect(mockVehicleDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: VehicleType.ELECTRIC_BIKE,
+            batteryLevel: 42,
+            pricePerHour: 30000,
+          }),
+        }),
+      );
+    });
   });
 
   // ─── deleteVehicle ──────────────────────────────────────────────────────────
@@ -462,6 +570,36 @@ describe('VehiclesService', () => {
         'Cannot delete a vehicle that is currently being rented',
       );
     });
+
+    it('should throw NotFoundException when vehicle does not exist', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.deleteVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should allow ADMIN to delete another user vehicle', async () => {
+      const vehicle = createMockVehicle({
+        ownerId: OTHER_OWNER_ID,
+        status: VehicleStatus.AVAILABLE,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.delete.mockResolvedValue(vehicle);
+
+      await service.deleteVehicle(VEHICLE_ID, OWNER_ID, [UserRole.ADMIN]);
+
+      expect(mockVehicleDelegate.delete).toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when not owner and not ADMIN', async () => {
+      const vehicle = createMockVehicle({ ownerId: OTHER_OWNER_ID });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      await expect(
+        service.deleteVehicle(VEHICLE_ID, OWNER_ID, [UserRole.RENTER]),
+      ).rejects.toThrow('You can only delete your own vehicles');
+    });
   });
 
   // ─── toggleAvailability ─────────────────────────────────────────────────────
@@ -502,6 +640,137 @@ describe('VehiclesService', () => {
       await expect(
         service.toggleAvailability(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
       ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.toggleAvailability(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(/rental is complete/);
+    });
+
+    it('should include admin message for PENDING_APPROVAL', async () => {
+      const vehicle = createMockVehicle({
+        status: VehicleStatus.PENDING_APPROVAL,
+        ownerId: OWNER_ID,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      await expect(
+        service.toggleAvailability(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(/Contact admin/);
+    });
+
+    it('should throw NotFoundException when vehicle missing', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.toggleAvailability(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw ForbiddenException when not owner and not ADMIN', async () => {
+      const vehicle = createMockVehicle({ ownerId: OTHER_OWNER_ID });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      await expect(
+        service.toggleAvailability(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should toggle UNAVAILABLE back to AVAILABLE', async () => {
+      const vehicle = createMockVehicle({
+        status: VehicleStatus.UNAVAILABLE,
+        isAvailable: false,
+        ownerId: OWNER_ID,
+      });
+      const updated = createMockVehicle({
+        status: VehicleStatus.AVAILABLE,
+        isAvailable: true,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      const result = await service.toggleAvailability(VEHICLE_ID, OWNER_ID, [
+        UserRole.OWNER,
+      ]);
+
+      expect(result.isAvailable).toBe(true);
+      expect(result.status).toBe(VehicleStatus.AVAILABLE);
+    });
+  });
+
+  // ─── getAvailableVehicles — pagination & price edges ────────────────────────
+
+  describe('getAvailableVehicles (pagination & single-sided price)', () => {
+    it('should pass limit and offset to findMany', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ limit: 5, offset: 10 });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 5,
+          skip: 10,
+        }),
+      );
+    });
+
+    it('should apply only minPrice when maxPrice omitted', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ minPrice: 5000 });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            pricePerHour: expect.objectContaining({ gte: 5000 }),
+          }),
+        }),
+      );
+    });
+
+    it('should apply only maxPrice when minPrice omitted', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ maxPrice: 99000 });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            pricePerHour: expect.objectContaining({ lte: 99000 }),
+          }),
+        }),
+      );
+    });
+  });
+
+  // ─── adminUpdateStatus ─────────────────────────────────────────────────────
+
+  describe('adminUpdateStatus', () => {
+    it('should update status when vehicle exists', async () => {
+      const vehicle = createMockVehicle();
+      const updated = createMockVehicle({ status: VehicleStatus.AVAILABLE });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      const result = await service.adminUpdateStatus(
+        VEHICLE_ID,
+        VehicleStatus.AVAILABLE,
+      );
+
+      expect(result.status).toBe(VehicleStatus.AVAILABLE);
+      expect(mockVehicleDelegate.update).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+        data: { status: VehicleStatus.AVAILABLE },
+      });
+    });
+
+    it('should throw NotFoundException when vehicle missing', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.adminUpdateStatus(VEHICLE_ID, VehicleStatus.AVAILABLE),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });
