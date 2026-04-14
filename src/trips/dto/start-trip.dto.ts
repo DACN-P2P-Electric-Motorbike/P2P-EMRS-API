@@ -20,21 +20,21 @@ export class StartTripDto {
   @IsNotEmpty()
   bookingId: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Start location latitude',
     example: 10.762622,
   })
+  @IsOptional()
   @IsLatitude()
-  @IsNotEmpty()
-  startLatitude: number;
+  startLatitude?: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Start location longitude',
     example: 106.660172,
   })
+  @IsOptional()
   @IsLongitude()
-  @IsNotEmpty()
-  startLongitude: number;
+  startLongitude?: number;
 
   @ApiPropertyOptional({
     description: 'Start location address',
@@ -44,13 +44,13 @@ export class StartTripDto {
   @IsString()
   startAddress?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Vehicle battery level at start (0-100%)',
     example: 95,
   })
+  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(100)
-  @IsNotEmpty()
-  startBattery: number;
+  startBattery?: number;
 }

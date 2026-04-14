@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './database/prisma.module';
@@ -22,6 +23,9 @@ import { AdminModule } from './admin/admin.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // Task scheduling (cron jobs)
+    ScheduleModule.forRoot(),
 
     // Database - Prisma ORM
     DatabaseModule,
