@@ -13,6 +13,7 @@ import { randomInt } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto, LoginDto } from './dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   ForgotPasswordDto,
   VerifyOtpDto,
@@ -390,6 +391,38 @@ export class AuthService {
   }
 
   // src/users/users.service.ts
+
+  /**
+   * Update the profile of the authenticated user
+   */
+  async updateProfile(
+    userId: string,
+    dto: UpdateProfileDto,
+  ): Promise<UserEntity> {
+    // If phone is being updated, check uniqueness
+    if (dto.phone) {
+      const existing = await this.prisma.user.findUnique({
+        where: { phone: dto.phone },
+      });
+      if (existing && existing.id !== userId) {
+        throw new ConflictException('Phone number is already in use');
+      }
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (dto.fullName !== undefined) updateData.fullName = dto.fullName;
+    if (dto.phone !== undefined) updateData.phone = dto.phone;
+    if (dto.avatarUrl !== undefined) updateData.avatarUrl = dto.avatarUrl;
+    if (dto.address !== undefined) updateData.address = dto.address;
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+    });
+
+    this.logger.log(`Profile updated for user ${userId}`);
+    return UserEntity.fromPrisma(user);
+  }
 
   async becomeOwner(
     userId: string,
