@@ -7,10 +7,15 @@ import {
 } from '@nestjs/common';
 import * as crypto from 'node:crypto';
 import { PayOS } from '@payos/node';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { PaymentEntity } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentStatus, BookingStatus } from '@prisma/client';
+import {
+  PaymentCompletedEvent,
+  PaymentFailedEvent,
+} from '../events/payment.events';
 
 @Injectable()
 export class PaymentsService implements OnModuleInit {
@@ -18,7 +23,10 @@ export class PaymentsService implements OnModuleInit {
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
   private payos: PayOS;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   onModuleInit() {
     this.payos = new PayOS({
@@ -58,9 +66,20 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('You can only pay for your own bookings');
     }
 
-    // Check if payment already exists
+    // If a completed/refunded payment already exists, reject
     if (booking.payment) {
-      throw new BadRequestException('Payment already exists for this booking');
+      const finalStatuses: PaymentStatus[] = [
+        PaymentStatus.COMPLETED,
+        PaymentStatus.REFUNDED,
+      ];
+      if (finalStatuses.includes(booking.payment.status)) {
+        throw new BadRequestException('Payment already completed for this booking');
+      }
+      // PENDING or FAILED — delete stale payment so a fresh one can be created
+      await this.prisma.payment.delete({ where: { id: booking.payment.id } });
+      this.logger.log(
+        `Deleted stale ${booking.payment.status} payment ${booking.payment.id} for booking ${dto.bookingId}`,
+      );
     }
 
     // Check booking status
@@ -173,6 +192,17 @@ export class PaymentsService implements OnModuleInit {
     });
 
     this.logger.log(`Payment ${paymentId} completed (simulated)`);
+
+    this.eventEmitter.emit(
+      'payment.completed',
+      new PaymentCompletedEvent(
+        updatedPayment.id,
+        updatedPayment.bookingId,
+        updatedPayment.payerId,
+        updatedPayment.receiverId,
+        updatedPayment.amount,
+      ),
+    );
 
     return PaymentEntity.fromPrisma(updatedPayment);
   }
@@ -382,7 +412,7 @@ export class PaymentsService implements OnModuleInit {
         });
 
         if (payment) {
-          await this.prisma.payment.update({
+          const completed = await this.prisma.payment.update({
             where: { id: payment.id },
             data: {
               status: PaymentStatus.COMPLETED,
@@ -391,6 +421,16 @@ export class PaymentsService implements OnModuleInit {
             },
           });
           this.logger.log(`PayOS payment ${payment.id} completed via webhook`);
+          this.eventEmitter.emit(
+            'payment.completed',
+            new PaymentCompletedEvent(
+              completed.id,
+              completed.bookingId,
+              completed.payerId,
+              completed.receiverId,
+              completed.amount,
+            ),
+          );
         }
       }
     } catch (err) {
@@ -404,11 +444,13 @@ export class PaymentsService implements OnModuleInit {
   /**
    * Handle PayOS return URL — check payment status via the return query params
    */
-  async handlePayOSReturn(query: Record<string, string>): Promise<string> {
+  async handlePayOSReturn(
+    query: Record<string, string>,
+  ): Promise<{ status: string; bookingId?: string }> {
     const orderCode = query.orderCode;
     const status = query.status;
 
-    if (!orderCode) return 'missing_order_code';
+    if (!orderCode) return { status: 'missing_order_code' };
 
     if (status === 'PAID') {
       const payment = await this.prisma.payment.findFirst({
@@ -419,7 +461,7 @@ export class PaymentsService implements OnModuleInit {
       });
 
       if (payment) {
-        await this.prisma.payment.update({
+        const completed = await this.prisma.payment.update({
           where: { id: payment.id },
           data: {
             status: PaymentStatus.COMPLETED,
@@ -427,7 +469,17 @@ export class PaymentsService implements OnModuleInit {
           },
         });
         this.logger.log(`PayOS payment ${payment.id} completed via return URL`);
-        return 'success';
+        this.eventEmitter.emit(
+          'payment.completed',
+          new PaymentCompletedEvent(
+            completed.id,
+            completed.bookingId,
+            completed.payerId,
+            completed.receiverId,
+            completed.amount,
+          ),
+        );
+        return { status: 'success', bookingId: payment.bookingId };
       }
     } else if (status === 'CANCELLED') {
       const payment = await this.prisma.payment.findFirst({
@@ -445,11 +497,11 @@ export class PaymentsService implements OnModuleInit {
         this.logger.log(
           `PayOS payment ${payment.id} cancelled, reset to pending`,
         );
-        return 'cancelled';
+        return { status: 'cancelled', bookingId: payment.bookingId };
       }
     }
 
-    return status ?? 'unknown';
+    return { status: status ?? 'unknown' };
   }
 
   /**
@@ -487,5 +539,67 @@ export class PaymentsService implements OnModuleInit {
 
     this.logger.log(`Payment ${paymentId} refunded`);
     return PaymentEntity.fromPrisma(updatedPayment);
+  }
+
+  /**
+   * Get owner earnings summary — aggregates all COMPLETED payments
+   * where receiverId matches the owner.
+   */
+  async getOwnerEarnings(ownerId: string): Promise<{
+    totalEarned: number;
+    totalPlatformFee: number;
+    netEarnings: number;
+    completedBookings: number;
+    bookings: Array<{
+      bookingId: string;
+      amount: number;
+      platformFee: number;
+      ownerAmount: number;
+      method: string;
+      paidAt: Date;
+      vehicleName?: string;
+    }>;
+  }> {
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        receiverId: ownerId,
+        status: PaymentStatus.COMPLETED,
+      },
+      include: {
+        booking: {
+          include: {
+            vehicle: {
+              select: { brand: true, model: true },
+            },
+          },
+        },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    const totalEarned = payments.reduce((sum, p) => sum + p.amount, 0);
+    const totalPlatformFee = payments.reduce(
+      (sum, p) => sum + p.platformFee,
+      0,
+    );
+    const netEarnings = payments.reduce((sum, p) => sum + p.ownerAmount, 0);
+
+    return {
+      totalEarned,
+      totalPlatformFee,
+      netEarnings,
+      completedBookings: payments.length,
+      bookings: payments.map((p) => ({
+        bookingId: p.bookingId,
+        amount: p.amount,
+        platformFee: p.platformFee,
+        ownerAmount: p.ownerAmount,
+        method: p.method,
+        paidAt: p.paidAt ?? p.updatedAt,
+        vehicleName: p.booking?.vehicle
+          ? `${p.booking.vehicle.brand} ${p.booking.vehicle.model}`
+          : undefined,
+      })),
+    };
   }
 }
