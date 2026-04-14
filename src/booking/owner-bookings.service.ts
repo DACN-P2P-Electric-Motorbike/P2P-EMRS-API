@@ -48,6 +48,7 @@ export class OwnerBookingsService {
             trustScore: true,
           },
         },
+        payment: { select: { status: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -75,6 +76,7 @@ export class OwnerBookingsService {
             trustScore: true,
           },
         },
+        payment: { select: { status: true } },
       },
       orderBy: { createdAt: 'asc' },
     });

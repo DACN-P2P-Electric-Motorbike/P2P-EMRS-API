@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Booking, BookingStatus } from '@prisma/client';
+import { Booking, BookingStatus, PaymentStatus } from '@prisma/client';
 import { Expose } from 'class-transformer';
 
 export class BookingEntity implements Booking {
@@ -63,11 +63,20 @@ export class BookingEntity implements Booking {
   @Expose()
   cancelledAt: Date | null;
 
+  @ApiPropertyOptional({ enum: PaymentStatus, nullable: true })
+  @Expose()
+  paymentStatus: PaymentStatus | null;
+
   constructor(partial: Partial<BookingEntity>) {
     Object.assign(this, partial);
   }
 
-  static fromPrisma(booking: Booking): BookingEntity {
-    return new BookingEntity(booking);
+  static fromPrisma(
+    booking: Booking & { payment?: { status: PaymentStatus } | null },
+  ): BookingEntity {
+    return new BookingEntity({
+      ...booking,
+      paymentStatus: booking.payment?.status ?? null,
+    });
   }
 }

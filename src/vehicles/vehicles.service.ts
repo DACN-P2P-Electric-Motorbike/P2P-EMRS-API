@@ -10,7 +10,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { CreateVehicleDto, UpdateVehicleDto } from './dto';
 import { VehicleEntity } from './entities/vehicle.entity';
-import { VehicleStatus, UserRole } from '@prisma/client';
+import { VehicleStatus, UserRole, BookingStatus } from '@prisma/client';
 import { VehicleSubmittedForApprovalEvent } from '../events/admin.events';
 
 @Injectable()
@@ -289,12 +289,38 @@ export class VehiclesService {
   /**
    * Get all available vehicles (for renters)
    */
+  /**
+   * Haversine formula — returns distance in km between two lat/lng points
+   */
+  private haversineKm(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   async getAvailableVehicles(params?: {
     type?: string;
     minPrice?: number;
     maxPrice?: number;
     limit?: number;
     offset?: number;
+    startTime?: string;
+    endTime?: string;
+    latitude?: number;
+    longitude?: number;
+    radiusKm?: number;
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
@@ -310,12 +336,52 @@ export class VehiclesService {
       if (params.maxPrice) where.pricePerHour.lte = params.maxPrice;
     }
 
-    const [vehicles, total] = await Promise.all([
+    // Date-range availability filter: exclude vehicles with overlapping bookings
+    if (params?.startTime && params?.endTime) {
+      const requestedStart = new Date(params.startTime);
+      const requestedEnd = new Date(params.endTime);
+
+      // Find vehicle IDs that have conflicting bookings in the requested window
+      const conflictingBookings = await this.prisma.booking.findMany({
+        where: {
+          status: {
+            in: [
+              BookingStatus.PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.ONGOING,
+            ],
+          },
+          // Overlap condition: existing.startTime < requested.endTime AND existing.endTime > requested.startTime
+          startTime: { lt: requestedEnd },
+          endTime: { gt: requestedStart },
+        },
+        select: { vehicleId: true },
+        distinct: ['vehicleId'],
+      });
+
+      const conflictingVehicleIds = conflictingBookings.map(
+        (b) => b.vehicleId,
+      );
+
+      if (conflictingVehicleIds.length > 0) {
+        where.id = { notIn: conflictingVehicleIds };
+      }
+    }
+
+    // When distance filtering is requested, fetch all matching vehicles first,
+    // then apply Haversine in-memory so the returned `total` reflects geo-filtered count.
+    const useGeoFilter =
+      params?.latitude !== undefined && params?.longitude !== undefined;
+
+    const dbLimit = useGeoFilter ? 1000 : (params?.limit ?? 20);
+    const dbOffset = useGeoFilter ? 0 : (params?.offset ?? 0);
+
+    const [rawVehicles, rawTotal] = await Promise.all([
       this.prisma.vehicle.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: params?.limit ?? 20,
-        skip: params?.offset ?? 0,
+        take: dbLimit,
+        skip: dbOffset,
         include: {
           owner: {
             select: {
@@ -330,9 +396,33 @@ export class VehiclesService {
       this.prisma.vehicle.count({ where }),
     ]);
 
+    if (useGeoFilter) {
+      const radius = params!.radiusKm ?? 10;
+      const filtered = rawVehicles.filter((v) => {
+        if (v.latitude === null || v.longitude === null) return false;
+        return (
+          this.haversineKm(
+            params!.latitude!,
+            params!.longitude!,
+            v.latitude,
+            v.longitude,
+          ) <= radius
+        );
+      });
+
+      const pageSize = params?.limit ?? 20;
+      const pageOffset = params?.offset ?? 0;
+      const paged = filtered.slice(pageOffset, pageOffset + pageSize);
+
+      return {
+        vehicles: paged.map((v) => VehicleEntity.fromPrisma(v)),
+        total: filtered.length,
+      };
+    }
+
     return {
-      vehicles: vehicles.map((vehicle) => VehicleEntity.fromPrisma(vehicle)),
-      total,
+      vehicles: rawVehicles.map((vehicle) => VehicleEntity.fromPrisma(vehicle)),
+      total: rawTotal,
     };
   }
 
