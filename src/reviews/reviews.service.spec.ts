@@ -198,7 +198,7 @@ describe('ReviewsService', () => {
   // =========================================================================
   describe('trust score — owner rating impact', () => {
     const createReviewWithRating = async (rating: number) => {
-      const dto = { vehicleId: VEHICLE_ID, rating, comment: null };
+      const dto = { vehicleId: VEHICLE_ID, rating, comment: undefined };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
       prisma.trip.findFirst.mockResolvedValue({
         id: 'trip-1',
@@ -424,6 +424,50 @@ describe('ReviewsService', () => {
       prisma.review.findMany.mockResolvedValue([]);
       const result = await service.getVehicleReviews(VEHICLE_ID);
       expect(result).toEqual([]);
+    });
+  });
+
+  // =========================================================================
+  // getVehicleReviews — rating filter
+  // =========================================================================
+  describe('getVehicleReviews — rating filter', () => {
+    it('should pass rating filter to Prisma where clause when provided', async () => {
+      prisma.review.findMany.mockResolvedValue([
+        makeReview({ rating: 4 }),
+      ]);
+
+      await service.getVehicleReviews(VEHICLE_ID, 4);
+
+      expect(prisma.review.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { vehicleId: VEHICLE_ID, rating: 4 },
+        }),
+      );
+    });
+
+    it('should NOT include rating in where clause when not provided', async () => {
+      prisma.review.findMany.mockResolvedValue([]);
+
+      await service.getVehicleReviews(VEHICLE_ID);
+
+      expect(prisma.review.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { vehicleId: VEHICLE_ID },
+        }),
+      );
+      // Ensure rating key is absent
+      const call = prisma.review.findMany.mock.calls[0][0];
+      expect(call.where).not.toHaveProperty('rating');
+    });
+
+    it('should return only reviews matching the requested star rating', async () => {
+      const filtered = [makeReview({ rating: 5 }), makeReview({ rating: 5 })];
+      prisma.review.findMany.mockResolvedValue(filtered);
+
+      const result = await service.getVehicleReviews(VEHICLE_ID, 5);
+
+      expect(result).toHaveLength(2);
+      result.forEach((r) => expect(r.rating).toBe(5));
     });
   });
 
