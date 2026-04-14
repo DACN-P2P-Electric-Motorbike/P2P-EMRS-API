@@ -15,6 +15,10 @@ export class ReviewEntity implements Review {
   @Expose()
   vehicleId: string;
 
+  @ApiPropertyOptional({ nullable: true })
+  @Expose()
+  tripId: string | null;
+
   @ApiProperty({ minimum: 1, maximum: 5 })
   @Expose()
   rating: number;

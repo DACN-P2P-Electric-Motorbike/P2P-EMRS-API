@@ -158,9 +158,12 @@ export class ReviewsService {
   /**
    * Get reviews for a vehicle
    */
-  async getVehicleReviews(vehicleId: string): Promise<ReviewEntity[]> {
+  async getVehicleReviews(
+    vehicleId: string,
+    rating?: number,
+  ): Promise<ReviewEntity[]> {
     const reviews = await this.prisma.review.findMany({
-      where: { vehicleId },
+      where: { vehicleId, ...(rating ? { rating } : {}) },
       include: {
         user: {
           select: {

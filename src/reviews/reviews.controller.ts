@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -14,6 +15,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { ReviewEntity } from './entities/review.entity';
@@ -98,6 +100,12 @@ export class ReviewsController {
     name: 'vehicleId',
     description: 'Vehicle ID',
   })
+  @ApiQuery({
+    name: 'rating',
+    required: false,
+    type: Number,
+    description: 'Filter by star rating (1-5)',
+  })
   @ApiResponse({
     status: 200,
     description: 'List of reviews',
@@ -105,7 +113,11 @@ export class ReviewsController {
   })
   async getVehicleReviews(
     @Param('vehicleId') vehicleId: string,
+    @Query('rating') rating?: string,
   ): Promise<ReviewEntity[]> {
-    return this.reviewsService.getVehicleReviews(vehicleId);
+    return this.reviewsService.getVehicleReviews(
+      vehicleId,
+      rating ? Number.parseInt(rating, 10) : undefined,
+    );
   }
 }
