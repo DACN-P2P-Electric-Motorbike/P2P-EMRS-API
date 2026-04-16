@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Patch,
   Get,
   Body,
   UseGuards,
@@ -16,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto } from './dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   ForgotPasswordDto,
   VerifyOtpDto,
@@ -98,6 +100,26 @@ export class AuthController {
   })
   async getProfile(@CurrentUser() user: UserEntity): Promise<UserEntity> {
     return user;
+  }
+
+  @Patch('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update current user profile',
+    description: 'Update fullName, phone, avatarUrl, or address',
+  })
+  @ApiBody({ type: UpdateProfileDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Profile updated successfully',
+    type: UserEntity,
+  })
+  async updateProfile(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<UserEntity> {
+    return this.authService.updateProfile(userId, dto);
   }
 
   @Post('forgot-password')

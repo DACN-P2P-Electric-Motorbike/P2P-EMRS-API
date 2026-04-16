@@ -5,6 +5,7 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -20,6 +21,7 @@ import {
 import { PaymentsService } from './payments.service';
 import { PaymentEntity } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { OwnerEarningsDto } from './dto/owner-earnings.dto';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -92,13 +94,15 @@ export class PaymentsController {
   @Get('payos-return')
   @ApiOperation({
     summary: 'PayOS return callback',
-    description: 'Handle redirect after PayOS payment',
+    description: 'Handle redirect after PayOS payment — serves HTML that notifies the Flutter tab',
   })
   async payosReturn(
     @Query() query: Record<string, string>,
-  ): Promise<{ message: string; status: string }> {
-    const status = await this.paymentsService.handlePayOSReturn(query);
-    return { message: 'Payment processed', status };
+    @Res() res: any,
+  ): Promise<void> {
+    const result = await this.paymentsService.handlePayOSReturn(query);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(this._buildPaymentResultHtml(result.status, result.bookingId));
   }
 
   @Public()
@@ -109,12 +113,81 @@ export class PaymentsController {
   })
   async payosCancel(
     @Query() query: Record<string, string>,
-  ): Promise<{ message: string; status: string }> {
-    const status = await this.paymentsService.handlePayOSReturn({
+    @Res() res: any,
+  ): Promise<void> {
+    const result = await this.paymentsService.handlePayOSReturn({
       ...query,
       status: 'CANCELLED',
     });
-    return { message: 'Payment cancelled', status };
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(this._buildPaymentResultHtml(result.status, result.bookingId));
+  }
+
+  private _buildPaymentResultHtml(status: string, bookingId?: string): string {
+    const isSuccess = status === 'success';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4000';
+    const fallbackUrl = bookingId
+      ? `${frontendUrl}/#/bookings/${bookingId}`
+      : `${frontendUrl}/#/bookings`;
+
+    return `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${isSuccess ? 'Thanh toán thành công' : 'Đã huỷ thanh toán'}</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; min-height: 100vh;
+           margin: 0; background: #f8f9fd; color: #333; }
+    .card { background: white; border-radius: 16px; padding: 40px;
+            text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,.08); max-width: 360px; }
+    .icon { font-size: 64px; }
+    h2 { margin: 16px 0 8px; }
+    p { color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">${isSuccess ? '✅' : '❌'}</div>
+    <h2>${isSuccess ? 'Thanh toán thành công!' : 'Đã huỷ thanh toán'}</h2>
+    <p>${isSuccess ? 'Giao dịch của bạn đã được xử lý.' : 'Bạn đã huỷ giao dịch.'} Cửa sổ này sẽ tự đóng.</p>
+  </div>
+  <script>
+    const payload = {
+      type: 'payos_result',
+      status: '${status}',
+      bookingId: '${bookingId ?? ''}'
+    };
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(payload, '*');
+      window.close();
+    } else {
+      // Opened in same tab or no opener — redirect back to app
+      setTimeout(() => { window.location.href = '${fallbackUrl}'; }, 2000);
+    }
+  </script>
+</body>
+</html>`;
+  }
+
+  @Get('owner-earnings')
+  @ApiOperation({
+    summary: 'Get owner earnings',
+    description:
+      'Get earnings summary for the authenticated owner — total earned, platform fees, net earnings, and per-booking breakdown',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Owner earnings summary',
+    type: OwnerEarningsDto,
+  })
+  async getOwnerEarnings(
+    @CurrentUser('id') userId: string,
+  ): Promise<OwnerEarningsDto> {
+    return this.paymentsService.getOwnerEarnings(
+      userId,
+    ) as unknown as OwnerEarningsDto;
   }
 
   @Get(':id')

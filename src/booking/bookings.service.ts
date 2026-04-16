@@ -10,7 +10,7 @@ import { PrismaService } from '../database/prisma.service';
 import { BookingEntity } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
-import { BookingStatus, VehicleStatus } from '@prisma/client';
+import { BookingStatus, VehicleStatus, PaymentStatus } from '@prisma/client';
 import {
   BookingCreatedEvent,
   BookingCancelledEvent,
@@ -227,6 +227,7 @@ export class BookingsService {
             trustScore: true,
           },
         },
+        payment: { select: { status: true } },
       },
     });
 
@@ -266,6 +267,7 @@ export class BookingsService {
             trustScore: true,
           },
         },
+        payment: { select: { status: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -274,7 +276,10 @@ export class BookingsService {
   }
 
   /**
-   * Cancel booking (renter)
+   * Cancel booking (renter) with time-based cancellation policy:
+   *   - >24h before start: full refund, no trust penalty
+   *   - 1-24h before start: 50% refund, -5 trust
+   *   - <1h before start: no refund, -10 trust
    */
   async cancelBooking(
     bookingId: string,
@@ -304,20 +309,113 @@ export class BookingsService {
       );
     }
 
-    // Cancel booking
-    const updatedBooking = await this.prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: BookingStatus.CANCELLED,
-        cancellationReason: dto.reason,
-        cancelledAt: new Date(),
-      },
+    // --- Cancellation policy ---
+    const now = new Date();
+    const hoursUntilStart =
+      (booking.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    let refundRate: number;
+    let trustPenalty: number;
+
+    if (hoursUntilStart > 24) {
+      // Early cancellation: full refund, no penalty
+      refundRate = 1.0;
+      trustPenalty = 0;
+    } else if (hoursUntilStart >= 1) {
+      // Medium: 50% refund, moderate penalty
+      refundRate = 0.5;
+      trustPenalty = 5;
+    } else {
+      // Late cancellation: no refund, heavy penalty
+      refundRate = 0;
+      trustPenalty = 10;
+    }
+
+    this.logger.log(
+      `Cancellation policy: ${hoursUntilStart.toFixed(1)}h before start → refundRate=${refundRate}, trustPenalty=${trustPenalty}`,
+    );
+
+    // Cancel booking and handle refund atomically
+    const updatedBooking = await this.prisma.$transaction(async (tx) => {
+      const cancelled = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: BookingStatus.CANCELLED,
+          cancellationReason: dto.reason,
+          cancelledAt: new Date(),
+        },
+      });
+
+      // If a COMPLETED payment exists, handle refund based on policy
+      const existingPayment = await tx.payment.findUnique({
+        where: { bookingId },
+      });
+      if (
+        existingPayment !== null &&
+        existingPayment.status === PaymentStatus.COMPLETED
+      ) {
+        if (refundRate >= 1.0) {
+          // Full refund
+          await tx.payment.update({
+            where: { id: existingPayment.id },
+            data: {
+              status: PaymentStatus.REFUNDED,
+              gatewayResponse: {
+                refundType: 'full',
+                refundRate,
+                cancelledAt: new Date().toISOString(),
+              },
+            },
+          });
+          this.logger.log(
+            `Payment ${existingPayment.id} fully refunded on cancellation`,
+          );
+        } else if (refundRate > 0) {
+          // Partial refund — mark as REFUNDED with partial amount in metadata
+          const refundAmount = existingPayment.amount * refundRate;
+          await tx.payment.update({
+            where: { id: existingPayment.id },
+            data: {
+              status: PaymentStatus.REFUNDED,
+              gatewayResponse: {
+                refundType: 'partial',
+                refundRate,
+                refundAmount,
+                cancelledAt: new Date().toISOString(),
+              },
+            },
+          });
+          this.logger.log(
+            `Payment ${existingPayment.id} partially refunded (${refundRate * 100}%: ${refundAmount} VND)`,
+          );
+        } else {
+          // No refund — update metadata only
+          await tx.payment.update({
+            where: { id: existingPayment.id },
+            data: {
+              gatewayResponse: {
+                refundType: 'none',
+                refundRate: 0,
+                reason: 'Late cancellation (<1h before start)',
+                cancelledAt: new Date().toISOString(),
+              },
+            },
+          });
+          this.logger.log(
+            `Payment ${existingPayment.id}: no refund (late cancellation)`,
+          );
+        }
+      }
+
+      return cancelled;
     });
 
     this.logger.log(`Booking ${bookingId} cancelled by renter ${userId}`);
 
-    // Decrease renter trust score by 5 for cancellation
-    await this.decreaseTrustScore(userId, 5);
+    // Apply trust penalty based on cancellation window
+    if (trustPenalty > 0) {
+      await this.decreaseTrustScore(userId, trustPenalty);
+    }
 
     // Emit event
     this.eventEmitter.emit(
@@ -374,6 +472,7 @@ export class BookingsService {
             avatarUrl: true,
           },
         },
+        payment: { select: { status: true } },
       },
       orderBy: { startTime: 'asc' },
     });
@@ -400,6 +499,7 @@ export class BookingsService {
             avatarUrl: true,
           },
         },
+        payment: { select: { status: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 50,

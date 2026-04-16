@@ -12,6 +12,7 @@ import { EndTripDto } from './dto/end-trip.dto';
 import { ReportIssueDto } from './dto/report-issue.dto';
 import { TripStatus, BookingStatus } from '@prisma/client';
 import { TripIssueReportedEvent } from '../events/admin.events';
+import { TripStartedEvent, TripCompletedEvent } from '../events/trip.events';
 
 @Injectable()
 export class TripsService {
@@ -121,6 +122,18 @@ export class TripsService {
 
     this.logger.log(`Trip ${trip.id} started successfully`);
 
+    // Emit event so owner gets notified
+    this.eventEmitter.emit(
+      'trip.started',
+      new TripStartedEvent(
+        trip.id,
+        trip.bookingId,
+        userId,
+        booking.ownerId,
+        trip.vehicleId,
+      ),
+    );
+
     return TripEntity.fromPrisma(trip);
   }
 
@@ -206,6 +219,23 @@ export class TripsService {
 
     this.logger.log(
       `Trip ${tripId} completed. Distance: ${distanceTraveled.toFixed(2)}km, Duration: ${durationMinutes}min`,
+    );
+
+    // Reward renter with +2 trust score for completing a trip
+    await this.adjustTrustScore(trip.renterId, 2);
+
+    // Emit event so both renter and owner get notified
+    this.eventEmitter.emit(
+      'trip.completed',
+      new TripCompletedEvent(
+        tripId,
+        trip.bookingId,
+        trip.renterId,
+        trip.booking.ownerId,
+        trip.vehicleId,
+        distanceTraveled,
+        durationMinutes,
+      ),
     );
 
     return TripEntity.fromPrisma(updatedTrip);
@@ -299,9 +329,9 @@ export class TripsService {
       },
     });
 
-    // Decrease renter trust score for violation (-3)
-    await this.adjustTrustScore(trip.renterId, -3);
-
+    // NOTE: Trust score is NOT auto-adjusted here. The renter is reporting
+    // a problem (e.g. vehicle breakdown) and should not be penalised for it.
+    // An admin review event is emitted instead; the admin can act on it.
     this.logger.log(
       `Issue reported for trip ${tripId}: ${dto.issueDescription}`,
     );

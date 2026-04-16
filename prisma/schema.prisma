@@ -157,6 +157,7 @@ model Trip {
   booking          Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   renter           User       @relation(fields: [renterId], references: [id], onDelete: Cascade)
   vehicle          Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  review           Review?
 
   @@index([renterId])
   @@index([vehicleId])
@@ -193,12 +194,14 @@ model Review {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
   vehicleId String   @map("vehicle_id")
+  tripId    String?  @unique @map("trip_id")
   rating    Int
   comment   String?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  trip      Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([vehicleId])

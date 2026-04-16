@@ -105,6 +105,31 @@ export class VehiclesController {
     required: false,
     description: 'Offset for pagination',
   })
+  @ApiQuery({
+    name: 'startTime',
+    required: false,
+    description: 'Filter vehicles available from this date/time (ISO 8601)',
+  })
+  @ApiQuery({
+    name: 'endTime',
+    required: false,
+    description: 'Filter vehicles available until this date/time (ISO 8601)',
+  })
+  @ApiQuery({
+    name: 'latitude',
+    required: false,
+    description: 'User latitude for distance-based filtering',
+  })
+  @ApiQuery({
+    name: 'longitude',
+    required: false,
+    description: 'User longitude for distance-based filtering',
+  })
+  @ApiQuery({
+    name: 'radiusKm',
+    required: false,
+    description: 'Search radius in kilometres (default: 10)',
+  })
   @ApiResponse({
     status: 200,
     description: 'List of available vehicles',
@@ -115,6 +140,11 @@ export class VehiclesController {
     @Query('maxPrice') maxPrice?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Query('startTime') startTime?: string,
+    @Query('endTime') endTime?: string,
+    @Query('latitude') latitude?: string,
+    @Query('longitude') longitude?: string,
+    @Query('radiusKm') radiusKm?: string,
   ): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     return this.vehiclesService.getAvailableVehicles({
       type,
@@ -122,6 +152,11 @@ export class VehiclesController {
       maxPrice: maxPrice ? Number.parseFloat(maxPrice) : undefined,
       limit: limit ? Number.parseInt(limit) : undefined,
       offset: offset ? Number.parseInt(offset) : undefined,
+      startTime: startTime || undefined,
+      endTime: endTime || undefined,
+      latitude: latitude ? Number.parseFloat(latitude) : undefined,
+      longitude: longitude ? Number.parseFloat(longitude) : undefined,
+      radiusKm: radiusKm ? Number.parseFloat(radiusKm) : undefined,
     });
   }
 
