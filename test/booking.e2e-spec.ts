@@ -131,6 +131,7 @@ const mockPrismaBooking = {
   create: jest.fn(),
   update: jest.fn(),
 };
+const mockPrismaPayment = { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn() };
 const mockPrismaUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockEmitter = { emit: jest.fn() };
 
@@ -148,6 +149,13 @@ async function buildApp(
           vehicle: mockPrismaVehicle,
           booking: mockPrismaBooking,
           user: mockPrismaUser,
+          $transaction: jest.fn().mockImplementation(async (callback) =>
+            callback({
+              booking: mockPrismaBooking,
+              payment: mockPrismaPayment,
+              user: mockPrismaUser,
+            }),
+          ),
         },
       },
       { provide: EventEmitter2, useValue: mockEmitter },

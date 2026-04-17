@@ -74,6 +74,7 @@ const mockBooking = {
   create: jest.fn(),
   update: jest.fn(),
 };
+const mockPayment = { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn() };
 const mockUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockEventEmitter = { emit: jest.fn() };
 
@@ -115,6 +116,13 @@ async function buildFullApp(
           vehicle: mockVehicle,
           booking: mockBooking,
           user: mockUser,
+          $transaction: jest.fn().mockImplementation(async (callback) =>
+            callback({
+              booking: mockBooking,
+              payment: mockPayment,
+              user: mockUser,
+            }),
+          ),
         },
       },
       { provide: EventEmitter2, useValue: mockEventEmitter },
