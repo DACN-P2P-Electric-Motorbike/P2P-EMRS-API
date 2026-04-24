@@ -440,12 +440,19 @@ export class AuthService {
       where: { id: userId },
       data: {
         roles: {
-          push: UserRole.OWNER, // Add OWNER to roles array
+          push: UserRole.OWNER,
         },
       },
     });
 
-    // 2. Generate new JWT with updated roles
+    // 2. Register the vehicle under the newly promoted owner
+    const vehicle = await this.vehiclesService.registerVehicle(
+      userId,
+      user.roles,
+      vehicleData,
+    );
+
+    // 3. Generate new JWT with updated roles
     const newToken = this.generateAccessToken(user);
 
     return {
@@ -454,6 +461,7 @@ export class AuthService {
         roles: user.roles,
       },
       accessToken: newToken,
+      vehicle,
       message: 'Successfully upgraded to OWNER',
     };
   }
