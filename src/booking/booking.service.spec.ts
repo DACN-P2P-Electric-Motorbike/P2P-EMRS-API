@@ -110,6 +110,18 @@ describe('BookingsService', () => {
             vehicle: mockVehicleDelegate,
             booking: mockBookingDelegate,
             user: mockUserDelegate,
+            // Simulate Prisma interactive transaction by immediately invoking
+            // the callback with a mock transactional client
+            $transaction: jest.fn().mockImplementation(async (callback) =>
+              callback({
+                booking: mockBookingDelegate,
+                payment: {
+                  findUnique: jest.fn().mockResolvedValue(null),
+                  update: jest.fn(),
+                },
+                user: mockUserDelegate,
+              }),
+            ),
           },
         },
         {

@@ -3,6 +3,7 @@ import { PaymentsService } from './payments.service';
 import { PrismaService } from '../database/prisma.service';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { PaymentStatus, BookingStatus, PaymentMethod } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,8 +59,11 @@ const mockPrisma = () => ({
     findUnique: jest.fn(),
     findFirst: jest.fn(),
     update: jest.fn(),
+    delete: jest.fn(),
   },
 });
+
+const mockEventEmitter = () => ({ emit: jest.fn() });
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
@@ -72,6 +76,7 @@ describe('PaymentsService', () => {
       providers: [
         PaymentsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: EventEmitter2, useValue: mockEventEmitter() },
       ],
     }).compile();
 
@@ -104,9 +109,9 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('should throw BadRequestException when payment already exists', async () => {
+    it('should throw BadRequestException when a completed payment already exists', async () => {
       prisma.booking.findUnique.mockResolvedValue(
-        makeBooking({ payment: makePayment() }),
+        makeBooking({ payment: makePayment({ status: PaymentStatus.COMPLETED }) }),
       );
       await expect(service.createPayment(RENTER_ID, dto)).rejects.toThrow(
         BadRequestException,
@@ -279,9 +284,9 @@ describe('PaymentsService', () => {
   // Day 1 — Payment status logic (handlePayOSReturn)
   // =========================================================================
   describe('handlePayOSReturn', () => {
-    it('should return "missing_order_code" when orderCode is absent', async () => {
+    it('should return status "missing_order_code" when orderCode is absent', async () => {
       const result = await service.handlePayOSReturn({} as any);
-      expect(result).toBe('missing_order_code');
+      expect(result).toEqual({ status: 'missing_order_code' });
     });
 
     it('should mark payment as COMPLETED when status is PAID', async () => {
@@ -296,7 +301,7 @@ describe('PaymentsService', () => {
         status: 'PAID',
       });
 
-      expect(result).toBe('success');
+      expect(result).toEqual(expect.objectContaining({ status: 'success' }));
       expect(prisma.payment.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -319,7 +324,7 @@ describe('PaymentsService', () => {
         status: 'CANCELLED',
       });
 
-      expect(result).toBe('cancelled');
+      expect(result).toEqual(expect.objectContaining({ status: 'cancelled' }));
       expect(prisma.payment.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -329,20 +334,20 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('should return "unknown" for unrecognised status', async () => {
+    it('should return status "unknown" for unrecognised status', async () => {
       const result = await service.handlePayOSReturn({
         orderCode: '12345678',
       } as any);
-      expect(result).toBe('unknown');
+      expect(result).toEqual({ status: 'unknown' });
     });
 
-    it('should return status string when no matching payment found for PAID', async () => {
+    it('should return status from params when no matching payment found for PAID', async () => {
       prisma.payment.findFirst.mockResolvedValue(null);
       const result = await service.handlePayOSReturn({
         orderCode: '12345678',
         status: 'PAID',
       });
-      expect(result).toBe('PAID');
+      expect(result).toEqual({ status: 'PAID' });
     });
   });
 
