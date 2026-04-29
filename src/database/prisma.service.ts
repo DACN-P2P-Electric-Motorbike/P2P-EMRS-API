@@ -12,6 +12,18 @@ import { Pool, PoolConfig } from 'pg';
 // This should only be used in development/staging
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
+function shouldUseDatabaseSsl(connectionString: string): boolean {
+  try {
+    const url = new URL(connectionString);
+    const sslMode = url.searchParams.get('sslmode');
+    if (sslMode === 'disable') return false;
+    if (['localhost', '127.0.0.1'].includes(url.hostname)) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -29,7 +41,9 @@ export class PrismaService
 
     const poolConfig: PoolConfig = {
       connectionString,
-      ssl: true,
+      ssl: shouldUseDatabaseSsl(connectionString)
+        ? { rejectUnauthorized: false }
+        : undefined,
     };
 
     const pool = new Pool(poolConfig);

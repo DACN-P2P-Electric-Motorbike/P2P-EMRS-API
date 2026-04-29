@@ -26,6 +26,7 @@ import {
   VerifyOtpResponseDto,
   ResetPasswordResponseDto,
 } from './dto/forgot-password.dto';
+import { RequestSensitiveActionOtpDto } from './dto/sensitive-action-otp.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { JwtAuthGuard } from './guards';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -120,6 +121,28 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ): Promise<UserEntity> {
     return this.authService.updateProfile(userId, dto);
+  }
+
+  @Post('request-sensitive-otp')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request OTP for sensitive action',
+    description:
+      'Send a short-lived OTP for sensitive profile changes or financial transactions',
+  })
+  @ApiBody({ type: RequestSensitiveActionOtpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP sent successfully',
+    type: OtpResponseDto,
+  })
+  async requestSensitiveOtp(
+    @CurrentUser('id') userId: string,
+    @Body() dto: RequestSensitiveActionOtpDto,
+  ): Promise<OtpResponseDto> {
+    return this.authService.requestSensitiveActionOtp(userId, dto);
   }
 
   @Post('forgot-password')

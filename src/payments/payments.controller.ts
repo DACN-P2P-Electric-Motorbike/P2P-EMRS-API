@@ -22,6 +22,7 @@ import { PaymentsService } from './payments.service';
 import { PaymentEntity } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OwnerEarningsDto } from './dto/owner-earnings.dto';
+import { VerifySensitiveOtpDto } from '../auth/dto/sensitive-action-otp.dto';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -94,7 +95,8 @@ export class PaymentsController {
   @Get('payos-return')
   @ApiOperation({
     summary: 'PayOS return callback',
-    description: 'Handle redirect after PayOS payment — serves HTML that notifies the Flutter tab',
+    description:
+      'Handle redirect after PayOS payment — serves HTML that notifies the Flutter tab',
   })
   async payosReturn(
     @Query() query: Record<string, string>,
@@ -267,7 +269,8 @@ export class PaymentsController {
   async refundPayment(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
+    @Body() dto: VerifySensitiveOtpDto,
   ): Promise<PaymentEntity> {
-    return this.paymentsService.refundPayment(id, userId);
+    return this.paymentsService.refundPayment(id, userId, dto.otp);
   }
 }

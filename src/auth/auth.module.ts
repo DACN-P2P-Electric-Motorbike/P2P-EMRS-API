@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { MailModule } from '../mail/mail.module';
 import { VehiclesModule } from 'src/vehicles';
+import { SecurityModule } from '../security/security.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { VehiclesModule } from 'src/vehicles';
     }),
     MailModule,
     VehiclesModule,
+    SecurityModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

@@ -104,6 +104,71 @@ export class MailService {
   }
 
   /**
+   * Send OTP code for sensitive actions such as financial transactions or
+   * email/phone changes.
+   */
+  async sendSensitiveActionOtp(
+    email: string,
+    otp: string,
+    fullName: string,
+    purposeLabel: string,
+  ): Promise<boolean> {
+    if (!this.isEmailEnabled) {
+      this.logger.warn(`Email not configured. OTP for ${email}: ${otp}`);
+      return false;
+    }
+
+    try {
+      await this.mailerService.sendMail({
+        to: email,
+        subject: `Dream Ride verification code - ${purposeLabel}`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Verification Code</title>
+          </head>
+          <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f5f7fa;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <div style="background-color: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                <h2 style="color: #1E2A3B; font-size: 24px; margin-bottom: 16px; text-align: center;">
+                  Verification Required
+                </h2>
+                <p style="color: #6B7B8F; font-size: 16px; line-height: 1.6; margin-bottom: 24px;">
+                  Hi ${fullName},
+                </p>
+                <p style="color: #6B7B8F; font-size: 16px; line-height: 1.6; margin-bottom: 24px;">
+                  Use this verification code to continue with: <strong>${purposeLabel}</strong>.
+                </p>
+                <div style="background-color: #f5f7fa; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
+                  <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #4A6CF7;">
+                    ${otp}
+                  </span>
+                </div>
+                <p style="color: #6B7B8F; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
+                  This code will expire in <strong>10 minutes</strong>. If you did not request this action, do not share this code.
+                </p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+      });
+
+      this.logger.log(`Sensitive action OTP sent to ${email}`);
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Failed to send sensitive action OTP to ${email}`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Send welcome email after registration
    */
   async sendWelcomeEmail(email: string, fullName: string): Promise<boolean> {

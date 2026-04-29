@@ -31,6 +31,7 @@ model User {
   trips                 Trip[]
   vehicles              Vehicle[]      @relation("VehicleOwner")
   fcmTokens             FcmToken[]
+  privacyRequests       PrivacyRequest[]
 
   @@index([email])
   @@index([phone])
@@ -243,6 +244,8 @@ enum UserStatus {
 enum OtpType {
   PASSWORD_RESET
   EMAIL_VERIFICATION
+  SENSITIVE_PROFILE_CHANGE
+  FINANCIAL_TRANSACTION
 }
 
 enum VehicleStatus {
@@ -338,4 +341,33 @@ model FcmToken {
   @@index([token], name: "fcm_tokens_token_idx")
   @@unique([userId, platform], name: "fcm_tokens_user_id_platform_key")
   @@map("fcm_tokens")
+}
+
+model PrivacyRequest {
+  id          String               @id @default(uuid())
+  userId      String               @map("user_id")
+  type        PrivacyRequestType
+  status      PrivacyRequestStatus @default(PENDING)
+  dueAt       DateTime             @map("due_at")
+  completedAt DateTime?            @map("completed_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], name: "privacy_requests_user_id_idx")
+  @@index([status], name: "privacy_requests_status_idx")
+  @@index([dueAt], name: "privacy_requests_due_at_idx")
+  @@map("privacy_requests")
+}
+
+enum PrivacyRequestType {
+  ACCESS_DATA
+  DELETE_ACCOUNT
+}
+
+enum PrivacyRequestStatus {
+  PENDING
+  COMPLETED
+  REJECTED
 }
