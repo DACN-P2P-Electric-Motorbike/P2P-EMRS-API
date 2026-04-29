@@ -24,9 +24,14 @@ import {
 } from './dto/forgot-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { UserEntity } from './entities/user.entity';
-import { UserRole, UserStatus, OtpType } from '@prisma/client';
+import { User, UserRole, UserStatus, OtpType } from '@prisma/client';
 import { CreateVehicleDto, VehiclesService } from 'src/vehicles';
 import { NewUserRegisteredEvent } from '../events/admin.events';
+import { CryptoService } from '../security/crypto.service';
+import {
+  RequestSensitiveActionOtpDto,
+  SensitiveActionPurpose,
+} from './dto/sensitive-action-otp.dto';
 
 export interface JwtPayload {
   sub: string;
@@ -46,6 +51,7 @@ export class AuthService {
     private readonly mailService: MailService,
     private readonly vehiclesService: VehiclesService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly cryptoService: CryptoService,
   ) {}
 
   /**
@@ -91,6 +97,25 @@ export class AuthService {
     return randomInt(10000, 100000).toString();
   }
 
+  private toUserEntity(user: User) {
+    const entity = UserEntity.fromPrisma(user);
+    const idCardNum = this.cryptoService.tryDecryptString(user.idCardNum);
+    entity.idCardNum = this.cryptoService.maskSensitive(idCardNum);
+    return entity;
+  }
+
+  private otpTypeForPurpose(purpose: SensitiveActionPurpose): OtpType {
+    return purpose === SensitiveActionPurpose.FinancialTransaction
+      ? OtpType.FINANCIAL_TRANSACTION
+      : OtpType.SENSITIVE_PROFILE_CHANGE;
+  }
+
+  private purposeLabel(purpose: SensitiveActionPurpose): string {
+    return purpose === SensitiveActionPurpose.FinancialTransaction
+      ? 'financial transaction'
+      : 'email or phone change';
+  }
+
   /**
    * Register a new user
    */
@@ -116,9 +141,15 @@ export class AuthService {
     }
 
     // Check if ID card number already exists (if provided)
-    if (dto.idCardNum) {
-      const existingIdCard = await this.prisma.user.findUnique({
-        where: { idCardNum: dto.idCardNum },
+    const encryptedIdCardNum = dto.idCardNum
+      ? this.cryptoService.encryptStringDeterministic(dto.idCardNum)
+      : undefined;
+
+    if (dto.idCardNum && encryptedIdCardNum) {
+      const existingIdCard = await this.prisma.user.findFirst({
+        where: {
+          OR: [{ idCardNum: encryptedIdCardNum }, { idCardNum: dto.idCardNum }],
+        },
       });
 
       if (existingIdCard) {
@@ -137,7 +168,7 @@ export class AuthService {
         fullName: dto.fullName,
         phone: dto.phone,
         roles: dto.roles || ['RENTER'],
-        idCardNum: dto.idCardNum,
+        idCardNum: encryptedIdCardNum,
         address: dto.address,
         status: UserStatus.ACTIVE,
         trustScore: 100,
@@ -156,7 +187,7 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
 
     // Return user entity (without password) and token
-    const userEntity = UserEntity.fromPrisma(user);
+    const userEntity = this.toUserEntity(user);
     return new AuthResponseDto(userEntity, accessToken);
   }
 
@@ -198,7 +229,7 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
 
     // Return user entity (without password) and token
-    const userEntity = UserEntity.fromPrisma(user);
+    const userEntity = this.toUserEntity(user);
     return new AuthResponseDto(userEntity, accessToken);
   }
 
@@ -214,7 +245,7 @@ export class AuthService {
       return null;
     }
 
-    return UserEntity.fromPrisma(user);
+    return this.toUserEntity(user);
   }
 
   /**
@@ -229,7 +260,91 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    return UserEntity.fromPrisma(user);
+    return this.toUserEntity(user);
+  }
+
+  async requestSensitiveActionOtp(
+    userId: string,
+    dto: RequestSensitiveActionOtpDto,
+  ): Promise<OtpResponseDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const type = this.otpTypeForPurpose(dto.purpose);
+    const purposeLabel = this.purposeLabel(dto.purpose);
+
+    await this.prisma.otpCode.updateMany({
+      where: {
+        userId,
+        type,
+        isUsed: false,
+      },
+      data: { isUsed: true },
+    });
+
+    const otpCode = this.generateOtpCode();
+    const expiresAt = new Date(
+      Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000,
+    );
+
+    await this.prisma.otpCode.create({
+      data: {
+        code: otpCode,
+        type,
+        expiresAt,
+        userId,
+      },
+    });
+
+    const emailSent = await this.mailService.sendSensitiveActionOtp(
+      user.email,
+      otpCode,
+      user.fullName,
+      purposeLabel,
+    );
+
+    if (!emailSent) {
+      this.logger.log(`Sensitive action OTP for ${user.email}: ${otpCode}`);
+    }
+
+    return {
+      message: emailSent
+        ? `OTP has been sent to your email. Valid for ${this.OTP_EXPIRY_MINUTES} minutes.`
+        : `OTP has been sent to your email. Valid for ${this.OTP_EXPIRY_MINUTES} minutes. (Dev mode: OTP is ${otpCode})`,
+      email: user.email,
+    };
+  }
+
+  async verifySensitiveActionOtp(
+    userId: string,
+    otp: string,
+    type: OtpType,
+  ): Promise<void> {
+    const otpRecord = await this.prisma.otpCode.findFirst({
+      where: {
+        userId,
+        code: otp,
+        type,
+        isUsed: false,
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+    });
+
+    if (!otpRecord) {
+      throw new BadRequestException('Invalid or expired OTP code');
+    }
+
+    await this.prisma.otpCode.update({
+      where: { id: otpRecord.id },
+      data: { isUsed: true },
+    });
   }
 
   /**
@@ -399,7 +514,44 @@ export class AuthService {
     userId: string,
     dto: UpdateProfileDto,
   ): Promise<UserEntity> {
-    // If phone is being updated, check uniqueness
+    let currentUser: User | null | undefined;
+
+    if (dto.email || dto.phone) {
+      currentUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!currentUser) {
+        throw new UnauthorizedException('User not found');
+      }
+    }
+
+    const emailChanged = !!dto.email && dto.email !== currentUser?.email;
+    const phoneChanged = !!dto.phone && dto.phone !== currentUser?.phone;
+
+    if (emailChanged || phoneChanged) {
+      if (!dto.otp) {
+        throw new BadRequestException(
+          'OTP is required to change email or phone',
+        );
+      }
+
+      await this.verifySensitiveActionOtp(
+        userId,
+        dto.otp,
+        OtpType.SENSITIVE_PROFILE_CHANGE,
+      );
+    }
+
+    if (dto.email) {
+      const existing = await this.prisma.user.findUnique({
+        where: { email: dto.email },
+      });
+      if (existing && existing.id !== userId) {
+        throw new ConflictException('Email is already in use');
+      }
+    }
+
     if (dto.phone) {
       const existing = await this.prisma.user.findUnique({
         where: { phone: dto.phone },
@@ -410,6 +562,7 @@ export class AuthService {
     }
 
     const updateData: Record<string, unknown> = {};
+    if (dto.email !== undefined) updateData.email = dto.email;
     if (dto.fullName !== undefined) updateData.fullName = dto.fullName;
     if (dto.phone !== undefined) updateData.phone = dto.phone;
     if (dto.avatarUrl !== undefined) updateData.avatarUrl = dto.avatarUrl;
@@ -421,7 +574,7 @@ export class AuthService {
     });
 
     this.logger.log(`Profile updated for user ${userId}`);
-    return UserEntity.fromPrisma(user);
+    return this.toUserEntity(user);
   }
 
   async becomeOwner(

@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsEmail,
   IsString,
   IsOptional,
   MinLength,
@@ -9,6 +10,14 @@ import {
 } from 'class-validator';
 
 export class UpdateProfileDto {
+  @ApiPropertyOptional({
+    description: 'Email address. Requires OTP when changed.',
+    example: 'nguyenvana@example.com',
+  })
+  @IsOptional()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  email?: string;
+
   @ApiPropertyOptional({ description: 'Full name', example: 'Nguyễn Văn A' })
   @IsOptional()
   @IsString()
@@ -43,4 +52,16 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(255)
   address?: string;
+
+  @ApiPropertyOptional({
+    description:
+      '5-digit OTP required when changing email or phone. Request it from POST /auth/request-sensitive-otp.',
+    example: '12345',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{5}$/, {
+    message: 'OTP must be exactly 5 digits',
+  })
+  otp?: string;
 }

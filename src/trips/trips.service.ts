@@ -134,7 +134,7 @@ export class TripsService {
       ),
     );
 
-    return TripEntity.fromPrisma(trip);
+    return TripEntity.fromPrisma(trip, { includeExactLocation: true });
   }
 
   /**
@@ -271,7 +271,9 @@ export class TripsService {
       throw new NotFoundException('Trip not found');
     }
 
-    return TripEntity.fromPrisma(trip);
+    return TripEntity.fromPrisma(trip, {
+      includeExactLocation: trip.status === TripStatus.ONGOING,
+    });
   }
 
   /**
@@ -292,7 +294,9 @@ export class TripsService {
       },
     });
 
-    return trip ? TripEntity.fromPrisma(trip) : null;
+    return trip
+      ? TripEntity.fromPrisma(trip, { includeExactLocation: true })
+      : null;
   }
 
   /**
@@ -347,7 +351,7 @@ export class TripsService {
       ),
     );
 
-    return TripEntity.fromPrisma(updatedTrip);
+    return TripEntity.fromPrisma(updatedTrip, { includeExactLocation: true });
   }
 
   private async adjustTrustScore(userId: string, delta: number): Promise<void> {

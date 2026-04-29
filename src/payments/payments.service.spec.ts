@@ -2,8 +2,15 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentsService } from './payments.service';
 import { PrismaService } from '../database/prisma.service';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
-import { PaymentStatus, BookingStatus, PaymentMethod } from '@prisma/client';
+import {
+  BookingStatus,
+  OtpType,
+  PaymentMethod,
+  PaymentStatus,
+} from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { AuthService } from '../auth/auth.service';
+import { CryptoService } from '../security/crypto.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -64,19 +71,34 @@ const mockPrisma = () => ({
 });
 
 const mockEventEmitter = () => ({ emit: jest.fn() });
+const mockAuthService = () => ({
+  verifySensitiveActionOtp: jest.fn().mockResolvedValue(undefined),
+});
+const mockCryptoService = () => ({
+  encryptJson: jest.fn(() => 'encrypted-json'),
+  tryDecryptJson: jest.fn((value: unknown) =>
+    value === 'encrypted-json' ? { decrypted: true } : value,
+  ),
+});
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
   let prisma: ReturnType<typeof mockPrisma>;
+  let authService: ReturnType<typeof mockAuthService>;
+  let cryptoService: ReturnType<typeof mockCryptoService>;
 
   beforeEach(async () => {
     prisma = mockPrisma();
+    authService = mockAuthService();
+    cryptoService = mockCryptoService();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentsService,
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: mockEventEmitter() },
+        { provide: AuthService, useValue: authService },
+        { provide: CryptoService, useValue: cryptoService },
       ],
     }).compile();
 
@@ -111,7 +133,9 @@ describe('PaymentsService', () => {
 
     it('should throw BadRequestException when a completed payment already exists', async () => {
       prisma.booking.findUnique.mockResolvedValue(
-        makeBooking({ payment: makePayment({ status: PaymentStatus.COMPLETED }) }),
+        makeBooking({
+          payment: makePayment({ status: PaymentStatus.COMPLETED }),
+        }),
       );
       await expect(service.createPayment(RENTER_ID, dto)).rejects.toThrow(
         BadRequestException,
@@ -420,10 +444,18 @@ describe('PaymentsService', () => {
   // Day 3 — Edge: refundPayment
   // =========================================================================
   describe('refundPayment', () => {
+    it('should require OTP before looking up the payment', async () => {
+      await expect(
+        service.refundPayment(PAYMENT_ID, RENTER_ID, ''),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.payment.findUnique).not.toHaveBeenCalled();
+      expect(authService.verifySensitiveActionOtp).not.toHaveBeenCalled();
+    });
+
     it('should throw NotFoundException when payment not found', async () => {
       prisma.payment.findUnique.mockResolvedValue(null);
       await expect(
-        service.refundPayment(PAYMENT_ID, RENTER_ID),
+        service.refundPayment(PAYMENT_ID, RENTER_ID, '12345'),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -432,7 +464,7 @@ describe('PaymentsService', () => {
         makePayment({ status: PaymentStatus.COMPLETED, booking: {} }),
       );
       await expect(
-        service.refundPayment(PAYMENT_ID, 'stranger'),
+        service.refundPayment(PAYMENT_ID, 'stranger', '12345'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -441,7 +473,7 @@ describe('PaymentsService', () => {
         makePayment({ status: PaymentStatus.PENDING, booking: {} }),
       );
       await expect(
-        service.refundPayment(PAYMENT_ID, RENTER_ID),
+        service.refundPayment(PAYMENT_ID, RENTER_ID, '12345'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -450,7 +482,7 @@ describe('PaymentsService', () => {
         makePayment({ status: PaymentStatus.REFUNDED, booking: {} }),
       );
       await expect(
-        service.refundPayment(PAYMENT_ID, RENTER_ID),
+        service.refundPayment(PAYMENT_ID, RENTER_ID, '12345'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -461,13 +493,29 @@ describe('PaymentsService', () => {
       const refunded = makePayment({ status: PaymentStatus.REFUNDED });
       prisma.payment.update.mockResolvedValue(refunded);
 
-      const result = await service.refundPayment(PAYMENT_ID, RENTER_ID);
+      const result = await service.refundPayment(
+        PAYMENT_ID,
+        RENTER_ID,
+        '12345',
+      );
 
       expect(result.status).toBe(PaymentStatus.REFUNDED);
+      expect(authService.verifySensitiveActionOtp).toHaveBeenCalledWith(
+        RENTER_ID,
+        '12345',
+        OtpType.FINANCIAL_TRANSACTION,
+      );
+      expect(cryptoService.encryptJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          refundedAt: expect.any(String),
+          refundedBy: RENTER_ID,
+        }),
+      );
       expect(prisma.payment.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             status: PaymentStatus.REFUNDED,
+            gatewayResponse: 'encrypted-json',
           }),
         }),
       );
@@ -481,7 +529,7 @@ describe('PaymentsService', () => {
         makePayment({ status: PaymentStatus.REFUNDED }),
       );
 
-      const result = await service.refundPayment(PAYMENT_ID, OWNER_ID);
+      const result = await service.refundPayment(PAYMENT_ID, OWNER_ID, '12345');
       expect(result.status).toBe(PaymentStatus.REFUNDED);
     });
   });

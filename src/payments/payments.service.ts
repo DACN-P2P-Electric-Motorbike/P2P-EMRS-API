@@ -11,11 +11,19 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { PaymentEntity } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaymentStatus, BookingStatus } from '@prisma/client';
+import {
+  OtpType,
+  Payment,
+  PaymentStatus,
+  BookingStatus,
+  Prisma,
+} from '@prisma/client';
 import {
   PaymentCompletedEvent,
   PaymentFailedEvent,
 } from '../events/payment.events';
+import { AuthService } from '../auth/auth.service';
+import { CryptoService } from '../security/crypto.service';
 
 @Injectable()
 export class PaymentsService implements OnModuleInit {
@@ -26,7 +34,18 @@ export class PaymentsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly authService: AuthService,
+    private readonly cryptoService: CryptoService,
   ) {}
+
+  private toPaymentEntity(payment: Payment): PaymentEntity {
+    return PaymentEntity.fromPrisma({
+      ...payment,
+      gatewayResponse: this.cryptoService.tryDecryptJson(
+        payment.gatewayResponse,
+      ) as any,
+    });
+  }
 
   onModuleInit() {
     this.payos = new PayOS({
@@ -73,7 +92,9 @@ export class PaymentsService implements OnModuleInit {
         PaymentStatus.REFUNDED,
       ];
       if (finalStatuses.includes(booking.payment.status)) {
-        throw new BadRequestException('Payment already completed for this booking');
+        throw new BadRequestException(
+          'Payment already completed for this booking',
+        );
       }
       // PENDING or FAILED — delete stale payment so a fresh one can be created
       await this.prisma.payment.delete({ where: { id: booking.payment.id } });
@@ -110,7 +131,7 @@ export class PaymentsService implements OnModuleInit {
       `Payment ${payment.id} created. Amount: ${totalAmount} VND`,
     );
 
-    return PaymentEntity.fromPrisma(payment);
+    return this.toPaymentEntity(payment);
   }
 
   /**
@@ -140,7 +161,7 @@ export class PaymentsService implements OnModuleInit {
       throw new NotFoundException('Payment not found');
     }
 
-    return PaymentEntity.fromPrisma(payment);
+    return this.toPaymentEntity(payment);
   }
 
   /**
@@ -167,7 +188,7 @@ export class PaymentsService implements OnModuleInit {
       where: { bookingId },
     });
 
-    return payment ? PaymentEntity.fromPrisma(payment) : null;
+    return payment ? this.toPaymentEntity(payment) : null;
   }
 
   /**
@@ -204,7 +225,7 @@ export class PaymentsService implements OnModuleInit {
       ),
     );
 
-    return PaymentEntity.fromPrisma(updatedPayment);
+    return this.toPaymentEntity(updatedPayment);
   }
 
   /**
@@ -417,7 +438,9 @@ export class PaymentsService implements OnModuleInit {
             data: {
               status: PaymentStatus.COMPLETED,
               paidAt: new Date(),
-              gatewayResponse: structuredClone(body) as any,
+              gatewayResponse: this.cryptoService.encryptJson(
+                structuredClone(body),
+              ) as Prisma.InputJsonValue,
             },
           });
           this.logger.log(`PayOS payment ${payment.id} completed via webhook`);
@@ -510,7 +533,12 @@ export class PaymentsService implements OnModuleInit {
   async refundPayment(
     paymentId: string,
     userId: string,
+    otp: string,
   ): Promise<PaymentEntity> {
+    if (!otp) {
+      throw new BadRequestException('OTP is required to refund a payment');
+    }
+
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
       include: { booking: true },
@@ -526,19 +554,25 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('Only completed payments can be refunded');
     }
 
+    await this.authService.verifySensitiveActionOtp(
+      userId,
+      otp,
+      OtpType.FINANCIAL_TRANSACTION,
+    );
+
     const updatedPayment = await this.prisma.payment.update({
       where: { id: paymentId },
       data: {
         status: PaymentStatus.REFUNDED,
-        gatewayResponse: {
+        gatewayResponse: this.cryptoService.encryptJson({
           refundedAt: new Date().toISOString(),
           refundedBy: userId,
-        },
+        }) as Prisma.InputJsonValue,
       },
     });
 
     this.logger.log(`Payment ${paymentId} refunded`);
-    return PaymentEntity.fromPrisma(updatedPayment);
+    return this.toPaymentEntity(updatedPayment);
   }
 
   /**

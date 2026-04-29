@@ -91,7 +91,21 @@ export class TripEntity implements Trip {
     Object.assign(this, partial);
   }
 
-  static fromPrisma(trip: Trip): TripEntity {
-    return new TripEntity(trip);
+  static fromPrisma(
+    trip: Trip,
+    options: { includeExactLocation?: boolean } = {},
+  ): TripEntity {
+    const entity = new TripEntity(trip);
+
+    if (!options.includeExactLocation) {
+      entity.startLatitude = null;
+      entity.startLongitude = null;
+      entity.startAddress = null;
+      entity.endLatitude = null;
+      entity.endLongitude = null;
+      entity.endAddress = null;
+    }
+
+    return entity;
   }
 }

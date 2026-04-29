@@ -15,6 +15,8 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { NotificationModule } from './notification/notification.module';
 import { EventListenerModule } from './events/events.modules';
 import { AdminModule } from './admin/admin.module';
+import { SecurityModule } from './security/security.module';
+import { PrivacyModule } from './privacy/privacy.module';
 
 @Module({
   imports: [
@@ -29,6 +31,9 @@ import { AdminModule } from './admin/admin.module';
 
     // Database - Prisma ORM
     DatabaseModule,
+
+    // Shared security utilities
+    SecurityModule,
 
     // Mail Service
     MailModule,
@@ -56,6 +61,9 @@ import { AdminModule } from './admin/admin.module';
 
     // Reviews Module
     ReviewsModule,
+
+    // Privacy rights / data export requests
+    PrivacyModule,
 
     EventListenerModule,
 
