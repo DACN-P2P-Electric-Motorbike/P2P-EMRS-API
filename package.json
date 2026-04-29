@@ -21,6 +21,8 @@
     "test:unit": "jest --config jest.config.ts --testPathPattern=spec --runInBand",
     "test:integration": "jest --config jest.config.ts --testPathPattern=e2e-spec --runInBand",
     "test:coverage": "jest --coverage",
+    "test:smoke:live": "RUN_LIVE_SMOKE=1 jest --runInBand test/security-privacy-live.e2e-spec.ts",
+    "test:smoke:providers": "RUN_PROVIDER_SMOKE=1 jest --runInBand test/provider-integrations-smoke.e2e-spec.ts",
     "test:member-a": "jest --config jest.config.ts --testPathPattern='vehicle|booking' --coverage --coverageDirectory=coverage/member-a --collectCoverageFrom='src/vehicles/**/*.ts' --collectCoverageFrom='src/booking/**/*.ts'",
     "docker:dev": "docker compose up --build",
     "docker:prod": "docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d",
