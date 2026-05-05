@@ -271,6 +271,32 @@ describe('BookingsService', () => {
       ).rejects.toThrow('End time must be after start time');
     });
 
+    it('should throw BadRequestException when duration is under 30 minutes', async () => {
+      const start = futureDate(2);
+      const end = new Date(start.getTime() + 20 * 60 * 1000);
+      const dto = buildCreateBookingDto({
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+      });
+
+      await expect(
+        service.createBooking(RENTER_ID, dto as any),
+      ).rejects.toThrow('Booking duration must be at least 30 minutes');
+    });
+
+    it('should throw BadRequestException when duration is over 30 days', async () => {
+      const start = futureDate(2);
+      const end = new Date(start.getTime() + 31 * 24 * 60 * 60 * 1000);
+      const dto = buildCreateBookingDto({
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+      });
+
+      await expect(
+        service.createBooking(RENTER_ID, dto as any),
+      ).rejects.toThrow('Booking duration cannot exceed 30 days');
+    });
+
     it('should throw NotFoundException when vehicleId does not exist', async () => {
       // Arrange
       mockVehicleDelegate.findUnique.mockResolvedValue(null);

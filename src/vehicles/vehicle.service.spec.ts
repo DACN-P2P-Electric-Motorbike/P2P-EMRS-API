@@ -72,6 +72,9 @@ describe('VehiclesService', () => {
     delete: jest.fn(),
     count: jest.fn(),
   };
+  const mockBookingDelegate = {
+    findFirst: jest.fn(),
+  };
   const mockUserDelegate = {
     findUnique: jest.fn(),
     findMany: jest.fn(),
@@ -87,6 +90,7 @@ describe('VehiclesService', () => {
           provide: PrismaService,
           useValue: {
             vehicle: mockVehicleDelegate,
+            booking: mockBookingDelegate,
             user: mockUserDelegate,
           },
         },
@@ -257,7 +261,10 @@ describe('VehiclesService', () => {
       expect(result.total).toBe(2);
       expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: VehicleStatus.AVAILABLE }),
+          where: expect.objectContaining({
+            status: VehicleStatus.AVAILABLE,
+            isAvailable: true,
+          }),
         }),
       );
     });
@@ -462,7 +469,9 @@ describe('VehiclesService', () => {
         service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
           status: VehicleStatus.AVAILABLE,
         } as any),
-      ).rejects.toThrow(/Cannot change status while vehicle is PENDING_APPROVAL/);
+      ).rejects.toThrow(
+        /Cannot change status while vehicle is PENDING_APPROVAL/,
+      );
     });
 
     it('should reject owner setting AVAILABLE while vehicle is RENTED', async () => {
@@ -540,6 +549,7 @@ describe('VehiclesService', () => {
         status: VehicleStatus.AVAILABLE,
       });
       mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findFirst.mockResolvedValue(null);
       mockVehicleDelegate.delete.mockResolvedValue(vehicle);
 
       // Act
@@ -584,11 +594,28 @@ describe('VehiclesService', () => {
         status: VehicleStatus.AVAILABLE,
       });
       mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findFirst.mockResolvedValue(null);
       mockVehicleDelegate.delete.mockResolvedValue(vehicle);
 
       await service.deleteVehicle(VEHICLE_ID, OWNER_ID, [UserRole.ADMIN]);
 
       expect(mockVehicleDelegate.delete).toHaveBeenCalled();
+    });
+
+    it('should block deletion when vehicle has active or upcoming bookings', async () => {
+      const vehicle = createMockVehicle({
+        ownerId: OWNER_ID,
+        status: VehicleStatus.AVAILABLE,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findFirst.mockResolvedValue({ id: 'booking-uuid' });
+
+      await expect(
+        service.deleteVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(
+        'Cannot delete a vehicle with active or upcoming bookings',
+      );
+      expect(mockVehicleDelegate.delete).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException when not owner and not ADMIN', async () => {

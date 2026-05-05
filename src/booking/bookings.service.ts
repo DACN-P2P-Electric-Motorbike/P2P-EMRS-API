@@ -20,6 +20,8 @@ import {
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
+  private readonly MIN_BOOKING_MINUTES = 30;
+  private readonly MAX_BOOKING_DAYS = 30;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -114,6 +116,20 @@ export class BookingsService {
       throw new BadRequestException('Start time must be in the future');
     }
 
+    const durationMs = endTime.getTime() - startTime.getTime();
+    const durationMinutes = durationMs / (1000 * 60);
+    if (durationMinutes < this.MIN_BOOKING_MINUTES) {
+      throw new BadRequestException(
+        `Booking duration must be at least ${this.MIN_BOOKING_MINUTES} minutes`,
+      );
+    }
+
+    if (durationMinutes > this.MAX_BOOKING_DAYS * 24 * 60) {
+      throw new BadRequestException(
+        `Booking duration cannot exceed ${this.MAX_BOOKING_DAYS} days`,
+      );
+    }
+
     // Get vehicle details
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { id: dto.vehicleId },
@@ -152,7 +168,7 @@ export class BookingsService {
       startTime,
       endTime,
       vehicle.pricePerHour.toNumber(),
-      vehicle.pricePerDay!.toNumber(),
+      vehicle.pricePerDay?.toNumber() ?? vehicle.pricePerHour.toNumber() * 24,
     );
 
     // Create booking

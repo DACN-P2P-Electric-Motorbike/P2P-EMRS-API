@@ -10,13 +10,21 @@ import { TripEntity } from './entities/trip.entity';
 import { StartTripDto } from './dto/start-trip.dto';
 import { EndTripDto } from './dto/end-trip.dto';
 import { ReportIssueDto } from './dto/report-issue.dto';
-import { TripStatus, BookingStatus, PaymentStatus } from '@prisma/client';
+import {
+  TripStatus,
+  BookingStatus,
+  PaymentStatus,
+  VehicleStatus,
+} from '@prisma/client';
 import { TripIssueReportedEvent } from '../events/admin.events';
 import { TripStartedEvent, TripCompletedEvent } from '../events/trip.events';
 
 @Injectable()
 export class TripsService {
   private readonly logger = new Logger(TripsService.name);
+  private readonly START_EARLY_GRACE_MS = 15 * 60 * 1000;
+  private readonly START_LATE_GRACE_MS = 2 * 60 * 60 * 1000;
+  private readonly MIN_TRIP_DURATION_MS = 2 * 60 * 1000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -92,11 +100,22 @@ export class TripsService {
       throw new BadRequestException('Trip has already been started');
     }
 
-    // Check if current time is within booking window
+    // Check if current time is within the allowed pickup window
     const now = new Date();
-    if (now < booking.startTime) {
+    const earliestStart = new Date(
+      booking.startTime.getTime() - this.START_EARLY_GRACE_MS,
+    );
+    const latestStart = new Date(
+      booking.startTime.getTime() + this.START_LATE_GRACE_MS,
+    );
+    if (now < earliestStart) {
       throw new BadRequestException(
-        'Cannot start trip before booking start time',
+        'Cannot start trip more than 15 minutes before booking start time',
+      );
+    }
+    if (now > latestStart) {
+      throw new BadRequestException(
+        'Cannot start trip more than 2 hours after booking start time',
       );
     }
 
@@ -121,6 +140,11 @@ export class TripsService {
       await tx.booking.update({
         where: { id: dto.bookingId },
         data: { status: BookingStatus.ONGOING },
+      });
+
+      await tx.vehicle.update({
+        where: { id: booking.vehicleId },
+        data: { status: VehicleStatus.RENTED },
       });
 
       return newTrip;
@@ -180,6 +204,11 @@ export class TripsService {
     // Calculate trip metrics
     const endTime = new Date();
     const durationMs = endTime.getTime() - trip.startedAt.getTime();
+    if (durationMs < this.MIN_TRIP_DURATION_MS) {
+      throw new BadRequestException(
+        'Trip cannot be ended less than 2 minutes after it starts',
+      );
+    }
     const durationMinutes = Math.floor(durationMs / (1000 * 60));
 
     const distanceTraveled = this.calculateDistance(
@@ -217,7 +246,10 @@ export class TripsService {
       // Update vehicle total trips
       await tx.vehicle.update({
         where: { id: trip.vehicleId },
-        data: { totalTrips: { increment: 1 } },
+        data: {
+          status: VehicleStatus.AVAILABLE,
+          totalTrips: { increment: 1 },
+        },
       });
 
       return updated;

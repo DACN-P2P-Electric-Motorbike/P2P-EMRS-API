@@ -80,6 +80,7 @@ const mockPrisma = () => {
   const tx = {
     trip: { create: jest.fn() },
     booking: { update: jest.fn() },
+    vehicle: { update: jest.fn() },
   };
 
   return {
@@ -151,6 +152,48 @@ describe('TripsService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    it('allows starting up to 15 minutes before pickup time', async () => {
+      const booking = makeBooking({
+        startTime: new Date(Date.now() + 10 * 60_000),
+      });
+      const trip = makeTrip();
+      prisma.booking.findUnique.mockResolvedValue(booking);
+      prisma.tx.trip.create.mockResolvedValue(trip);
+      prisma.tx.booking.update.mockResolvedValue({
+        ...booking,
+        status: BookingStatus.ONGOING,
+      });
+      prisma.tx.vehicle.update.mockResolvedValue({ id: VEHICLE_ID });
+
+      await expect(service.startTrip(RENTER_ID, dto)).resolves.toBeDefined();
+      expect(prisma.tx.vehicle.update).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+        data: { status: 'RENTED' },
+      });
+    });
+
+    it('rejects starting too early before pickup time', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ startTime: new Date(Date.now() + 20 * 60_000) }),
+      );
+
+      await expect(service.startTrip(RENTER_ID, dto)).rejects.toThrow(
+        'Cannot start trip more than 15 minutes before booking start time',
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects starting more than 2 hours after pickup time', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ startTime: new Date(Date.now() - 3 * 60 * 60_000) }),
+      );
+
+      await expect(service.startTrip(RENTER_ID, dto)).rejects.toThrow(
+        'Cannot start trip more than 2 hours after booking start time',
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('starts a paid confirmed booking', async () => {
       const booking = makeBooking();
       const trip = makeTrip();
@@ -160,6 +203,7 @@ describe('TripsService', () => {
         ...booking,
         status: BookingStatus.ONGOING,
       });
+      prisma.tx.vehicle.update.mockResolvedValue({ id: VEHICLE_ID });
 
       const result = await service.startTrip(RENTER_ID, dto);
 
@@ -180,6 +224,10 @@ describe('TripsService', () => {
       expect(prisma.tx.booking.update).toHaveBeenCalledWith({
         where: { id: BOOKING_ID },
         data: { status: BookingStatus.ONGOING },
+      });
+      expect(prisma.tx.vehicle.update).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+        data: { status: 'RENTED' },
       });
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'trip.started',

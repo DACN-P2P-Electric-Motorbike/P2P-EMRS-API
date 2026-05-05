@@ -279,6 +279,27 @@ export class VehiclesService {
       );
     }
 
+    const blockingBooking = await this.prisma.booking.findFirst({
+      where: {
+        vehicleId,
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.ONGOING,
+          ],
+        },
+        endTime: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+
+    if (blockingBooking) {
+      throw new BadRequestException(
+        'Cannot delete a vehicle with active or upcoming bookings',
+      );
+    }
+
     await this.prisma.vehicle.delete({
       where: { id: vehicleId },
     });
@@ -324,6 +345,7 @@ export class VehiclesService {
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
+      isAvailable: true,
     };
 
     if (params?.type) {
@@ -359,9 +381,7 @@ export class VehiclesService {
         distinct: ['vehicleId'],
       });
 
-      const conflictingVehicleIds = conflictingBookings.map(
-        (b) => b.vehicleId,
-      );
+      const conflictingVehicleIds = conflictingBookings.map((b) => b.vehicleId);
 
       if (conflictingVehicleIds.length > 0) {
         where.id = { notIn: conflictingVehicleIds };
