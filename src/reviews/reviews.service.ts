@@ -34,12 +34,14 @@ export class ReviewsService {
       throw new NotFoundException('Vehicle not found');
     }
 
-    // Check if user has completed a trip with this vehicle
+    // Check if user has completed a trip with this vehicle. When a bookingId
+    // is supplied, bind the review to that exact completed trip.
     const completedTrip = await this.prisma.trip.findFirst({
       where: {
         renterId: userId,
         vehicleId: dto.vehicleId,
         status: 'COMPLETED',
+        ...(dto.bookingId ? { bookingId: dto.bookingId } : {}),
       },
     });
 
@@ -50,21 +52,12 @@ export class ReviewsService {
     }
 
     if (dto.bookingId) {
-      const completedTrips = await this.prisma.trip.count({
-        where: {
-          renterId: userId,
-          vehicleId: dto.vehicleId,
-          status: 'COMPLETED',
-        },
-      });
-      const reviewCount = await this.prisma.review.count({
-        where: { userId, vehicleId: dto.vehicleId },
+      const existingReview = await this.prisma.review.findFirst({
+        where: { tripId: completedTrip.id },
       });
 
-      if (reviewCount >= completedTrips) {
-        throw new BadRequestException(
-          'Bạn đã đánh giá cho tất cả chuyến đi với xe này',
-        );
+      if (existingReview) {
+        throw new BadRequestException('Bạn đã đánh giá chuyến đi này rồi');
       }
     } else {
       const existingReview = await this.prisma.review.findFirst({
@@ -80,6 +73,7 @@ export class ReviewsService {
       data: {
         userId,
         vehicleId: dto.vehicleId,
+        tripId: dto.bookingId ? completedTrip.id : undefined,
         rating: dto.rating,
         comment: dto.comment,
       },

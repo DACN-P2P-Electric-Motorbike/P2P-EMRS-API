@@ -11,6 +11,7 @@ import {
   IsLatitude,
   IsLongitude,
   Matches,
+  ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { VehicleType, VehicleBrand, VehicleFeature } from '@prisma/client';
@@ -127,6 +128,7 @@ export class CreateVehicleDto {
     type: [String],
   })
   @IsArray({ message: 'Images must be an array' })
+  @ArrayMinSize(1, { message: 'At least one vehicle image is required' })
   @IsString({ each: true, message: 'Each image must be a URL string' })
   images: string[];
 

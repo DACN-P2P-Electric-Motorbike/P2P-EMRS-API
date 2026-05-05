@@ -103,30 +103,30 @@ describe('ReviewsService', () => {
       );
     });
 
-    it('should throw BadRequestException when all trips already reviewed (with bookingId)', async () => {
+    it('should throw BadRequestException when the booking trip is already reviewed', async () => {
       const dtoWithBooking = { ...dto, bookingId: 'booking-uuid' };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
       prisma.trip.findFirst.mockResolvedValue({
         id: 'trip-1',
         status: 'COMPLETED',
       });
-      prisma.trip.count.mockResolvedValue(2);
-      prisma.review.count.mockResolvedValue(2);
+      prisma.review.findFirst.mockResolvedValue(
+        makeReview({ tripId: 'trip-1' }),
+      );
 
       await expect(
         service.createReview(USER_ID, dtoWithBooking),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should allow review when reviewCount < completedTrips (with bookingId)', async () => {
+    it('should create a trip-bound review when bookingId is provided', async () => {
       const dtoWithBooking = { ...dto, bookingId: 'booking-uuid' };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
       prisma.trip.findFirst.mockResolvedValue({
         id: 'trip-1',
         status: 'COMPLETED',
       });
-      prisma.trip.count.mockResolvedValue(3);
-      prisma.review.count.mockResolvedValue(2);
+      prisma.review.findFirst.mockResolvedValue(null);
       prisma.review.create.mockResolvedValue(makeReview());
       prisma.review.findMany.mockResolvedValue([makeReview()]);
       prisma.vehicle.update.mockResolvedValue(makeVehicle());
@@ -136,6 +136,15 @@ describe('ReviewsService', () => {
       const result = await service.createReview(USER_ID, dtoWithBooking);
       expect(result).toBeDefined();
       expect(result.rating).toBe(5);
+      expect(prisma.review.create).toHaveBeenCalledWith({
+        data: {
+          userId: USER_ID,
+          vehicleId: VEHICLE_ID,
+          tripId: 'trip-1',
+          rating: 5,
+          comment: 'Nice',
+        },
+      });
     });
   });
 
@@ -432,9 +441,7 @@ describe('ReviewsService', () => {
   // =========================================================================
   describe('getVehicleReviews — rating filter', () => {
     it('should pass rating filter to Prisma where clause when provided', async () => {
-      prisma.review.findMany.mockResolvedValue([
-        makeReview({ rating: 4 }),
-      ]);
+      prisma.review.findMany.mockResolvedValue([makeReview({ rating: 4 })]);
 
       await service.getVehicleReviews(VEHICLE_ID, 4);
 
