@@ -10,7 +10,7 @@ import { TripEntity } from './entities/trip.entity';
 import { StartTripDto } from './dto/start-trip.dto';
 import { EndTripDto } from './dto/end-trip.dto';
 import { ReportIssueDto } from './dto/report-issue.dto';
-import { TripStatus, BookingStatus } from '@prisma/client';
+import { TripStatus, BookingStatus, PaymentStatus } from '@prisma/client';
 import { TripIssueReportedEvent } from '../events/admin.events';
 import { TripStartedEvent, TripCompletedEvent } from '../events/trip.events';
 
@@ -62,7 +62,7 @@ export class TripsService {
     // Get booking details
     const booking = await this.prisma.booking.findUnique({
       where: { id: dto.bookingId },
-      include: { trip: true },
+      include: { trip: true, payment: true },
     });
 
     if (!booking) {
@@ -78,6 +78,12 @@ export class TripsService {
     if (booking.status !== BookingStatus.CONFIRMED) {
       throw new BadRequestException(
         'Can only start trip for confirmed bookings',
+      );
+    }
+
+    if (booking.payment?.status !== PaymentStatus.COMPLETED) {
+      throw new BadRequestException(
+        'Payment must be completed before starting the trip',
       );
     }
 

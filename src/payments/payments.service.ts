@@ -108,10 +108,11 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('Can only pay for confirmed bookings');
     }
 
-    // Calculate fees
+    // Renter pays rental plus deposit. Platform commission applies only to
+    // rental revenue; deposit is a held/refundable amount.
     const totalAmount = booking.totalPrice + booking.deposit;
-    const platformFee = totalAmount * this.PLATFORM_FEE_RATE;
-    const ownerAmount = totalAmount - platformFee;
+    const platformFee = booking.totalPrice * this.PLATFORM_FEE_RATE;
+    const ownerAmount = booking.totalPrice - platformFee;
 
     // Create payment record
     const payment = await this.prisma.payment.create({

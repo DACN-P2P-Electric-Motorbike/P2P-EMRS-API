@@ -41,8 +41,8 @@ const makePayment = (overrides: Record<string, unknown> = {}) => ({
   payerId: RENTER_ID,
   receiverId: OWNER_ID,
   amount: 120_000,
-  platformFee: 18_000,
-  ownerAmount: 102_000,
+  platformFee: 15_000,
+  ownerAmount: 85_000,
   method: PaymentMethod.CASH,
   status: PaymentStatus.PENDING,
   transactionId: null,
@@ -151,7 +151,7 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('should calculate 15% platform fee correctly', async () => {
+    it('should calculate 15% platform fee from rental price only', async () => {
       prisma.booking.findUnique.mockResolvedValue(makeBooking());
       const created = makePayment();
       prisma.payment.create.mockResolvedValue(created);
@@ -159,10 +159,9 @@ describe('PaymentsService', () => {
       await service.createPayment(RENTER_ID, dto);
 
       const callArg = prisma.payment.create.mock.calls[0][0].data;
-      // totalPrice=100000 + deposit=20000 = 120000
       expect(callArg.amount).toBe(120_000);
-      expect(callArg.platformFee).toBe(18_000); // 15%
-      expect(callArg.ownerAmount).toBe(102_000);
+      expect(callArg.platformFee).toBe(15_000);
+      expect(callArg.ownerAmount).toBe(85_000);
     });
 
     it('should create a payment with PENDING status', async () => {
@@ -752,8 +751,8 @@ describe('PaymentsService', () => {
 
       const data = prisma.payment.create.mock.calls[0][0].data;
       expect(data.amount).toBe(60_000_000);
-      expect(data.platformFee).toBe(9_000_000);
-      expect(data.ownerAmount).toBe(51_000_000);
+      expect(data.platformFee).toBe(7_500_000);
+      expect(data.ownerAmount).toBe(42_500_000);
     });
   });
 });
