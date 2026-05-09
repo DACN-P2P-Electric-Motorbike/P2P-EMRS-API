@@ -95,6 +95,10 @@ export class TripsService {
       );
     }
 
+    if (dto.startLatitude == null || dto.startLongitude == null) {
+      throw new BadRequestException('Start location is required to start trip');
+    }
+
     // Check if trip already exists
     if (booking.trip) {
       throw new BadRequestException('Trip has already been started');
