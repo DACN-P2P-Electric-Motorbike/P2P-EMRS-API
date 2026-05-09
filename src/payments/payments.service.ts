@@ -14,6 +14,7 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import {
   OtpType,
   Payment,
+  PaymentMethod,
   PaymentStatus,
   BookingStatus,
   Prisma,
@@ -97,7 +98,8 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('You can only pay for your own bookings');
     }
 
-    // Keep payment creation idempotent for retry/resume flows.
+    // Keep payment creation idempotent for retry/resume flows, but let the
+    // renter switch gateway before the payment reaches a final state.
     if (booking.payment) {
       const finalStatuses: PaymentStatus[] = [
         PaymentStatus.COMPLETED,
@@ -108,16 +110,59 @@ export class PaymentsService implements OnModuleInit {
           'Payment already completed for this booking',
         );
       }
-      if (
-        booking.payment.status === PaymentStatus.PENDING ||
-        booking.payment.status === PaymentStatus.PROCESSING
-      ) {
+      const mutableStatuses: PaymentStatus[] = [
+        PaymentStatus.PENDING,
+        PaymentStatus.PROCESSING,
+        PaymentStatus.FAILED,
+      ];
+      const canChangeMethod = mutableStatuses.includes(booking.payment.status);
+      const shouldResetPayment =
+        booking.payment.status === PaymentStatus.FAILED ||
+        (canChangeMethod && booking.payment.method !== dto.method);
+      if (shouldResetPayment) {
+        if (
+          booking.payment.status === PaymentStatus.PROCESSING &&
+          booking.payment.method === PaymentMethod.PAYOS &&
+          booking.payment.transactionId
+        ) {
+          try {
+            await this.payos.paymentRequests.cancel(
+              Number(booking.payment.transactionId),
+              'User changed payment method',
+            );
+          } catch (err) {
+            this.logger.error(
+              `Failed to cancel PayOS payment link ${booking.payment.transactionId}: ${(err as Error).message}`,
+            );
+            throw new BadRequestException(
+              'Cannot change payment method while the PayOS link is active. Please cancel the PayOS checkout or try again later.',
+            );
+          }
+        }
+
+        const updatedPayment = await this.prisma.payment.update({
+          where: { id: booking.payment.id },
+          data: {
+            method: dto.method,
+            status: PaymentStatus.PENDING,
+            transactionId: null,
+            gatewayResponse: Prisma.JsonNull,
+            paidAt: null,
+          },
+        });
+        this.logger.log(
+          `Reset payment ${booking.payment.id} with method ${dto.method} for booking ${dto.bookingId}`,
+        );
+        return this.toPaymentEntity(updatedPayment);
+      }
+      if (canChangeMethod) {
         this.logger.log(
           `Reusing ${booking.payment.status} payment ${booking.payment.id} for booking ${dto.bookingId}`,
         );
         return this.toPaymentEntity(booking.payment);
       }
-      // FAILED — delete stale payment so a fresh one can be created.
+
+      // Unknown non-final state — delete stale payment so a fresh one can be created.
       await this.prisma.payment.delete({ where: { id: booking.payment.id } });
       this.logger.log(
         `Deleted stale ${booking.payment.status} payment ${booking.payment.id} for booking ${dto.bookingId}`,
