@@ -46,6 +46,7 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   deposit: 20_000,
   trip: null,
   payment: makePayment(),
+  vehicle: { batteryLevel: 100 },
   createdAt: new Date(),
   updatedAt: new Date(),
   ...overrides,
@@ -220,7 +221,11 @@ describe('TripsService', () => {
 
       expect(prisma.booking.findUnique).toHaveBeenCalledWith({
         where: { id: BOOKING_ID },
-        include: { trip: true, payment: true },
+        include: {
+          trip: true,
+          payment: true,
+          vehicle: { select: { batteryLevel: true } },
+        },
       });
       expect(prisma.tx.trip.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -229,6 +234,7 @@ describe('TripsService', () => {
             renterId: RENTER_ID,
             vehicleId: VEHICLE_ID,
             status: TripStatus.ONGOING,
+            startBattery: 100,
           }),
         }),
       );
