@@ -48,12 +48,24 @@ export class PaymentsService implements OnModuleInit {
   }
 
   onModuleInit() {
+    const missingConfig = this.getMissingPayOSConfig();
+    if (missingConfig.length > 0) {
+      this.logger.warn(
+        `PayOS is not fully configured. Missing: ${missingConfig.join(', ')}`,
+      );
+    }
     this.payos = new PayOS({
       clientId: process.env.PAYOS_CLIENT_ID ?? '',
       apiKey: process.env.PAYOS_API_KEY ?? '',
       checksumKey: process.env.PAYOS_CHECKSUM_KEY ?? '',
     });
     this.logger.log('PayOS SDK initialized');
+  }
+
+  private getMissingPayOSConfig(): string[] {
+    return ['PAYOS_CLIENT_ID', 'PAYOS_API_KEY', 'PAYOS_CHECKSUM_KEY'].filter(
+      (key) => !process.env[key]?.trim(),
+    );
   }
 
   /**
@@ -85,7 +97,7 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('You can only pay for your own bookings');
     }
 
-    // If a completed/refunded payment already exists, reject
+    // Keep payment creation idempotent for retry/resume flows.
     if (booking.payment) {
       const finalStatuses: PaymentStatus[] = [
         PaymentStatus.COMPLETED,
@@ -96,7 +108,16 @@ export class PaymentsService implements OnModuleInit {
           'Payment already completed for this booking',
         );
       }
-      // PENDING or FAILED — delete stale payment so a fresh one can be created
+      if (
+        booking.payment.status === PaymentStatus.PENDING ||
+        booking.payment.status === PaymentStatus.PROCESSING
+      ) {
+        this.logger.log(
+          `Reusing ${booking.payment.status} payment ${booking.payment.id} for booking ${dto.bookingId}`,
+        );
+        return this.toPaymentEntity(booking.payment);
+      }
+      // FAILED — delete stale payment so a fresh one can be created.
       await this.prisma.payment.delete({ where: { id: booking.payment.id } });
       this.logger.log(
         `Deleted stale ${booking.payment.status} payment ${booking.payment.id} for booking ${dto.bookingId}`,
@@ -246,6 +267,13 @@ export class PaymentsService implements OnModuleInit {
     if (payment.status !== PaymentStatus.PENDING)
       throw new BadRequestException('Payment already processed');
 
+    const missingConfig = this.getMissingPayOSConfig();
+    if (missingConfig.length > 0) {
+      const message = `PayOS is not configured. Missing ${missingConfig.join(', ')}`;
+      this.logger.error(message);
+      throw new BadRequestException(message);
+    }
+
     const returnUrl =
       process.env.PAYOS_RETURN_URL ||
       'http://localhost:3000/payments/payos-return';
@@ -293,9 +321,28 @@ export class PaymentsService implements OnModuleInit {
 
       return { checkoutUrl, qrCode };
     } catch (err) {
-      this.logger.error(`PayOS API call failed: ${(err as Error).message}`);
+      const errorMessage = (err as Error).message;
+      this.logger.error(`PayOS API call failed: ${errorMessage}`);
+      const failureMetadata = this.cryptoService.encryptJson({
+        gateway: 'payos',
+        stage: 'initiate',
+        error: errorMessage,
+        failedAt: new Date().toISOString(),
+      });
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.FAILED,
+          ...(failureMetadata ? { gatewayResponse: failureMetadata } : {}),
+        },
+      });
+      const isSignatureError = errorMessage
+        .toLowerCase()
+        .includes('payment signature');
       throw new BadRequestException(
-        `Failed to create PayOS payment link: ${(err as Error).message}`,
+        isSignatureError
+          ? 'PayOS configuration is invalid. Please verify PAYOS_CHECKSUM_KEY in the API runtime.'
+          : `Failed to create PayOS payment link: ${errorMessage}`,
       );
     }
   }
