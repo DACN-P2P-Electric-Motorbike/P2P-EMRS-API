@@ -19,6 +19,10 @@ export class ReviewEntity implements Review {
   @Expose()
   tripId: string | null;
 
+  @ApiPropertyOptional({ nullable: true })
+  @Expose()
+  bookingId?: string | null;
+
   @ApiProperty({ minimum: 1, maximum: 5 })
   @Expose()
   rating: number;
@@ -43,11 +47,18 @@ export class ReviewEntity implements Review {
   @Expose()
   vehicle?: { name: string; brand: string; model: string; images: string[] };
 
+  @ApiPropertyOptional({ description: 'Trip info for trip-bound reviews' })
+  @Expose()
+  trip?: { bookingId: string };
+
   constructor(partial: Partial<ReviewEntity>) {
     Object.assign(this, partial);
   }
 
   static fromPrisma(review: any): ReviewEntity {
-    return new ReviewEntity(review);
+    return new ReviewEntity({
+      ...review,
+      bookingId: review.bookingId ?? review.trip?.bookingId ?? null,
+    });
   }
 }

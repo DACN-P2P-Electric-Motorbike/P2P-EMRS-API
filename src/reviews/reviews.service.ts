@@ -185,6 +185,9 @@ export class ReviewsService {
         vehicle: {
           select: { name: true, brand: true, model: true, images: true },
         },
+        trip: {
+          select: { bookingId: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });

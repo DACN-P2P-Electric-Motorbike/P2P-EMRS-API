@@ -104,6 +104,10 @@ describe('PaymentsService', () => {
 
     service = module.get<PaymentsService>(PaymentsService);
 
+    process.env.PAYOS_CLIENT_ID = 'payos-client-id';
+    process.env.PAYOS_API_KEY = 'payos-api-key';
+    process.env.PAYOS_CHECKSUM_KEY = 'payos-checksum-key';
+
     // Stub PayOS initialisation so onModuleInit doesn't fail
     (service as any).payos = {
       paymentRequests: { create: jest.fn() },
@@ -140,6 +144,48 @@ describe('PaymentsService', () => {
       await expect(service.createPayment(RENTER_ID, dto)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('should reuse an existing pending payment instead of creating a duplicate', async () => {
+      const existing = makePayment({ status: PaymentStatus.PENDING });
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ payment: existing }),
+      );
+
+      const result = await service.createPayment(RENTER_ID, dto);
+
+      expect(result.id).toBe(PAYMENT_ID);
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(prisma.payment.delete).not.toHaveBeenCalled();
+    });
+
+    it('should reuse an existing processing payment instead of creating a duplicate', async () => {
+      const existing = makePayment({ status: PaymentStatus.PROCESSING });
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ payment: existing }),
+      );
+
+      const result = await service.createPayment(RENTER_ID, dto);
+
+      expect(result.status).toBe(PaymentStatus.PROCESSING);
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(prisma.payment.delete).not.toHaveBeenCalled();
+    });
+
+    it('should delete a failed payment before creating a new one', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          payment: makePayment({ status: PaymentStatus.FAILED }),
+        }),
+      );
+      prisma.payment.create.mockResolvedValue(makePayment());
+
+      await service.createPayment(RENTER_ID, dto);
+
+      expect(prisma.payment.delete).toHaveBeenCalledWith({
+        where: { id: PAYMENT_ID },
+      });
+      expect(prisma.payment.create).toHaveBeenCalledTimes(1);
     });
 
     it('should throw BadRequestException when booking is not CONFIRMED', async () => {
@@ -426,7 +472,20 @@ describe('PaymentsService', () => {
       );
     });
 
-    it('should throw BadRequestException when PayOS SDK fails', async () => {
+    it('should fail clearly when PayOS checksum key is missing', async () => {
+      delete process.env.PAYOS_CHECKSUM_KEY;
+      prisma.payment.findUnique.mockResolvedValue(makePayment());
+
+      await expect(
+        service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
+      ).rejects.toThrow('PayOS is not configured');
+
+      const payosMock = (service as any).payos;
+      expect(payosMock.paymentRequests.create).not.toHaveBeenCalled();
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('should mark payment failed when PayOS SDK fails', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
       const payosMock = (service as any).payos;
       payosMock.paymentRequests.create.mockRejectedValue(
@@ -436,6 +495,39 @@ describe('PaymentsService', () => {
       await expect(
         service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
       ).rejects.toThrow(BadRequestException);
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: PAYMENT_ID },
+        data: expect.objectContaining({
+          status: PaymentStatus.FAILED,
+          gatewayResponse: 'encrypted-json',
+        }),
+      });
+      expect(cryptoService.encryptJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gateway: 'payos',
+          stage: 'initiate',
+          error: 'Network error',
+        }),
+      );
+    });
+
+    it('should surface invalid PayOS signature config as a configuration error', async () => {
+      prisma.payment.findUnique.mockResolvedValue(makePayment());
+      const payosMock = (service as any).payos;
+      payosMock.paymentRequests.create.mockRejectedValue(
+        new Error('Failed to create payment signature'),
+      );
+
+      await expect(
+        service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
+      ).rejects.toThrow('PayOS configuration is invalid');
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: PAYMENT_ID },
+        data: expect.objectContaining({
+          status: PaymentStatus.FAILED,
+          gatewayResponse: 'encrypted-json',
+        }),
+      });
     });
   });
 

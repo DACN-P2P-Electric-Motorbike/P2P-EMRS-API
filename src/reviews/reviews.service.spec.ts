@@ -486,6 +486,7 @@ describe('ReviewsService', () => {
       prisma.review.findMany.mockResolvedValue([
         makeReview({
           user: { fullName: 'Test', avatarUrl: null },
+          trip: { bookingId: 'booking-uuid' },
           vehicle: {
             name: 'EV1',
             brand: 'VinFast',
@@ -503,9 +504,11 @@ describe('ReviewsService', () => {
           where: { userId: USER_ID },
           include: expect.objectContaining({
             vehicle: expect.any(Object),
+            trip: expect.any(Object),
           }),
         }),
       );
+      expect(result[0].bookingId).toBe('booking-uuid');
     });
   });
 });
