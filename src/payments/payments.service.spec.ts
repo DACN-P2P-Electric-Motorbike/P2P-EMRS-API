@@ -110,7 +110,7 @@ describe('PaymentsService', () => {
 
     // Stub PayOS initialisation so onModuleInit doesn't fail
     (service as any).payos = {
-      paymentRequests: { create: jest.fn() },
+      paymentRequests: { create: jest.fn(), cancel: jest.fn() },
       webhooks: { verify: jest.fn() },
     };
   });
@@ -172,20 +172,124 @@ describe('PaymentsService', () => {
       expect(prisma.payment.delete).not.toHaveBeenCalled();
     });
 
-    it('should delete a failed payment before creating a new one', async () => {
+    it('should reset a failed payment before retrying', async () => {
       prisma.booking.findUnique.mockResolvedValue(
         makeBooking({
           payment: makePayment({ status: PaymentStatus.FAILED }),
         }),
       );
-      prisma.payment.create.mockResolvedValue(makePayment());
+      prisma.payment.update.mockResolvedValue(
+        makePayment({ status: PaymentStatus.PENDING }),
+      );
 
-      await service.createPayment(RENTER_ID, dto);
+      const result = await service.createPayment(RENTER_ID, dto);
 
-      expect(prisma.payment.delete).toHaveBeenCalledWith({
+      expect(result.status).toBe(PaymentStatus.PENDING);
+      expect(prisma.payment.update).toHaveBeenCalledWith({
         where: { id: PAYMENT_ID },
+        data: {
+          method: PaymentMethod.CASH,
+          status: PaymentStatus.PENDING,
+          transactionId: null,
+          gatewayResponse: expect.anything(),
+          paidAt: null,
+        },
       });
-      expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(prisma.payment.delete).not.toHaveBeenCalled();
+    });
+
+    it('should change method on an existing pending payment', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          payment: makePayment({
+            status: PaymentStatus.PENDING,
+            method: PaymentMethod.PAYOS,
+          }),
+        }),
+      );
+      prisma.payment.update.mockResolvedValue(
+        makePayment({
+          status: PaymentStatus.PENDING,
+          method: PaymentMethod.MOMO,
+        }),
+      );
+
+      const result = await service.createPayment(RENTER_ID, {
+        bookingId: BOOKING_ID,
+        method: PaymentMethod.MOMO,
+      });
+
+      expect(result.method).toBe(PaymentMethod.MOMO);
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: PAYMENT_ID },
+        data: {
+          method: PaymentMethod.MOMO,
+          status: PaymentStatus.PENDING,
+          transactionId: null,
+          gatewayResponse: expect.anything(),
+          paidAt: null,
+        },
+      });
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('should reset processing gateway state when changing method', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          payment: makePayment({
+            status: PaymentStatus.PROCESSING,
+            method: PaymentMethod.PAYOS,
+            transactionId: '12345678',
+          }),
+        }),
+      );
+      prisma.payment.update.mockResolvedValue(
+        makePayment({
+          status: PaymentStatus.PENDING,
+          method: PaymentMethod.CASH,
+          transactionId: null,
+        }),
+      );
+
+      const result = await service.createPayment(RENTER_ID, dto);
+
+      expect(result.status).toBe(PaymentStatus.PENDING);
+      expect(result.method).toBe(PaymentMethod.CASH);
+      expect((service as any).payos.paymentRequests.cancel).toHaveBeenCalledWith(
+        12345678,
+        'User changed payment method',
+      );
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: PAYMENT_ID },
+        data: {
+          method: PaymentMethod.CASH,
+          status: PaymentStatus.PENDING,
+          transactionId: null,
+          gatewayResponse: expect.anything(),
+          paidAt: null,
+        },
+      });
+    });
+
+    it('should reject method change when active PayOS link cannot be cancelled', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          payment: makePayment({
+            status: PaymentStatus.PROCESSING,
+            method: PaymentMethod.PAYOS,
+            transactionId: '12345678',
+          }),
+        }),
+      );
+      (service as any).payos.paymentRequests.cancel.mockRejectedValue(
+        new Error('cancel failed'),
+      );
+
+      await expect(service.createPayment(RENTER_ID, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.payment.update).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException when booking is not CONFIRMED', async () => {

@@ -70,7 +70,11 @@ export class TripsService {
     // Get booking details
     const booking = await this.prisma.booking.findUnique({
       where: { id: dto.bookingId },
-      include: { trip: true, payment: true },
+      include: {
+        trip: true,
+        payment: true,
+        vehicle: { select: { batteryLevel: true } },
+      },
     });
 
     if (!booking) {
@@ -135,7 +139,7 @@ export class TripsService {
           startLatitude: dto.startLatitude,
           startLongitude: dto.startLongitude,
           startAddress: dto.startAddress,
-          startBattery: dto.startBattery,
+          startBattery: dto.startBattery ?? booking.vehicle.batteryLevel,
           startedAt: now,
         },
       });
