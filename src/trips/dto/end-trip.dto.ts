@@ -9,12 +9,14 @@ import {
   Max,
   IsBoolean,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class EndTripDto {
   @ApiProperty({
     description: 'End location latitude',
     example: 10.772622,
   })
+  @Type(() => Number)
   @IsLatitude()
   endLatitude: number;
 
@@ -22,6 +24,7 @@ export class EndTripDto {
     description: 'End location longitude',
     example: 106.670172,
   })
+  @Type(() => Number)
   @IsLongitude()
   endLongitude: number;
 
@@ -37,6 +40,7 @@ export class EndTripDto {
     description: 'Vehicle battery level at end (0-100%)',
     example: 65,
   })
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   @Max(100)

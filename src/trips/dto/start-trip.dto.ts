@@ -10,6 +10,7 @@ import {
   Min,
   Max,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class StartTripDto {
   @ApiProperty({
@@ -20,21 +21,21 @@ export class StartTripDto {
   @IsNotEmpty()
   bookingId: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'Start location latitude',
     example: 10.762622,
   })
-  @IsOptional()
+  @Type(() => Number)
   @IsLatitude()
-  startLatitude?: number;
+  startLatitude: number;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'Start location longitude',
     example: 106.660172,
   })
-  @IsOptional()
+  @Type(() => Number)
   @IsLongitude()
-  startLongitude?: number;
+  startLongitude: number;
 
   @ApiPropertyOptional({
     description: 'Start location address',
@@ -49,6 +50,7 @@ export class StartTripDto {
     example: 95,
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   @Max(100)

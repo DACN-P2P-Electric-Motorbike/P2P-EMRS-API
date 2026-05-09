@@ -152,6 +152,17 @@ describe('TripsService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    it('rejects starting without start GPS coordinates', async () => {
+      prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+      await expect(
+        service.startTrip(RENTER_ID, {
+          bookingId: BOOKING_ID,
+        } as any),
+      ).rejects.toThrow('Start location is required to start trip');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('allows starting up to 15 minutes before pickup time', async () => {
       const booking = makeBooking({
         startTime: new Date(Date.now() + 10 * 60_000),
