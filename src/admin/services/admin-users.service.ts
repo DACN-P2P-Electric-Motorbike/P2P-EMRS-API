@@ -3,12 +3,17 @@ import { UserStatus } from '@prisma/client';
 import { AdminUsersRepository } from '../repositories/admin-users.repository';
 import { QueryUsersDto } from '../dto/query-users.dto';
 import { UpdateUserStatusDto } from '../dto/update-user-status.dto';
+import { AdjustTrustScoreDto } from '../dto/adjust-trust-score.dto';
+import { TrustScoreService } from '../../trust-score/trust-score.service';
 
 @Injectable()
 export class AdminUsersService {
   private readonly logger = new Logger(AdminUsersService.name);
 
-  constructor(private readonly usersRepository: AdminUsersRepository) {}
+  constructor(
+    private readonly usersRepository: AdminUsersRepository,
+    private readonly trustScoreService: TrustScoreService,
+  ) {}
 
   /**
    * Get paginated list of users with optional role/status filters
@@ -49,5 +54,41 @@ export class AdminUsersService {
     );
 
     return updated;
+  }
+
+  getTrustScoreOverview() {
+    return this.trustScoreService.getAdminOverview();
+  }
+
+  async getUserTrustScore(userId: string) {
+    const user = await this.usersRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException(`User with ID "${userId}" not found`);
+    }
+    return this.trustScoreService.getUserTrustProfile(userId);
+  }
+
+  async adjustTrustScore(
+    userId: string,
+    dto: AdjustTrustScoreDto,
+    adminId: string,
+  ) {
+    const user = await this.usersRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException(`User with ID "${userId}" not found`);
+    }
+
+    const result = await this.trustScoreService.recordManualAdjustment(
+      userId,
+      dto.delta,
+      dto.reason,
+      adminId,
+    );
+
+    this.logger.log(
+      `Admin ${adminId} adjusted trust score for ${userId} by ${dto.delta}`,
+    );
+
+    return result;
   }
 }

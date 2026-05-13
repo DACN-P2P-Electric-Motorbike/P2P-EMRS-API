@@ -24,10 +24,17 @@ import {
 } from './dto/forgot-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { UserEntity } from './entities/user.entity';
-import { User, UserRole, UserStatus, OtpType } from '@prisma/client';
+import {
+  TrustScoreEventType,
+  User,
+  UserRole,
+  UserStatus,
+  OtpType,
+} from '@prisma/client';
 import { CreateVehicleDto, VehiclesService } from 'src/vehicles';
 import { NewUserRegisteredEvent } from '../events/admin.events';
 import { CryptoService } from '../security/crypto.service';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 import {
   RequestSensitiveActionOtpDto,
   SensitiveActionPurpose,
@@ -52,6 +59,7 @@ export class AuthService {
     private readonly vehiclesService: VehiclesService,
     private readonly eventEmitter: EventEmitter2,
     private readonly cryptoService: CryptoService,
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   /**
@@ -183,11 +191,24 @@ export class AuthService {
       new NewUserRegisteredEvent(user.id, user.fullName, user.email),
     );
 
+    const trustUpdate = dto.idCardNum
+      ? await this.trustScoreService.recordPositiveEvent(
+          user.id,
+          TrustScoreEventType.KYC_VERIFIED,
+          5,
+          'Identity document submitted during registration',
+        )
+      : null;
+    const userWithTrustScore = {
+      ...user,
+      trustScore: trustUpdate?.trustScore ?? user.trustScore,
+    };
+
     // Generate access token
-    const accessToken = this.generateAccessToken(user);
+    const accessToken = this.generateAccessToken(userWithTrustScore);
 
     // Return user entity (without password) and token
-    const userEntity = this.toUserEntity(user);
+    const userEntity = this.toUserEntity(userWithTrustScore);
     return new AuthResponseDto(userEntity, accessToken);
   }
 

@@ -17,6 +17,7 @@ import { EventListenerModule } from './events/events.modules';
 import { AdminModule } from './admin/admin.module';
 import { SecurityModule } from './security/security.module';
 import { PrivacyModule } from './privacy/privacy.module';
+import { TrustScoreModule } from './trust-score/trust-score.module';
 
 @Module({
   imports: [
@@ -34,6 +35,9 @@ import { PrivacyModule } from './privacy/privacy.module';
 
     // Shared security utilities
     SecurityModule,
+
+    // Shared trust score policy and audit log
+    TrustScoreModule,
 
     // Mail Service
     MailModule,

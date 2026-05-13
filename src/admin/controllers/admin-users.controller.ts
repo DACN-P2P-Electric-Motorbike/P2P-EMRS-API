@@ -20,9 +20,11 @@ import {
 import { UserRole, UserStatus } from '@prisma/client';
 import { JwtAuthGuard, RolesGuard } from '../../auth/guards';
 import { Roles } from '../../auth/decorators/roles.decorator';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AdminUsersService } from '../services/admin-users.service';
 import { QueryUsersDto } from '../dto/query-users.dto';
 import { UpdateUserStatusDto } from '../dto/update-user-status.dto';
+import { AdjustTrustScoreDto } from '../dto/adjust-trust-score.dto';
 
 @ApiTags('Admin – Users')
 @Controller('admin/users')
@@ -48,6 +50,60 @@ export class AdminUsersController {
   async getUsers(@Query() query: QueryUsersDto) {
     const result = await this.usersService.getUsers(query);
     return { status: 'success', data: result };
+  }
+
+  @Get('trust-score/overview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Trust score overview (Admin)',
+    description:
+      'Distribution and alert lists for low score, rapid score drops, and active warnings.',
+  })
+  @ApiResponse({ status: 200, description: 'Trust score admin overview' })
+  async getTrustScoreOverview() {
+    const result = await this.usersService.getTrustScoreOverview();
+    return { status: 'success', data: result };
+  }
+
+  @Get(':id/trust-score')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'User trust score detail (Admin)',
+    description: 'Current tier, recent score events, and active warnings.',
+  })
+  @ApiParam({ name: 'id', description: 'User UUID' })
+  @ApiResponse({ status: 200, description: 'User trust score detail' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async getUserTrustScore(@Param('id') userId: string) {
+    const result = await this.usersService.getUserTrustScore(userId);
+    return { status: 'success', data: result };
+  }
+
+  @Patch(':id/trust-score')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Manually adjust trust score (Admin)',
+    description:
+      'Apply a positive or negative trust score delta with a required audit reason.',
+  })
+  @ApiParam({ name: 'id', description: 'User UUID' })
+  @ApiResponse({ status: 200, description: 'Trust score adjusted' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async adjustTrustScore(
+    @Param('id') userId: string,
+    @Body() dto: AdjustTrustScoreDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    const result = await this.usersService.adjustTrustScore(
+      userId,
+      dto,
+      adminId,
+    );
+    return {
+      status: 'success',
+      data: result,
+      message: 'Trust score adjusted successfully',
+    };
   }
 
   @Patch(':id/status')

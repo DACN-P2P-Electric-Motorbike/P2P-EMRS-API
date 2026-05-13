@@ -8,6 +8,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { MailModule } from '../mail/mail.module';
 import { VehiclesModule } from 'src/vehicles';
 import { SecurityModule } from '../security/security.module';
+import { TrustScoreModule } from '../trust-score/trust-score.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { SecurityModule } from '../security/security.module';
     MailModule,
     VehiclesModule,
     SecurityModule,
+    TrustScoreModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

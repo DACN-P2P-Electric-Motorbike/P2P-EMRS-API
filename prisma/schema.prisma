@@ -28,6 +28,8 @@ model User {
   paymentsAsPayer       Payment[]      @relation("PaymentPayer")
   paymentsAsReceiver    Payment[]      @relation("PaymentReceiver")
   reviews               Review[]
+  trustScoreEvents      TrustScoreEvent[]
+  trustScoreWarnings    TrustScoreWarning[]
   trips                 Trip[]
   vehicles              Vehicle[]      @relation("VehicleOwner")
   fcmTokens             FcmToken[]
@@ -38,6 +40,40 @@ model User {
   @@index([status])
   @@index([roles])
   @@map("users")
+}
+
+model TrustScoreEvent {
+  id          String              @id @default(uuid())
+  userId      String              @map("user_id")
+  type        TrustScoreEventType
+  delta       Float
+  scoreBefore Float               @map("score_before")
+  scoreAfter  Float               @map("score_after")
+  reason      String?
+  metadata    Json?
+  createdAt   DateTime            @default(now()) @map("created_at")
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("trust_score_events")
+}
+
+model TrustScoreWarning {
+  id          String              @id @default(uuid())
+  userId      String              @map("user_id")
+  type        TrustScoreEventType
+  reason      String?
+  expiresAt   DateTime            @map("expires_at")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  penalizedAt DateTime?           @map("penalized_at")
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([expiresAt])
+  @@map("trust_score_warnings")
 }
 
 model OtpCode {
@@ -238,7 +274,25 @@ enum UserRole {
 enum UserStatus {
   ACTIVE
   PENDING
+  RESTRICTED
   BLOCKED
+}
+
+enum TrustScoreEventType {
+  TRIP_COMPLETED_ON_TIME
+  GOOD_REVIEW_RECEIVED
+  REVIEW_SUBMITTED
+  KYC_VERIFIED
+  TRANSACTION_MILESTONE
+  BAD_REVIEW_RECEIVED
+  BOOKING_CANCELLED_BY_RENTER
+  BOOKING_REJECTED_BY_OWNER
+  LATE_RETURN
+  CONFIRMED_REPORT
+  SERIOUS_VIOLATION
+  MANUAL_ADJUSTMENT
+  RECALCULATED
+  WARNING
 }
 
 enum OtpType {

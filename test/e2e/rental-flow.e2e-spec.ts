@@ -32,6 +32,7 @@ import { BookingsController } from '../../src/booking/bookings.controller';
 import { BookingsService } from '../../src/booking/bookings.service';
 import { PrismaService } from '../../src/database/prisma.service';
 import { JwtAuthGuard } from '../../src/auth/guards';
+import { TrustScoreService } from '../../src/trust-score/trust-score.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -74,9 +75,17 @@ const mockBooking = {
   create: jest.fn(),
   update: jest.fn(),
 };
-const mockPayment = { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn() };
+const mockPayment = {
+  findUnique: jest.fn().mockResolvedValue(null),
+  update: jest.fn(),
+};
 const mockUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockEventEmitter = { emit: jest.fn() };
+const mockTrustScoreService = {
+  assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
+  assertCanRegisterVehicle: jest.fn().mockResolvedValue(undefined),
+  recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
+};
 
 function makeGuard(userId: string, roles: UserRole[]) {
   return class {
@@ -126,6 +135,7 @@ async function buildFullApp(
         },
       },
       { provide: EventEmitter2, useValue: mockEventEmitter },
+      { provide: TrustScoreService, useValue: mockTrustScoreService },
     ],
   })
     .overrideGuard(JwtAuthGuard)

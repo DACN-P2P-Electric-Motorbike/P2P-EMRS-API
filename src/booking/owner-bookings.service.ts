@@ -8,11 +8,12 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { BookingEntity } from './entities/booking.entity';
 import { ApproveBookingDto, RejectBookingDto } from './dto/owner-booking.dto';
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, TrustScoreEventType } from '@prisma/client';
 import {
   BookingApprovedEvent,
   BookingRejectedEvent,
 } from '../events/booking.events';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 
 @Injectable()
 export class OwnerBookingsService {
@@ -21,6 +22,7 @@ export class OwnerBookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   /**
@@ -251,8 +253,13 @@ export class OwnerBookingsService {
 
     this.logger.log(`Booking ${bookingId} rejected by owner ${ownerId}`);
 
-    // Decrease owner trust score for rejection (-2)
-    await this.adjustTrustScore(ownerId, -2);
+    await this.trustScoreService.recordViolation(
+      ownerId,
+      TrustScoreEventType.BOOKING_REJECTED_BY_OWNER,
+      2,
+      'Owner rejected a pending booking request',
+      { bookingId },
+    );
 
     // Emit event
     this.eventEmitter.emit(
@@ -266,18 +273,5 @@ export class OwnerBookingsService {
     );
 
     return BookingEntity.fromPrisma(updatedBooking);
-  }
-
-  private async adjustTrustScore(userId: string, delta: number): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) return;
-    const newScore = Math.min(100, Math.max(0, user.trustScore + delta));
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { trustScore: newScore },
-    });
-    this.logger.log(
-      `Trust score for user ${userId}: ${user.trustScore} -> ${newScore} (delta: ${delta})`,
-    );
   }
 }

@@ -52,7 +52,7 @@ export class ReviewsController {
   })
   @ApiResponse({ status: 200 })
   async getTrustScoreBreakdown(@CurrentUser('id') userId: string) {
-    return this.reviewsService.getTrustScoreBreakdown(userId);
+    return this.reviewsService.getTrustScoreBreakdown(userId, true);
   }
 
   @Get('trust-score/:userId')

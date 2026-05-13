@@ -6,9 +6,10 @@ import { OwnerBookingsController } from './owner-bookings.controller';
 import { OwnerBookingsService } from './owner-bookings.service';
 import { BookingSchedulerService } from './booking-scheduler.service';
 import { NotificationModule } from 'src/notification/notification.module';
+import { TrustScoreModule } from '../trust-score/trust-score.module';
 
 @Module({
-  imports: [EventEmitterModule.forRoot(), NotificationModule],
+  imports: [EventEmitterModule.forRoot(), NotificationModule, TrustScoreModule],
   controllers: [BookingsController, OwnerBookingsController],
   providers: [BookingsService, OwnerBookingsService, BookingSchedulerService],
   exports: [BookingsService, OwnerBookingsService],

@@ -10,11 +10,17 @@ import { PrismaService } from '../database/prisma.service';
 import { BookingEntity } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
-import { BookingStatus, VehicleStatus, PaymentStatus } from '@prisma/client';
+import {
+  BookingStatus,
+  VehicleStatus,
+  PaymentStatus,
+  TrustScoreEventType,
+} from '@prisma/client';
 import {
   BookingCreatedEvent,
   BookingCancelledEvent,
 } from '../events/booking.events';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 
 @Injectable()
 export class BookingsService {
@@ -26,6 +32,7 @@ export class BookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   /**
@@ -129,6 +136,8 @@ export class BookingsService {
         `Booking duration cannot exceed ${this.MAX_BOOKING_DAYS} days`,
       );
     }
+
+    await this.trustScoreService.assertCanCreateBooking(userId);
 
     // Get vehicle details
     const vehicle = await this.prisma.vehicle.findUnique({
@@ -331,20 +340,19 @@ export class BookingsService {
       (booking.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
     let refundRate: number;
-    let trustPenalty: number;
+    let trustPenalty = 0;
 
     if (hoursUntilStart > 24) {
       // Early cancellation: full refund, no penalty
       refundRate = 1.0;
-      trustPenalty = 0;
     } else if (hoursUntilStart >= 1) {
       // Medium: 50% refund, moderate penalty
       refundRate = 0.5;
-      trustPenalty = 5;
+      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 5 : 0;
     } else {
       // Late cancellation: no refund, heavy penalty
       refundRate = 0;
-      trustPenalty = 10;
+      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 10 : 0;
     }
 
     this.logger.log(
@@ -430,7 +438,13 @@ export class BookingsService {
 
     // Apply trust penalty based on cancellation window
     if (trustPenalty > 0) {
-      await this.decreaseTrustScore(userId, trustPenalty);
+      await this.trustScoreService.recordViolation(
+        userId,
+        TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER,
+        trustPenalty,
+        'Renter cancelled a confirmed booking',
+        { bookingId, hoursUntilStart, refundRate },
+      );
     }
 
     // Emit event
@@ -446,23 +460,6 @@ export class BookingsService {
     );
 
     return BookingEntity.fromPrisma(updatedBooking);
-  }
-
-  /**
-   * Decrease user trust score by a given amount (min 0)
-   */
-  private async decreaseTrustScore(
-    userId: string,
-    amount: number,
-  ): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) return;
-    const newScore = Math.max(0, user.trustScore - amount);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { trustScore: newScore },
-    });
-    this.logger.log(`Trust score for user ${userId} decreased to ${newScore}`);
   }
 
   /**

@@ -15,9 +15,11 @@ import {
   BookingStatus,
   PaymentStatus,
   VehicleStatus,
+  TrustScoreEventType,
 } from '@prisma/client';
 import { TripIssueReportedEvent } from '../events/admin.events';
 import { TripStartedEvent, TripCompletedEvent } from '../events/trip.events';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 
 @Injectable()
 export class TripsService {
@@ -29,6 +31,7 @@ export class TripsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   /**
@@ -267,8 +270,50 @@ export class TripsService {
       `Trip ${tripId} completed. Distance: ${distanceTraveled.toFixed(2)}km, Duration: ${durationMinutes}min`,
     );
 
-    // Reward renter with +2 trust score for completing a trip
-    await this.adjustTrustScore(trip.renterId, 2);
+    if (endTime.getTime() <= trip.booking.endTime.getTime()) {
+      await this.trustScoreService.recordPositiveEvent(
+        trip.renterId,
+        TrustScoreEventType.TRIP_COMPLETED_ON_TIME,
+        2,
+        'Completed trip on time',
+        { tripId, bookingId: trip.bookingId },
+      );
+    } else if (
+      endTime.getTime() - trip.booking.endTime.getTime() >
+      30 * 60 * 1000
+    ) {
+      await this.trustScoreService.recordViolation(
+        trip.renterId,
+        TrustScoreEventType.LATE_RETURN,
+        3,
+        'Returned vehicle more than 30 minutes late',
+        { tripId, bookingId: trip.bookingId },
+      );
+    }
+
+    const [renterCompletedTransactions, ownerCompletedTransactions] =
+      await Promise.all([
+        this.prisma.trip.count({
+          where: { renterId: trip.renterId, status: TripStatus.COMPLETED },
+        }),
+        this.prisma.booking.count({
+          where: {
+            ownerId: trip.booking.ownerId,
+            status: BookingStatus.COMPLETED,
+          },
+        }),
+      ]);
+
+    await Promise.all([
+      this.trustScoreService.recordTransactionMilestone(
+        trip.renterId,
+        renterCompletedTransactions,
+      ),
+      this.trustScoreService.recordTransactionMilestone(
+        trip.booking.ownerId,
+        ownerCompletedTransactions,
+      ),
+    ]);
 
     // Emit event so both renter and owner get notified
     this.eventEmitter.emit(
@@ -398,19 +443,6 @@ export class TripsService {
     );
 
     return TripEntity.fromPrisma(updatedTrip, { includeExactLocation: true });
-  }
-
-  private async adjustTrustScore(userId: string, delta: number): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) return;
-    const newScore = Math.min(100, Math.max(0, user.trustScore + delta));
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { trustScore: newScore },
-    });
-    this.logger.log(
-      `Trust score for user ${userId}: ${user.trustScore} -> ${newScore} (delta: ${delta})`,
-    );
   }
 
   /**
