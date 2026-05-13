@@ -122,11 +122,21 @@ describe('AdminDashboardService', () => {
       startDate: '2026-05-01',
       endDate: '2026-05-10',
     });
+    const customStart = new Date('2026-05-01');
+    const customEnd = new Date(
+      new Date('2026-05-10').setHours(23, 59, 59, 999),
+    );
+    const customDurationMs = customEnd.getTime() - customStart.getTime();
+    const customPrevEnd = new Date(customStart.getTime() - 1);
+    const customPrevStart = new Date(
+      customPrevEnd.getTime() - customDurationMs,
+    );
+
     expect(repository.getRevenueStats).toHaveBeenLastCalledWith(
-      new Date('2026-05-01T00:00:00.000Z'),
-      new Date('2026-05-10T16:59:59.999Z'),
-      new Date('2026-04-21T07:00:00.000Z'),
-      new Date('2026-04-30T23:59:59.999Z'),
+      customStart,
+      customEnd,
+      customPrevStart,
+      customPrevEnd,
     );
   });
 
