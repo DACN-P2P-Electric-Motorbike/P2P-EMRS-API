@@ -14,6 +14,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { OtpType, UserRole, UserStatus } from '@prisma/client';
 import { CryptoService } from '../security/crypto.service';
 import { SensitiveActionPurpose } from './dto/sensitive-action-otp.dto';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,6 +86,10 @@ const mockCrypto = () => ({
   encryptStringDeterministic: jest.fn((value: string) => `enc:${value}`),
 });
 
+const mockTrustScoreService = () => ({
+  recordPositiveEvent: jest.fn().mockResolvedValue({ trustScore: 105 }),
+});
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -107,6 +112,7 @@ describe('AuthService — updateProfile', () => {
         { provide: VehiclesService, useValue: mockVehiclesService() },
         { provide: EventEmitter2, useValue: mockEventEmitter() },
         { provide: CryptoService, useValue: mockCrypto() },
+        { provide: TrustScoreService, useValue: mockTrustScoreService() },
       ],
     }).compile();
 

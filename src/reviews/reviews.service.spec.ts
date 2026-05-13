@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ReviewsService } from './reviews.service';
 import { PrismaService } from '../database/prisma.service';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 
 // ---------------------------------------------------------------------------
@@ -57,15 +58,29 @@ const mockPrisma = () => ({
 describe('ReviewsService', () => {
   let service: ReviewsService;
   let prisma: ReturnType<typeof mockPrisma>;
+  const trustScoreService = {
+    recordPositiveEvent: jest.fn().mockResolvedValue({ trustScore: 101 }),
+    recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 80 }),
+    getUserTrustProfile: jest.fn().mockResolvedValue({
+      tier: { level: 3, label: 'Trung bình' },
+      recentEvents: [],
+      activeWarnings: [],
+    }),
+  };
 
   beforeEach(async () => {
     prisma = mockPrisma();
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ReviewsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        ReviewsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TrustScoreService, useValue: trustScoreService },
+      ],
     }).compile();
 
     service = module.get<ReviewsService>(ReviewsService);
+    jest.clearAllMocks();
   });
 
   // =========================================================================
@@ -191,14 +206,16 @@ describe('ReviewsService', () => {
       );
     });
 
-    it('should boost renter trust score by +1', async () => {
+    it('should record review-submitted trust event for renter', async () => {
       await service.createReview(USER_ID, dto);
 
-      const userUpdateCalls = prisma.user.update.mock.calls;
-      const renterUpdate = userUpdateCalls.find(
-        (c: any) => c[0].where.id === USER_ID,
+      expect(trustScoreService.recordPositiveEvent).toHaveBeenCalledWith(
+        USER_ID,
+        'REVIEW_SUBMITTED',
+        1,
+        'Submitted a review after a completed rental',
+        expect.objectContaining({ vehicleId: VEHICLE_ID }),
       );
-      expect(renterUpdate).toBeDefined();
     });
   });
 
@@ -217,63 +234,70 @@ describe('ReviewsService', () => {
       prisma.review.create.mockResolvedValue(makeReview({ rating }));
       prisma.review.findMany.mockResolvedValue([makeReview({ rating })]);
       prisma.vehicle.update.mockResolvedValue(makeVehicle());
-      prisma.user.findUnique.mockResolvedValue(
-        makeUser({ id: OWNER_ID, trustScore: 80 }),
-      );
-      prisma.user.update.mockResolvedValue(makeUser());
 
       await service.createReview(USER_ID, dto);
     };
 
-    it('should decrease owner trust by 3 for 1-star rating', async () => {
+    it('should record owner violation for 1-star rating', async () => {
       await createReviewWithRating(1);
-      const ownerUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === OWNER_ID,
+      expect(trustScoreService.recordViolation).toHaveBeenCalledWith(
+        OWNER_ID,
+        'BAD_REVIEW_RECEIVED',
+        3,
+        'Received a low rating',
+        expect.objectContaining({ rating: 1 }),
       );
-      expect(ownerUpdate).toBeDefined();
-      expect(ownerUpdate![0].data.trustScore).toBe(77); // 80 - 3
     });
 
-    it('should decrease owner trust by 3 for 2-star rating', async () => {
+    it('should record owner violation for 2-star rating', async () => {
       await createReviewWithRating(2);
-      const ownerUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === OWNER_ID,
+      expect(trustScoreService.recordViolation).toHaveBeenCalledWith(
+        OWNER_ID,
+        'BAD_REVIEW_RECEIVED',
+        3,
+        'Received a low rating',
+        expect.objectContaining({ rating: 2 }),
       );
-      expect(ownerUpdate![0].data.trustScore).toBe(77);
     });
 
     it('should not change owner trust for 3-star rating', async () => {
       await createReviewWithRating(3);
-      const ownerUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === OWNER_ID,
-      );
-      // adjustOwnerTrustFromRating doesn't call adjustTrustScore for 3 stars
-      expect(ownerUpdate).toBeUndefined();
+      expect(trustScoreService.recordViolation).not.toHaveBeenCalled();
+      expect(
+        trustScoreService.recordPositiveEvent.mock.calls.some(
+          (call) => call[0] === OWNER_ID,
+        ),
+      ).toBe(false);
     });
 
-    it('should increase owner trust by 1 for 4-star rating', async () => {
+    it('should record good-rating event for 4-star rating', async () => {
       await createReviewWithRating(4);
-      const ownerUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === OWNER_ID,
+      expect(trustScoreService.recordPositiveEvent).toHaveBeenCalledWith(
+        OWNER_ID,
+        'GOOD_REVIEW_RECEIVED',
+        1,
+        'Received a good rating',
+        expect.objectContaining({ rating: 4 }),
       );
-      expect(ownerUpdate).toBeDefined();
-      expect(ownerUpdate![0].data.trustScore).toBe(81); // 80 + 1
     });
 
-    it('should increase owner trust by 1 for 5-star rating', async () => {
+    it('should record good-rating event for 5-star rating', async () => {
       await createReviewWithRating(5);
-      const ownerUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === OWNER_ID,
+      expect(trustScoreService.recordPositiveEvent).toHaveBeenCalledWith(
+        OWNER_ID,
+        'GOOD_REVIEW_RECEIVED',
+        1,
+        'Received a good rating',
+        expect.objectContaining({ rating: 5 }),
       );
-      expect(ownerUpdate![0].data.trustScore).toBe(81);
     });
   });
 
   // =========================================================================
-  // Day 2 — Trust score clamping
+  // Day 2 — Trust score policy delegation
   // =========================================================================
-  describe('trust score — clamping to 0-100', () => {
-    it('should not exceed 100', async () => {
+  describe('trust score — policy delegation', () => {
+    it('delegates score upper-bound handling to TrustScoreService', async () => {
       const dto = { vehicleId: VEHICLE_ID, rating: 5 };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
       prisma.trip.findFirst.mockResolvedValue({
@@ -284,18 +308,13 @@ describe('ReviewsService', () => {
       prisma.review.create.mockResolvedValue(makeReview());
       prisma.review.findMany.mockResolvedValue([makeReview()]);
       prisma.vehicle.update.mockResolvedValue(makeVehicle());
-      prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 100 }));
-      prisma.user.update.mockResolvedValue(makeUser());
 
       await service.createReview(USER_ID, dto);
 
-      const renterUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === USER_ID,
-      );
-      expect(renterUpdate![0].data.trustScore).toBe(100); // min(100, 100+1)
+      expect(trustScoreService.recordPositiveEvent).toHaveBeenCalled();
     });
 
-    it('should not go below 0', async () => {
+    it('delegates score lower-bound handling to TrustScoreService', async () => {
       const dto = { vehicleId: VEHICLE_ID, rating: 1 };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
       prisma.trip.findFirst.mockResolvedValue({
@@ -306,17 +325,10 @@ describe('ReviewsService', () => {
       prisma.review.create.mockResolvedValue(makeReview({ rating: 1 }));
       prisma.review.findMany.mockResolvedValue([makeReview({ rating: 1 })]);
       prisma.vehicle.update.mockResolvedValue(makeVehicle());
-      prisma.user.findUnique.mockResolvedValue(
-        makeUser({ id: OWNER_ID, trustScore: 1 }),
-      );
-      prisma.user.update.mockResolvedValue(makeUser());
 
       await service.createReview(USER_ID, dto);
 
-      const ownerUpdate = prisma.user.update.mock.calls.find(
-        (c: any) => c[0].where.id === OWNER_ID,
-      );
-      expect(ownerUpdate![0].data.trustScore).toBe(0); // max(0, 1-3)
+      expect(trustScoreService.recordViolation).toHaveBeenCalled();
     });
   });
 

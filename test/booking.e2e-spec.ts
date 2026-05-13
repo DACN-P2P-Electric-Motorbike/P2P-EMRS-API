@@ -23,6 +23,7 @@ import { BookingsController } from '../src/booking/bookings.controller';
 import { BookingsService } from '../src/booking/bookings.service';
 import { PrismaService } from '../src/database/prisma.service';
 import { JwtAuthGuard } from '../src/auth/guards';
+import { TrustScoreService } from '../src/trust-score/trust-score.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -131,9 +132,16 @@ const mockPrismaBooking = {
   create: jest.fn(),
   update: jest.fn(),
 };
-const mockPrismaPayment = { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn() };
+const mockPrismaPayment = {
+  findUnique: jest.fn().mockResolvedValue(null),
+  update: jest.fn(),
+};
 const mockPrismaUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockEmitter = { emit: jest.fn() };
+const mockTrustScoreService = {
+  assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
+  recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
+};
 
 // ─── App fixture factory ──────────────────────────────────────────────────────
 async function buildApp(
@@ -159,6 +167,7 @@ async function buildApp(
         },
       },
       { provide: EventEmitter2, useValue: mockEmitter },
+      { provide: TrustScoreService, useValue: mockTrustScoreService },
     ],
   })
     .overrideGuard(JwtAuthGuard)
@@ -277,6 +286,7 @@ describe('/bookings (Integration)', () => {
             },
           },
           { provide: EventEmitter2, useValue: mockEmitter },
+          { provide: TrustScoreService, useValue: mockTrustScoreService },
         ],
       })
         .overrideGuard(JwtAuthGuard)

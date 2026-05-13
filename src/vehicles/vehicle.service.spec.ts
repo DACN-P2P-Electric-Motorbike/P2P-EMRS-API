@@ -26,6 +26,7 @@ import {
 
 import { VehiclesService } from './vehicles.service';
 import { PrismaService } from '../database/prisma.service';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 import {
   createMockVehicle,
   MockVehicle,
@@ -81,6 +82,9 @@ describe('VehiclesService', () => {
     count: jest.fn(),
   };
   const mockEventEmitter = { emit: jest.fn() };
+  const mockTrustScoreService = {
+    assertCanRegisterVehicle: jest.fn().mockResolvedValue(undefined),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -97,6 +101,10 @@ describe('VehiclesService', () => {
         {
           provide: EventEmitter2,
           useValue: mockEventEmitter,
+        },
+        {
+          provide: TrustScoreService,
+          useValue: mockTrustScoreService,
         },
       ],
     }).compile();

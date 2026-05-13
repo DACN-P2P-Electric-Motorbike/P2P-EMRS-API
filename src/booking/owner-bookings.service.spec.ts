@@ -8,6 +8,7 @@ import { BookingStatus } from '@prisma/client';
 
 import { OwnerBookingsService } from './owner-bookings.service';
 import { PrismaService } from '../database/prisma.service';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -30,6 +31,9 @@ describe('OwnerBookingsService', () => {
     update: jest.fn(),
   };
   const mockEventEmitter = { emit: jest.fn() };
+  const mockTrustScoreService = {
+    recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 50 }),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -43,6 +47,7 @@ describe('OwnerBookingsService', () => {
           },
         },
         { provide: EventEmitter2, useValue: mockEventEmitter },
+        { provide: TrustScoreService, useValue: mockTrustScoreService },
       ],
     }).compile();
 
@@ -223,18 +228,13 @@ describe('OwnerBookingsService', () => {
     });
     const dto = { reason: 'No longer available' };
 
-    it('rejects, adjusts trust, emits event', async () => {
+    it('rejects, records trust violation, emits event', async () => {
       const rejected = createMockBooking({
         status: BookingStatus.REJECTED,
         cancellationReason: dto.reason,
       });
       mockBookingDelegate.findUnique.mockResolvedValue(pending);
       mockBookingDelegate.update.mockResolvedValue(rejected);
-      mockUserDelegate.findUnique.mockResolvedValue({
-        id: BOOKING_OWNER_ID,
-        trustScore: 50,
-      });
-      mockUserDelegate.update.mockResolvedValue({});
 
       const result = await service.rejectBooking(
         BOOKING_ID,
@@ -243,11 +243,12 @@ describe('OwnerBookingsService', () => {
       );
 
       expect(result.status).toBe(BookingStatus.REJECTED);
-      expect(mockUserDelegate.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: BOOKING_OWNER_ID },
-          data: { trustScore: 48 },
-        }),
+      expect(mockTrustScoreService.recordViolation).toHaveBeenCalledWith(
+        BOOKING_OWNER_ID,
+        'BOOKING_REJECTED_BY_OWNER',
+        2,
+        'Owner rejected a pending booking request',
+        { bookingId: BOOKING_ID },
       );
       expect(mockEventEmitter.emit).toHaveBeenCalledWith(
         'booking.rejected',
@@ -255,33 +256,27 @@ describe('OwnerBookingsService', () => {
       );
     });
 
-    it('skips trust update when owner user row missing', async () => {
+    it('still emits event when trust policy records only a warning', async () => {
       const rejected = createMockBooking({ status: BookingStatus.REJECTED });
       mockBookingDelegate.findUnique.mockResolvedValue(pending);
       mockBookingDelegate.update.mockResolvedValue(rejected);
-      mockUserDelegate.findUnique.mockResolvedValue(null);
 
       await service.rejectBooking(BOOKING_ID, BOOKING_OWNER_ID, dto);
 
-      expect(mockUserDelegate.update).not.toHaveBeenCalled();
+      expect(mockTrustScoreService.recordViolation).toHaveBeenCalled();
       expect(mockEventEmitter.emit).toHaveBeenCalled();
     });
 
-    it('clamps trust score to 0', async () => {
+    it('passes the rejection reason through booking update', async () => {
       const rejected = createMockBooking({ status: BookingStatus.REJECTED });
       mockBookingDelegate.findUnique.mockResolvedValue(pending);
       mockBookingDelegate.update.mockResolvedValue(rejected);
-      mockUserDelegate.findUnique.mockResolvedValue({
-        id: BOOKING_OWNER_ID,
-        trustScore: 1,
-      });
-      mockUserDelegate.update.mockResolvedValue({});
 
       await service.rejectBooking(BOOKING_ID, BOOKING_OWNER_ID, dto);
 
-      expect(mockUserDelegate.update).toHaveBeenCalledWith(
+      expect(mockBookingDelegate.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { trustScore: 0 },
+          data: expect.objectContaining({ cancellationReason: dto.reason }),
         }),
       );
     });

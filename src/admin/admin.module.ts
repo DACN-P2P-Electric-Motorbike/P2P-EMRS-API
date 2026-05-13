@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/prisma.module';
+import { TrustScoreModule } from '../trust-score/trust-score.module';
 
 // Controllers
 import { AdminVehiclesController } from './controllers/admin-vehicles.controller';
@@ -23,7 +24,7 @@ import { AdminBookingsRepository } from './repositories/admin-bookings.repositor
 import { AdminReportsRepository } from './repositories/admin-reports.repository';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, TrustScoreModule],
   controllers: [
     AdminVehiclesController,
     AdminDashboardController,

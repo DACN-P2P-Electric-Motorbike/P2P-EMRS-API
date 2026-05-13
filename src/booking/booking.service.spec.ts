@@ -26,6 +26,7 @@ import { BookingStatus, VehicleStatus, Prisma } from '@prisma/client';
 
 import { BookingsService } from './bookings.service';
 import { PrismaService } from '../database/prisma.service';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -99,6 +100,10 @@ describe('BookingsService', () => {
     update: jest.fn(),
   };
   const mockEventEmitter = { emit: jest.fn() };
+  const mockTrustScoreService = {
+    assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
+    recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -127,6 +132,10 @@ describe('BookingsService', () => {
         {
           provide: EventEmitter2,
           useValue: mockEventEmitter,
+        },
+        {
+          provide: TrustScoreService,
+          useValue: mockTrustScoreService,
         },
       ],
     }).compile();

@@ -7,12 +7,17 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { ReviewEntity } from './entities/review.entity';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { TrustScoreEventType } from '@prisma/client';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 
 @Injectable()
 export class ReviewsService {
   private readonly logger = new Logger(ReviewsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly trustScoreService: TrustScoreService,
+  ) {}
 
   /**
    * Create a review for a vehicle
@@ -82,11 +87,24 @@ export class ReviewsService {
     // Update vehicle rating
     await this.updateVehicleRating(dto.vehicleId);
 
-    // Boost renter trust score for leaving a review (+1)
-    await this.adjustTrustScore(userId, 1);
+    await this.trustScoreService.recordPositiveEvent(
+      userId,
+      TrustScoreEventType.REVIEW_SUBMITTED,
+      1,
+      'Submitted a review after a completed rental',
+      {
+        reviewId: review.id,
+        vehicleId: dto.vehicleId,
+        tripId: completedTrip.id,
+      },
+    );
 
-    // Adjust owner trust score based on rating received
-    await this.adjustOwnerTrustFromRating(vehicle.ownerId, dto.rating);
+    await this.adjustOwnerTrustFromRating(
+      vehicle.ownerId,
+      dto.rating,
+      review.id,
+      dto.vehicleId,
+    );
 
     this.logger.log(`Review ${review.id} created successfully`);
 
@@ -114,38 +132,62 @@ export class ReviewsService {
   }
 
   /**
-   * Adjust a user's trust score by a delta (clamped to 0-100)
-   */
-  private async adjustTrustScore(userId: string, delta: number): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) return;
-
-    const newScore = Math.min(100, Math.max(0, user.trustScore + delta));
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { trustScore: newScore },
-    });
-    this.logger.log(
-      `Trust score for user ${userId}: ${user.trustScore} -> ${newScore} (delta: ${delta})`,
-    );
-  }
-
-  /**
    * Adjust owner trust score based on received rating:
    * 1-2 stars => -3, 3 stars => 0, 4-5 stars => +1
    */
   private async adjustOwnerTrustFromRating(
     ownerId: string,
     rating: number,
+    reviewId: string,
+    vehicleId: string,
   ): Promise<void> {
-    let delta = 0;
     if (rating <= 2) {
-      delta = -3;
+      await this.trustScoreService.recordViolation(
+        ownerId,
+        TrustScoreEventType.BAD_REVIEW_RECEIVED,
+        3,
+        'Received a low rating',
+        { reviewId, vehicleId, rating },
+      );
+      await this.applyConsecutiveLowRatingPenalty(ownerId);
     } else if (rating >= 4) {
-      delta = 1;
+      await this.trustScoreService.recordPositiveEvent(
+        ownerId,
+        TrustScoreEventType.GOOD_REVIEW_RECEIVED,
+        1,
+        'Received a good rating',
+        { reviewId, vehicleId, rating },
+      );
     }
-    if (delta !== 0) {
-      await this.adjustTrustScore(ownerId, delta);
+  }
+
+  private async applyConsecutiveLowRatingPenalty(ownerId: string) {
+    const ownedVehicleIds =
+      (await this.prisma.vehicle.findMany({
+        where: { ownerId },
+        select: { id: true },
+      })) ?? [];
+    const vehicleIds = ownedVehicleIds.map((vehicle) => vehicle.id);
+    if (vehicleIds.length === 0) return;
+
+    const recentReviews = await this.prisma.review.findMany({
+      where: { vehicleId: { in: vehicleIds } },
+      orderBy: { createdAt: 'desc' },
+      take: 3,
+    });
+
+    if (
+      recentReviews.length === 3 &&
+      recentReviews.every((review) => review.rating <= 2)
+    ) {
+      await this.trustScoreService.recordViolation(
+        ownerId,
+        TrustScoreEventType.BAD_REVIEW_RECEIVED,
+        5,
+        'Received 3 consecutive low ratings',
+        { reviewIds: recentReviews.map((review) => review.id), streak: 3 },
+        false,
+      );
     }
   }
 
@@ -198,7 +240,7 @@ export class ReviewsService {
   /**
    * Get trust score breakdown for a user
    */
-  async getTrustScoreBreakdown(userId: string) {
+  async getTrustScoreBreakdown(userId: string, includeAudit = false) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -246,8 +288,20 @@ export class ReviewsService {
       where: { renterId: userId, hasIssues: true },
     });
 
+    const trustProfile =
+      includeAudit || userId
+        ? await this.trustScoreService.getUserTrustProfile(userId)
+        : null;
+
     return {
       trustScore: user.trustScore,
+      tier: trustProfile?.tier,
+      ...(includeAudit
+        ? {
+            recentEvents: trustProfile?.recentEvents ?? [],
+            activeWarnings: trustProfile?.activeWarnings ?? [],
+          }
+        : {}),
       breakdown: {
         reviewsGiven,
         reviewsGivenBonus: reviewsGiven, // +1 each

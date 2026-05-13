@@ -10,8 +10,14 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { CreateVehicleDto, UpdateVehicleDto } from './dto';
 import { VehicleEntity } from './entities/vehicle.entity';
-import { VehicleStatus, UserRole, BookingStatus } from '@prisma/client';
+import {
+  VehicleStatus,
+  UserRole,
+  BookingStatus,
+  UserStatus,
+} from '@prisma/client';
 import { VehicleSubmittedForApprovalEvent } from '../events/admin.events';
+import { TrustScoreService } from '../trust-score/trust-score.service';
 
 @Injectable()
 export class VehiclesService {
@@ -20,6 +26,7 @@ export class VehiclesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly trustScoreService: TrustScoreService,
   ) {}
 
   /**
@@ -42,6 +49,10 @@ export class VehiclesService {
       throw new ForbiddenException(
         'Only users with OWNER role can register vehicles. Please upgrade your account.',
       );
+    }
+
+    if (!ownerRole.includes(UserRole.ADMIN)) {
+      await this.trustScoreService.assertCanRegisterVehicle(ownerId);
     }
 
     // Check if license plate already exists
@@ -346,6 +357,12 @@ export class VehiclesService {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
       isAvailable: true,
+      owner: {
+        is: {
+          trustScore: { gte: 40 },
+          status: { notIn: [UserStatus.BLOCKED, UserStatus.RESTRICTED] },
+        },
+      },
     };
 
     if (params?.type) {
@@ -399,7 +416,7 @@ export class VehiclesService {
     const [rawVehicles, rawTotal] = await Promise.all([
       this.prisma.vehicle.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ owner: { trustScore: 'desc' } }, { createdAt: 'desc' }],
         take: dbLimit,
         skip: dbOffset,
         include: {
