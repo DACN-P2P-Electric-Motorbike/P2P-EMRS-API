@@ -75,9 +75,9 @@ describe('PaymentsController', () => {
       status: 'CANCELLED',
     });
 
-    await expect(controller.simulateSuccess('payment-1')).resolves.toBe(
-      payment,
-    );
+    await expect(
+      controller.simulateSuccess('payment-1', 'user-1'),
+    ).resolves.toBe(payment);
     await expect(
       controller.initiatePayOS('payment-1', 'user-1'),
     ).resolves.toEqual({ checkoutUrl: 'https://payos', qrCode: 'qr' });

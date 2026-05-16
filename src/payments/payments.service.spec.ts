@@ -110,7 +110,11 @@ describe('PaymentsService', () => {
 
     // Stub PayOS initialisation so onModuleInit doesn't fail
     (service as any).payos = {
-      paymentRequests: { create: jest.fn(), cancel: jest.fn() },
+      paymentRequests: {
+        create: jest.fn(),
+        cancel: jest.fn(),
+        get: jest.fn().mockResolvedValue({ status: 'PENDING' }),
+      },
       webhooks: { verify: jest.fn() },
     };
   });
@@ -282,6 +286,10 @@ describe('PaymentsService', () => {
           }),
         }),
       );
+      // Reconcile reports the link as still PENDING (active), then cancel fails.
+      (service as any).payos.paymentRequests.get.mockResolvedValue({
+        status: 'PENDING',
+      });
       (service as any).payos.paymentRequests.cancel.mockRejectedValue(
         new Error('cancel failed'),
       );
@@ -290,6 +298,56 @@ describe('PaymentsService', () => {
         BadRequestException,
       );
       expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('should reconcile to COMPLETED when PayOS reports the link as PAID', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          payment: makePayment({
+            status: PaymentStatus.PROCESSING,
+            method: PaymentMethod.PAYOS,
+            transactionId: '12345678',
+          }),
+        }),
+      );
+      (service as any).payos.paymentRequests.get.mockResolvedValue({
+        status: 'PAID',
+      });
+      const completed = makePayment({ status: PaymentStatus.COMPLETED });
+      prisma.payment.update.mockResolvedValueOnce(completed);
+      prisma.payment.findUnique.mockResolvedValueOnce(completed);
+
+      const result = await service.createPayment(RENTER_ID, dto);
+
+      expect(result.status).toBe(PaymentStatus.COMPLETED);
+      expect((service as any).payos.paymentRequests.cancel).not.toHaveBeenCalled();
+    });
+
+    it('should skip PayOS cancel when reconcile reports CANCELLED', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          payment: makePayment({
+            status: PaymentStatus.PROCESSING,
+            method: PaymentMethod.PAYOS,
+            transactionId: '12345678',
+          }),
+        }),
+      );
+      (service as any).payos.paymentRequests.get.mockResolvedValue({
+        status: 'CANCELLED',
+      });
+      prisma.payment.update.mockResolvedValue(
+        makePayment({
+          status: PaymentStatus.PENDING,
+          method: PaymentMethod.CASH,
+          transactionId: null,
+        }),
+      );
+
+      const result = await service.createPayment(RENTER_ID, dto);
+
+      expect(result.method).toBe(PaymentMethod.CASH);
+      expect((service as any).payos.paymentRequests.cancel).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException when booking is not CONFIRMED', async () => {
@@ -451,6 +509,37 @@ describe('PaymentsService', () => {
       const data = prisma.payment.update.mock.calls[0][0].data;
       expect(data.transactionId).toMatch(/^SIM_\d+$/);
     });
+
+    it('should reject simulation when caller is not the payer', async () => {
+      prisma.payment.findUnique.mockResolvedValue(makePayment());
+      await expect(
+        service.simulatePaymentSuccess(PAYMENT_ID, 'stranger'),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('should be idempotent for already-completed payments', async () => {
+      prisma.payment.findUnique.mockResolvedValue(
+        makePayment({ status: PaymentStatus.COMPLETED }),
+      );
+
+      const result = await service.simulatePaymentSuccess(
+        PAYMENT_ID,
+        RENTER_ID,
+      );
+
+      expect(result.status).toBe(PaymentStatus.COMPLETED);
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('should reject simulation for refunded payments', async () => {
+      prisma.payment.findUnique.mockResolvedValue(
+        makePayment({ status: PaymentStatus.REFUNDED }),
+      );
+      await expect(
+        service.simulatePaymentSuccess(PAYMENT_ID, RENTER_ID),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   // =========================================================================
@@ -521,6 +610,80 @@ describe('PaymentsService', () => {
         status: 'PAID',
       });
       expect(result).toEqual({ status: 'PAID' });
+    });
+
+    it('should reconcile to success when webhook already marked the payment COMPLETED', async () => {
+      prisma.payment.findFirst
+        // First call (pending/processing scope) — none.
+        .mockResolvedValueOnce(null)
+        // Second call (already-completed scope) — the webhook-completed row.
+        .mockResolvedValueOnce({ bookingId: BOOKING_ID });
+
+      const result = await service.handlePayOSReturn({
+        orderCode: '12345678',
+        status: 'PAID',
+      });
+
+      expect(result).toEqual({ status: 'success', bookingId: BOOKING_ID });
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('should encrypt return-URL metadata into gatewayResponse on success', async () => {
+      prisma.payment.findFirst.mockResolvedValue(
+        makePayment({ status: PaymentStatus.PROCESSING }),
+      );
+      prisma.payment.update.mockResolvedValue(
+        makePayment({ status: PaymentStatus.COMPLETED }),
+      );
+
+      await service.handlePayOSReturn({
+        orderCode: '12345678',
+        status: 'PAID',
+      });
+
+      expect(cryptoService.encryptJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gateway: 'payos',
+          stage: 'return',
+        }),
+      );
+      expect(prisma.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: PaymentStatus.COMPLETED,
+            gatewayResponse: 'encrypted-json',
+          }),
+        }),
+      );
+    });
+
+    it('should clear stale transactionId when status is CANCELLED', async () => {
+      prisma.payment.findFirst.mockResolvedValue(
+        makePayment({
+          status: PaymentStatus.PROCESSING,
+          transactionId: '12345678',
+        }),
+      );
+      prisma.payment.update.mockResolvedValue(
+        makePayment({
+          status: PaymentStatus.PENDING,
+          transactionId: null,
+        }),
+      );
+
+      await service.handlePayOSReturn({
+        orderCode: '12345678',
+        status: 'CANCELLED',
+      });
+
+      expect(prisma.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: PaymentStatus.PENDING,
+            transactionId: null,
+          }),
+        }),
+      );
     });
   });
 
@@ -632,6 +795,91 @@ describe('PaymentsService', () => {
           gatewayResponse: 'encrypted-json',
         }),
       });
+    });
+
+    it('should reject amounts below the PayOS 1000 VND minimum', async () => {
+      prisma.payment.findUnique.mockResolvedValue(
+        makePayment({ amount: 500 }),
+      );
+
+      await expect(
+        service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
+      ).rejects.toThrow(/PayOS amount/);
+
+      const payosMock = (service as any).payos;
+      expect(payosMock.paymentRequests.create).not.toHaveBeenCalled();
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('should reject localhost return URLs in production', async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      const previousReturnUrl = process.env.PAYOS_RETURN_URL;
+      const previousCancelUrl = process.env.PAYOS_CANCEL_URL;
+      process.env.NODE_ENV = 'production';
+      process.env.PAYOS_RETURN_URL = 'http://localhost:3000/payments/payos-return';
+      process.env.PAYOS_CANCEL_URL = 'https://api.example.com/payments/payos-cancel';
+
+      prisma.payment.findUnique.mockResolvedValue(makePayment());
+
+      await expect(
+        service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
+      ).rejects.toThrow(/PAYOS_RETURN_URL/);
+
+      const payosMock = (service as any).payos;
+      expect(payosMock.paymentRequests.create).not.toHaveBeenCalled();
+
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousReturnUrl !== undefined) {
+        process.env.PAYOS_RETURN_URL = previousReturnUrl;
+      } else {
+        delete process.env.PAYOS_RETURN_URL;
+      }
+      if (previousCancelUrl !== undefined) {
+        process.env.PAYOS_CANCEL_URL = previousCancelUrl;
+      } else {
+        delete process.env.PAYOS_CANCEL_URL;
+      }
+    });
+
+    it('should mark FAILED when PayOS returns an empty checkoutUrl', async () => {
+      prisma.payment.findUnique.mockResolvedValue(makePayment());
+      const payosMock = (service as any).payos;
+      payosMock.paymentRequests.create.mockResolvedValue({
+        checkoutUrl: '',
+        qrCode: '',
+      });
+
+      await expect(
+        service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
+      ).rejects.toThrow(/checkout URL/);
+
+      // Two updates: first stores PROCESSING + transactionId, then FAILED.
+      expect(prisma.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: PaymentStatus.FAILED,
+          }),
+        }),
+      );
+    });
+
+    it('should generate orderCode larger than legacy 8-digit window', async () => {
+      prisma.payment.findUnique.mockResolvedValue(makePayment());
+      prisma.payment.update.mockResolvedValue(
+        makePayment({ status: PaymentStatus.PROCESSING }),
+      );
+      const payosMock = (service as any).payos;
+      payosMock.paymentRequests.create.mockResolvedValue({
+        checkoutUrl: 'https://pay.payos.vn/test',
+        qrCode: '',
+      });
+
+      await service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID);
+
+      const callArg = payosMock.paymentRequests.create.mock.calls[0][0];
+      expect(callArg.orderCode).toBeGreaterThan(99_999_999); // > old 8-digit cap
+      expect(Number.isInteger(callArg.orderCode)).toBe(true);
+      expect(callArg.orderCode).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
     });
   });
 
@@ -781,16 +1029,43 @@ describe('PaymentsService', () => {
       expect(prisma.payment.update).not.toHaveBeenCalled();
     });
 
-    it('should not update when webhook code is not "00"', async () => {
+    it('should mark payment FAILED when webhook code is not "00"', async () => {
       const payosMock = (service as any).payos;
       payosMock.webhooks.verify.mockResolvedValue({
         orderCode: 12345678,
         code: '01',
+        desc: 'Insufficient funds',
       });
+      prisma.payment.findFirst.mockResolvedValue(
+        makePayment({ transactionId: '12345678' }),
+      );
+      prisma.payment.update.mockResolvedValue(
+        makePayment({ status: PaymentStatus.FAILED }),
+      );
 
-      await service.handlePayOSWebhook({ data: 'valid' });
+      await service.handlePayOSWebhook({ data: 'declined' });
 
-      expect(prisma.payment.findFirst).not.toHaveBeenCalled();
+      expect(prisma.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: PaymentStatus.FAILED,
+            gatewayResponse: 'encrypted-json',
+          }),
+        }),
+      );
+    });
+
+    it('should not update when no matching pending/processing payment exists for non-success webhook', async () => {
+      const payosMock = (service as any).payos;
+      payosMock.webhooks.verify.mockResolvedValue({
+        orderCode: 99999999,
+        code: '01',
+        desc: 'Declined',
+      });
+      prisma.payment.findFirst.mockResolvedValue(null);
+
+      await service.handlePayOSWebhook({ data: 'late' });
+
       expect(prisma.payment.update).not.toHaveBeenCalled();
     });
   });
