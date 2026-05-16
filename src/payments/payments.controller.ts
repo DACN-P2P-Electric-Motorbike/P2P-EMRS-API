@@ -224,8 +224,11 @@ export class PaymentsController {
   })
   @ApiParam({ name: 'id', description: 'Payment ID' })
   @ApiResponse({ status: 200, type: PaymentEntity })
-  async simulateSuccess(@Param('id') id: string): Promise<PaymentEntity> {
-    return this.paymentsService.simulatePaymentSuccess(id);
+  async simulateSuccess(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ): Promise<PaymentEntity> {
+    return this.paymentsService.simulatePaymentSuccess(id, userId);
   }
 
   @Post(':id/initiate-payos')
