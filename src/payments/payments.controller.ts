@@ -125,6 +125,22 @@ export class PaymentsController {
     res.send(this._buildPaymentResultHtml(result.status, result.bookingId));
   }
 
+  @Public()
+  @Get('momo-return')
+  @ApiOperation({
+    summary: 'MoMo return callback',
+    description:
+      'Handle redirect after MoMo payment — verifies the redirect signature, marks the payment, and serves HTML the in-app WebView intercepts',
+  })
+  async momoReturn(
+    @Query() query: Record<string, string>,
+    @Res() res: any,
+  ): Promise<void> {
+    const result = await this.paymentsService.handleMoMoReturn(query);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(this._buildPaymentResultHtml(result.status, result.bookingId));
+  }
+
   private _buildPaymentResultHtml(status: string, bookingId?: string): string {
     const isSuccess = status === 'success';
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4000';

@@ -528,13 +528,20 @@ export class PaymentsService implements OnModuleInit {
     const secretKey =
       process.env.MOMO_SECRET_KEY || 'K951B6PE1waDMi640xX08PD3vg6EkVlz';
     const partnerCode = process.env.MOMO_PARTNER_CODE || 'MOMO';
+    // Default redirectUrl back to *our* API so the in-app WebView (and the
+    // web popup) can recognize the gateway's redirect and pop / message
+    // back to the FE. webhook.site is still acceptable for IPN (server →
+    // server) but useless for the user-facing redirect.
+    const apiBaseUrl = process.env.API_PUBLIC_URL || 'http://localhost:3000';
     const redirectUrl =
-      process.env.MOMO_REDIRECT_URL ||
-      'https://webhook.site/b3088a6a-2d17-4f8d-a383-71389a6c600b';
+      process.env.MOMO_REDIRECT_URL || `${apiBaseUrl}/payments/momo-return`;
     const ipnUrl =
       process.env.MOMO_IPN_URL ||
       'https://webhook.site/b3088a6a-2d17-4f8d-a383-71389a6c600b';
 
+    // Persist orderId so handleMomoReturn can match the gateway redirect to
+    // this payment row even before the IPN arrives. Without this, the
+    // return page has nothing to look up.
     const orderId = `${partnerCode}${Date.now()}`;
     const requestId = orderId;
     const amount = String(Math.round(payment.amount));
@@ -603,6 +610,17 @@ export class PaymentsService implements OnModuleInit {
         );
       }
 
+      // Persist orderId + transition to PROCESSING so the return / IPN can
+      // match the gateway redirect back to this Payment row. Mirrors the
+      // PayOS flow above.
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          transactionId: orderId,
+          status: PaymentStatus.PROCESSING,
+        },
+      });
+
       this.logger.log(`MoMo payment URL generated for payment ${paymentId}`);
       return {
         paymentUrl: data.payUrl ?? '',
@@ -614,6 +632,161 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException(
         `Failed to connect to MoMo: ${(err as Error).message}`,
       );
+    }
+  }
+
+  /**
+   * Handle MoMo redirect (user-facing) — best-effort match by `orderId`.
+   *
+   * Security: this endpoint is **not** authoritative because the redirect
+   * happens client-side and is trivially forgeable. The actual
+   * `COMPLETED` transition still requires the IPN webhook (which carries a
+   * signed payload). This handler only:
+   *   - returns success metadata to the in-app WebView so it can pop;
+   *   - on `resultCode == 0`, optimistically marks the matching PROCESSING
+   *     payment as COMPLETED **iff** signature verification of the redirect
+   *     query passes (MoMo signs the redirect with the same HMAC scheme as
+   *     IPN, so we can verify it here).
+   */
+  async handleMoMoReturn(
+    query: Record<string, string>,
+  ): Promise<{ status: string; bookingId?: string }> {
+    const orderId = query.orderId;
+    const resultCode = query.resultCode;
+
+    if (!orderId) return { status: 'missing_order_id' };
+
+    const payment = await this.prisma.payment.findFirst({
+      where: { transactionId: orderId },
+    });
+
+    if (!payment) return { status: 'unknown' };
+
+    const success = resultCode === '0';
+    const cancelled =
+      resultCode === '1006' ||
+      (resultCode != null && resultCode !== '0' && resultCode !== '');
+
+    // Verify the redirect signature so we don't trust client-side query
+    // tampering. MoMo signs the redirect with HMAC-SHA256 over a fixed
+    // alphabetical key list — see https://developers.momo.vn for the spec.
+    const isSignatureValid = this._verifyMomoRedirectSignature(query);
+
+    if (
+      success &&
+      isSignatureValid &&
+      payment.status !== PaymentStatus.COMPLETED
+    ) {
+      const successMetadata = this.cryptoService.encryptJson({
+        gateway: 'momo',
+        stage: 'return',
+        query,
+        completedAt: new Date().toISOString(),
+      });
+      const completed = await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: PaymentStatus.COMPLETED,
+          paidAt: new Date(),
+          ...(successMetadata
+            ? { gatewayResponse: successMetadata as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+      this.logger.log(`MoMo payment ${payment.id} completed via return URL`);
+      this.eventEmitter.emit(
+        'payment.completed',
+        new PaymentCompletedEvent(
+          completed.id,
+          completed.bookingId,
+          completed.payerId,
+          completed.receiverId,
+          completed.amount,
+        ),
+      );
+      return { status: 'success', bookingId: payment.bookingId };
+    }
+
+    if (cancelled && payment.status === PaymentStatus.PROCESSING) {
+      const cancelMetadata = this.cryptoService.encryptJson({
+        gateway: 'momo',
+        stage: 'return',
+        query,
+        cancelledAt: new Date().toISOString(),
+      });
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: PaymentStatus.PENDING,
+          transactionId: null,
+          ...(cancelMetadata
+            ? { gatewayResponse: cancelMetadata as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+      this.logger.log(
+        `MoMo payment ${payment.id} cancelled (resultCode=${resultCode}), reset to pending`,
+      );
+      return { status: 'cancelled', bookingId: payment.bookingId };
+    }
+
+    if (success && !isSignatureValid) {
+      this.logger.warn(
+        `MoMo return signature mismatch for payment ${payment.id} — waiting for IPN`,
+      );
+      return { status: 'pending', bookingId: payment.bookingId };
+    }
+
+    return {
+      status: payment.status === PaymentStatus.COMPLETED ? 'success' : 'pending',
+      bookingId: payment.bookingId,
+    };
+  }
+
+  /**
+   * Verify HMAC-SHA256 signature of a MoMo redirect / IPN payload. The key
+   * list is the same as the one used to sign the create-payment request,
+   * sorted alphabetically and joined with `&`.
+   */
+  private _verifyMomoRedirectSignature(query: Record<string, string>): boolean {
+    const signature = query.signature;
+    if (!signature) return false;
+
+    const accessKey = process.env.MOMO_ACCESS_KEY || 'F8BBA842ECF85';
+    const secretKey =
+      process.env.MOMO_SECRET_KEY || 'K951B6PE1waDMi640xX08PD3vg6EkVlz';
+
+    const rawSignature =
+      `accessKey=${accessKey}` +
+      `&amount=${query.amount ?? ''}` +
+      `&extraData=${query.extraData ?? ''}` +
+      `&message=${query.message ?? ''}` +
+      `&orderId=${query.orderId ?? ''}` +
+      `&orderInfo=${query.orderInfo ?? ''}` +
+      `&orderType=${query.orderType ?? ''}` +
+      `&partnerCode=${query.partnerCode ?? ''}` +
+      `&payType=${query.payType ?? ''}` +
+      `&requestId=${query.requestId ?? ''}` +
+      `&responseTime=${query.responseTime ?? ''}` +
+      `&resultCode=${query.resultCode ?? ''}` +
+      `&transId=${query.transId ?? ''}`;
+
+    const expected = crypto
+      .createHmac('sha256', secretKey)
+      .update(rawSignature)
+      .digest('hex');
+
+    // timingSafeEqual throws RangeError when buffers differ in length, so
+    // short-circuit when the redirect signature is the wrong size before
+    // doing the comparison.
+    if (expected.length !== signature.length) return false;
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(expected, 'hex'),
+        Buffer.from(signature, 'hex'),
+      );
+    } catch {
+      return false;
     }
   }
 
