@@ -44,9 +44,11 @@ export class NotificationService implements OnModuleInit {
         admin.initializeApp({
           credential: admin.credential.cert(JSON.parse(serviceAccount)),
         });
-        this.fcmInitialized = true;
         this.logger.log('Firebase Admin SDK initialized successfully');
+      } else {
+        this.logger.log('Firebase Admin SDK already initialized; reusing app');
       }
+      this.fcmInitialized = true;
     } catch (error) {
       this.logger.error('Failed to initialize Firebase Admin SDK', error);
     }
@@ -237,7 +239,9 @@ export class NotificationService implements OnModuleInit {
     ]);
 
     return {
-      notifications: notifications.map((notification) => NotificationEntity.fromPrisma(notification)),
+      notifications: notifications.map((notification) =>
+        NotificationEntity.fromPrisma(notification),
+      ),
       unreadCount,
     };
   }
