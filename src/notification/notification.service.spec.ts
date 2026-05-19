@@ -105,6 +105,7 @@ describe('NotificationService', () => {
     await service.onModuleInit();
 
     expect(firebaseState.initializeApp).not.toHaveBeenCalled();
+    expect((service as any).fcmInitialized).toBe(true);
   });
 
   it('creates a notification and does not block on push delivery', async () => {
