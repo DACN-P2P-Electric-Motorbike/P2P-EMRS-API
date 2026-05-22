@@ -16,6 +16,7 @@ import {
   PaymentStatus,
   VehicleStatus,
   TrustScoreEventType,
+  HandoverType,
 } from '@prisma/client';
 import { TripIssueReportedEvent } from '../events/admin.events';
 import { TripStartedEvent, TripCompletedEvent } from '../events/trip.events';
@@ -77,6 +78,14 @@ export class TripsService {
         trip: true,
         payment: true,
         vehicle: { select: { batteryLevel: true } },
+        handovers: {
+          where: { type: HandoverType.CHECK_IN },
+          select: {
+            id: true,
+            confirmedByOwner: true,
+            confirmedByRenter: true,
+          },
+        },
       },
     });
 
@@ -109,6 +118,13 @@ export class TripsService {
     // Check if trip already exists
     if (booking.trip) {
       throw new BadRequestException('Trip has already been started');
+    }
+
+    const checkIn = booking.handovers[0];
+    if (!checkIn?.confirmedByOwner || !checkIn.confirmedByRenter) {
+      throw new BadRequestException(
+        'Completed check-in handover is required before starting the trip',
+      );
     }
 
     // Check if current time is within the allowed pickup window

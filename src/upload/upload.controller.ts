@@ -147,6 +147,33 @@ export class UploadController {
     return this.uploadService.uploadFile(file, 'kyc');
   }
 
+  @Post('handover')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload a vehicle handover photo' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Handover photo uploaded successfully',
+  })
+  async uploadHandoverImage(
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<UploadResult> {
+    return this.uploadService.uploadFile(file, 'handovers');
+  }
+
   @Delete()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

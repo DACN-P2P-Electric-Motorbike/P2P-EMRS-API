@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BookingStatus,
+  HandoverType,
   PaymentMethod,
   PaymentStatus,
   TripStatus,
@@ -48,6 +49,14 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   trip: null,
   payment: makePayment(),
   vehicle: { batteryLevel: 100 },
+  handovers: [
+    {
+      id: 'handover-uuid',
+      confirmedByOwner: true,
+      confirmedByRenter: true,
+      type: HandoverType.CHECK_IN,
+    },
+  ],
   createdAt: new Date(),
   updatedAt: new Date(),
   ...overrides,
@@ -171,6 +180,26 @@ describe('TripsService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    it('rejects starting before completed check-in handover sign-off', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          handovers: [
+            {
+              id: 'handover-uuid',
+              confirmedByOwner: true,
+              confirmedByRenter: false,
+              type: HandoverType.CHECK_IN,
+            },
+          ],
+        }),
+      );
+
+      await expect(service.startTrip(RENTER_ID, dto)).rejects.toThrow(
+        'Completed check-in handover is required before starting the trip',
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('allows starting up to 15 minutes before pickup time', async () => {
       const booking = makeBooking({
         startTime: new Date(Date.now() + 10 * 60_000),
@@ -232,6 +261,14 @@ describe('TripsService', () => {
           trip: true,
           payment: true,
           vehicle: { select: { batteryLevel: true } },
+          handovers: {
+            where: { type: HandoverType.CHECK_IN },
+            select: {
+              id: true,
+              confirmedByOwner: true,
+              confirmedByRenter: true,
+            },
+          },
         },
       });
       expect(prisma.tx.trip.create).toHaveBeenCalledWith(

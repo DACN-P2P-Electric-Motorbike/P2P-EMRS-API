@@ -19,6 +19,7 @@ import { SecurityModule } from './security/security.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TrustScoreModule } from './trust-score/trust-score.module';
 import { KycModule } from './kyc/kyc.module';
+import { HandoverModule } from './handover/handover.module';
 
 @Module({
   imports: [
@@ -72,6 +73,9 @@ import { KycModule } from './kyc/kyc.module';
 
     // Identity verification / KYC
     KycModule,
+
+    // Vehicle handover / check-in / check-out
+    HandoverModule,
 
     EventListenerModule,
 
