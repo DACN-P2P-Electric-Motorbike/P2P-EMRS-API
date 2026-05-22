@@ -18,6 +18,7 @@ import {
 } from '@prisma/client';
 import { VehicleSubmittedForApprovalEvent } from '../events/admin.events';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { KycService } from '../kyc/kyc.service';
 
 @Injectable()
 export class VehiclesService {
@@ -27,6 +28,7 @@ export class VehiclesService {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly trustScoreService: TrustScoreService,
+    private readonly kycService: KycService,
   ) {}
 
   /**
@@ -53,6 +55,7 @@ export class VehiclesService {
 
     if (!ownerRole.includes(UserRole.ADMIN)) {
       await this.trustScoreService.assertCanRegisterVehicle(ownerId);
+      await this.kycService.assertApproved(ownerId, 'vehicle');
     }
 
     // Check if license plate already exists
@@ -87,6 +90,15 @@ export class VehiclesService {
         licenseBack: dto.licenseBack,
         batteryLevel: dto.batteryLevel ?? 100,
         ownerId,
+        instantBook: dto.instantBook ?? false,
+        dailyKmLimit: dto.dailyKmLimit,
+        excessKmPrice: dto.excessKmPrice,
+        weeklyDiscount: dto.weeklyDiscount,
+        monthlyDiscount: dto.monthlyDiscount,
+        allowSmoke: dto.allowSmoke ?? false,
+        allowPets: dto.allowPets ?? false,
+        geoRestriction: dto.geoRestriction,
+        batteryReturnMin: dto.batteryReturnMin,
       },
     });
 
@@ -199,12 +211,22 @@ export class VehiclesService {
       'status',
       'batteryLevel',
       'pricePerHour',
+      'pricePerDay',
       'address',
       'latitude',
       'longitude',
       'description',
       'images',
       'isAvailable',
+      'instantBook',
+      'dailyKmLimit',
+      'excessKmPrice',
+      'weeklyDiscount',
+      'monthlyDiscount',
+      'allowSmoke',
+      'allowPets',
+      'geoRestriction',
+      'batteryReturnMin',
     ];
 
     fieldsToMap.forEach((field) => {
@@ -353,6 +375,7 @@ export class VehiclesService {
     latitude?: number;
     longitude?: number;
     radiusKm?: number;
+    instantBook?: boolean;
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
@@ -375,6 +398,11 @@ export class VehiclesService {
       if (params.maxPrice) where.pricePerHour.lte = params.maxPrice;
     }
 
+    // Instant book filter
+    if (params?.instantBook !== undefined) {
+      where.instantBook = params.instantBook;
+    }
+
     // Date-range availability filter: exclude vehicles with overlapping bookings
     if (params?.startTime && params?.endTime) {
       const requestedStart = new Date(params.startTime);
@@ -390,7 +418,6 @@ export class VehiclesService {
               BookingStatus.ONGOING,
             ],
           },
-          // Overlap condition: existing.startTime < requested.endTime AND existing.endTime > requested.startTime
           startTime: { lt: requestedEnd },
           endTime: { gt: requestedStart },
         },
@@ -398,27 +425,41 @@ export class VehiclesService {
         distinct: ['vehicleId'],
       });
 
-      const conflictingVehicleIds = conflictingBookings.map((b) => b.vehicleId);
+      // Also check for active booking locks
+      const conflictingLocks = await this.prisma.bookingLock.findMany({
+        where: {
+          expiresAt: { gt: new Date() },
+          startTime: { lt: requestedEnd },
+          endTime: { gt: requestedStart },
+        },
+        select: { vehicleId: true },
+        distinct: ['vehicleId'],
+      });
+
+      const conflictingVehicleIds = [
+        ...new Set([
+          ...conflictingBookings.map((b) => b.vehicleId),
+          ...conflictingLocks.map((l) => l.vehicleId),
+        ]),
+      ];
 
       if (conflictingVehicleIds.length > 0) {
         where.id = { notIn: conflictingVehicleIds };
       }
     }
 
-    // When distance filtering is requested, fetch all matching vehicles first,
-    // then apply Haversine in-memory so the returned `total` reflects geo-filtered count.
+    // Fetch a larger pool for ranking, then paginate after scoring
     const useGeoFilter =
       params?.latitude !== undefined && params?.longitude !== undefined;
 
-    const dbLimit = useGeoFilter ? 1000 : (params?.limit ?? 20);
-    const dbOffset = useGeoFilter ? 0 : (params?.offset ?? 0);
+    const dbLimit = useGeoFilter ? 1000 : 200;
 
     const [rawVehicles, rawTotal] = await Promise.all([
       this.prisma.vehicle.findMany({
         where,
-        orderBy: [{ owner: { trustScore: 'desc' } }, { createdAt: 'desc' }],
+        orderBy: { createdAt: 'desc' },
         take: dbLimit,
-        skip: dbOffset,
+        skip: 0,
         include: {
           owner: {
             select: {
@@ -433,32 +474,95 @@ export class VehiclesService {
       this.prisma.vehicle.count({ where }),
     ]);
 
+    // --- Composite ranking ---
+    const scoredVehicles = rawVehicles.map((v) => {
+      let score = 0;
+
+      // 1. Proximity score (max 30 points, closer = higher)
+      if (useGeoFilter && v.latitude !== null && v.longitude !== null) {
+        const dist = this.haversineKm(
+          params!.latitude!,
+          params!.longitude!,
+          v.latitude,
+          v.longitude,
+        );
+        score += Math.max(0, 30 - (dist / (params!.radiusKm ?? 10)) * 30);
+      }
+
+      // 2. Owner trust score (max 20 points)
+      const ownerTrust = (v as any).owner?.trustScore ?? 50;
+      score += (ownerTrust / 150) * 20;
+
+      // 3. Listing quality — photos and description (max 15 points)
+      const photoScore = Math.min(v.images.length, 5) * 2; // up to 10
+      const descScore = v.description
+        ? Math.min(v.description.length / 100, 1) * 5
+        : 0; // up to 5
+      score += photoScore + descScore;
+
+      // 4. Popularity — totalTrips (max 15 points)
+      score += Math.min(v.totalTrips, 30) * 0.5;
+
+      // 5. Rating (max 10 points)
+      score += (v.totalRating / 5) * 10;
+
+      // 6. Instant book bonus (5 points)
+      if (v.instantBook) {
+        score += 5;
+      }
+
+      return { vehicle: v, score };
+    });
+
+    // 7. Price competitiveness bonus (max 5 points — lower = higher score)
+    if (scoredVehicles.length > 0) {
+      const prices = scoredVehicles.map((sv) =>
+        Number(sv.vehicle.pricePerHour),
+      );
+      const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+      for (const sv of scoredVehicles) {
+        const price = Number(sv.vehicle.pricePerHour);
+        if (avgPrice > 0) {
+          sv.score += Math.max(0, (1 - price / avgPrice) * 5);
+        }
+      }
+    }
+
+    // Sort by composite score descending
+    scoredVehicles.sort((a, b) => b.score - a.score);
+
     if (useGeoFilter) {
       const radius = params!.radiusKm ?? 10;
-      const filtered = rawVehicles.filter((v) => {
-        if (v.latitude === null || v.longitude === null) return false;
+      const geoFiltered = scoredVehicles.filter((sv) => {
+        if (sv.vehicle.latitude === null || sv.vehicle.longitude === null)
+          return false;
         return (
           this.haversineKm(
             params!.latitude!,
             params!.longitude!,
-            v.latitude,
-            v.longitude,
+            sv.vehicle.latitude,
+            sv.vehicle.longitude,
           ) <= radius
         );
       });
 
       const pageSize = params?.limit ?? 20;
       const pageOffset = params?.offset ?? 0;
-      const paged = filtered.slice(pageOffset, pageOffset + pageSize);
+      const paged = geoFiltered.slice(pageOffset, pageOffset + pageSize);
 
       return {
-        vehicles: paged.map((v) => VehicleEntity.fromPrisma(v)),
-        total: filtered.length,
+        vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
+        total: geoFiltered.length,
       };
     }
 
+    // Apply pagination to scored results
+    const pageSize = params?.limit ?? 20;
+    const pageOffset = params?.offset ?? 0;
+    const paged = scoredVehicles.slice(pageOffset, pageOffset + pageSize);
+
     return {
-      vehicles: rawVehicles.map((vehicle) => VehicleEntity.fromPrisma(vehicle)),
+      vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
       total: rawTotal,
     };
   }

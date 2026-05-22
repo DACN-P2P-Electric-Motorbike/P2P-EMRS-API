@@ -18,6 +18,7 @@ import { AdminModule } from './admin/admin.module';
 import { SecurityModule } from './security/security.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TrustScoreModule } from './trust-score/trust-score.module';
+import { KycModule } from './kyc/kyc.module';
 
 @Module({
   imports: [
@@ -68,6 +69,9 @@ import { TrustScoreModule } from './trust-score/trust-score.module';
 
     // Privacy rights / data export requests
     PrivacyModule,
+
+    // Identity verification / KYC
+    KycModule,
 
     EventListenerModule,
 

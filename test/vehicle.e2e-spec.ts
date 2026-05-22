@@ -27,6 +27,7 @@ import { VehiclesService } from '../src/vehicles/vehicles.service';
 import { PrismaService } from '../src/database/prisma.service';
 import { JwtAuthGuard } from '../src/auth/guards';
 import { TrustScoreService } from '../src/trust-score/trust-score.service';
+import { KycService } from '../src/kyc/kyc.service';
 import {
   createMockVehicle,
   OWNER_ID,
@@ -100,6 +101,9 @@ const mockPrismaUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockTrustScoreService = {
   assertCanRegisterVehicle: jest.fn().mockResolvedValue(undefined),
 };
+const mockKycService = {
+  assertApproved: jest.fn().mockResolvedValue(undefined),
+};
 
 // ─── App factory ──────────────────────────────────────────────────────────────
 async function createApp(
@@ -121,6 +125,7 @@ async function createApp(
         useValue: { emit: jest.fn() },
       },
       { provide: TrustScoreService, useValue: mockTrustScoreService },
+      { provide: KycService, useValue: mockKycService },
     ],
   })
     .overrideGuard(JwtAuthGuard)
@@ -303,6 +308,7 @@ describe('/vehicles (Integration)', () => {
           },
           { provide: EventEmitter2, useValue: { emit: jest.fn() } },
           { provide: TrustScoreService, useValue: mockTrustScoreService },
+          { provide: KycService, useValue: mockKycService },
         ],
       })
         .overrideGuard(JwtAuthGuard)

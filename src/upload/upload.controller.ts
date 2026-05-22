@@ -120,6 +120,33 @@ export class UploadController {
     return this.uploadService.uploadFile(file, 'licenses');
   }
 
+  @Post('kyc')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload a KYC document or selfie image' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'KYC image uploaded successfully',
+  })
+  async uploadKycImage(
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<UploadResult> {
+    return this.uploadService.uploadFile(file, 'kyc');
+  }
+
   @Delete()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

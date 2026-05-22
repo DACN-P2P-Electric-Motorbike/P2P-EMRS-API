@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -22,16 +23,21 @@ import { BookingsService } from './bookings.service';
 import { BookingEntity } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
+import { CreateBookingLockDto } from './dto/booking-lock.dto';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { BookingStatus } from '@prisma/client';
+import { BookingLockService } from './booking-lock.service';
 
 @ApiTags('Bookings')
 @Controller('bookings')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class BookingsController {
-  constructor(private readonly bookingsService: BookingsService) {}
+  constructor(
+    private readonly bookingsService: BookingsService,
+    private readonly bookingLockService: BookingLockService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -142,7 +148,8 @@ export class BookingsController {
   @Patch(':id/cancel')
   @ApiOperation({
     summary: 'Cancel booking',
-    description: 'Renter cancels their booking',
+    description:
+      'Cancel a booking. Both renter and owner can cancel. Policy: Owner cancel = full refund + penalty. Renter cancel = time-based refund policy.',
   })
   @ApiParam({
     name: 'id',
@@ -184,5 +191,47 @@ export class BookingsController {
     @Param('vehicleId') vehicleId: string,
   ): Promise<BookingEntity[]> {
     return this.bookingsService.getVehicleSchedule(vehicleId);
+  }
+
+  @Post('lock')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create booking lock',
+    description:
+      'Creates a 15-minute soft lock on a vehicle time slot while the renter completes checkout. Prevents double-booking.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Lock created successfully',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Time slot already locked or booked',
+  })
+  async createBookingLock(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateBookingLockDto,
+  ): Promise<{ id: string; expiresAt: Date }> {
+    return this.bookingLockService.createLock(
+      dto.vehicleId,
+      userId,
+      new Date(dto.startTime),
+      new Date(dto.endTime),
+    );
+  }
+
+  @Delete('lock/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Release booking lock',
+    description: 'Release a booking lock when the user cancels checkout',
+  })
+  @ApiParam({ name: 'id', description: 'Booking lock ID' })
+  @ApiResponse({ status: 204, description: 'Lock released' })
+  async releaseBookingLock(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ): Promise<void> {
+    return this.bookingLockService.releaseLock(id, userId);
   }
 }

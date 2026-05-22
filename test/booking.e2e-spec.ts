@@ -11,7 +11,7 @@
  * Notable behaviours tested here reflect the real service implementation:
  *  - Bookings are created with status PENDING (not CONFIRMED)
  *  - cancelBooking allows PENDING or CONFIRMED bookings only
- *  - Only the renter can cancel their own booking
+ *  - Renters and owners can cancel bookings they are involved in
  */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -21,9 +21,11 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { BookingsController } from '../src/booking/bookings.controller';
 import { BookingsService } from '../src/booking/bookings.service';
+import { BookingLockService } from '../src/booking/booking-lock.service';
 import { PrismaService } from '../src/database/prisma.service';
 import { JwtAuthGuard } from '../src/auth/guards';
 import { TrustScoreService } from '../src/trust-score/trust-score.service';
+import { KycService } from '../src/kyc/kyc.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -132,15 +134,27 @@ const mockPrismaBooking = {
   create: jest.fn(),
   update: jest.fn(),
 };
+const mockPrismaBookingLock = {
+  findMany: jest.fn(),
+};
 const mockPrismaPayment = {
   findUnique: jest.fn().mockResolvedValue(null),
   update: jest.fn(),
 };
 const mockPrismaUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockEmitter = { emit: jest.fn() };
+const mockBookingLockService = {
+  createLock: jest.fn(),
+  releaseLock: jest.fn(),
+  hasConflictingLock: jest.fn().mockResolvedValue(false),
+  releaseLocksByVehicleAndTime: jest.fn().mockResolvedValue(undefined),
+};
 const mockTrustScoreService = {
   assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
   recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
+};
+const mockKycService = {
+  assertApproved: jest.fn().mockResolvedValue(undefined),
 };
 
 // ─── App fixture factory ──────────────────────────────────────────────────────
@@ -156,6 +170,7 @@ async function buildApp(
         useValue: {
           vehicle: mockPrismaVehicle,
           booking: mockPrismaBooking,
+          bookingLock: mockPrismaBookingLock,
           user: mockPrismaUser,
           $transaction: jest.fn().mockImplementation(async (callback) =>
             callback({
@@ -168,6 +183,8 @@ async function buildApp(
       },
       { provide: EventEmitter2, useValue: mockEmitter },
       { provide: TrustScoreService, useValue: mockTrustScoreService },
+      { provide: BookingLockService, useValue: mockBookingLockService },
+      { provide: KycService, useValue: mockKycService },
     ],
   })
     .overrideGuard(JwtAuthGuard)
@@ -282,11 +299,14 @@ describe('/bookings (Integration)', () => {
             useValue: {
               vehicle: mockPrismaVehicle,
               booking: mockPrismaBooking,
+              bookingLock: mockPrismaBookingLock,
               user: mockPrismaUser,
             },
           },
           { provide: EventEmitter2, useValue: mockEmitter },
           { provide: TrustScoreService, useValue: mockTrustScoreService },
+          { provide: BookingLockService, useValue: mockBookingLockService },
+          { provide: KycService, useValue: mockKycService },
         ],
       })
         .overrideGuard(JwtAuthGuard)
@@ -453,21 +473,31 @@ describe('/bookings (Integration)', () => {
         .expect(400);
     });
 
-    it('should return 400 when the vehicle owner tries to cancel (only renter can cancel)', async () => {
-      // Arrange — booking belongs to RENTER_ID, but BOOKING_OWNER_ID tries to cancel
+    it('should return 200 when the vehicle owner cancels a booking they own', async () => {
       const ownerApp = await buildApp(MockOwnerGuard);
       const booking = createMockBooking({
         renterId: RENTER_ID,
+        ownerId: BOOKING_OWNER_ID,
         status: BookingStatus.PENDING,
       });
+      const cancelledBooking = createMockBooking({
+        renterId: RENTER_ID,
+        ownerId: BOOKING_OWNER_ID,
+        status: BookingStatus.CANCELLED,
+        cancelledBy: 'OWNER',
+        cancelledAt: new Date(),
+      });
       mockPrismaBooking.findUnique.mockResolvedValue(booking);
+      mockPrismaBooking.update.mockResolvedValue(cancelledBooking);
 
-      // Act & Assert
-      await request(ownerApp.getHttpServer())
+      const res = await request(ownerApp.getHttpServer())
         .patch(`/bookings/${BOOKING_ID}/cancel`)
         .set('Authorization', 'Bearer owner-token')
         .send({ reason: 'Owner wants to cancel' })
-        .expect(400);
+        .expect(200);
+
+      expect(res.body.status).toBe(BookingStatus.CANCELLED);
+      expect(res.body.cancelledBy).toBe('OWNER');
 
       await ownerApp.close();
     });

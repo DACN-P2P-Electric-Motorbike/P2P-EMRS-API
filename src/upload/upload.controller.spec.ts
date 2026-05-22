@@ -45,6 +45,12 @@ describe('UploadController', () => {
     expect(uploadService.uploadFile).toHaveBeenCalledWith(file, 'licenses');
   });
 
+  it('uploads KYC images to the kyc folder', async () => {
+    await expect(controller.uploadKycImage(file)).resolves.toBe(uploadResult);
+
+    expect(uploadService.uploadFile).toHaveBeenCalledWith(file, 'kyc');
+  });
+
   it('deletes an uploaded file and returns a user-facing message', async () => {
     await expect(controller.deleteFile('vehicles/bike.jpg')).resolves.toEqual({
       message: 'File deleted successfully',

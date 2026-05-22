@@ -130,6 +130,12 @@ export class VehiclesController {
     required: false,
     description: 'Search radius in kilometres (default: 10)',
   })
+  @ApiQuery({
+    name: 'instantBook',
+    required: false,
+    description: 'Filter by instant book availability',
+    type: Boolean,
+  })
   @ApiResponse({
     status: 200,
     description: 'List of available vehicles',
@@ -145,6 +151,7 @@ export class VehiclesController {
     @Query('latitude') latitude?: string,
     @Query('longitude') longitude?: string,
     @Query('radiusKm') radiusKm?: string,
+    @Query('instantBook') instantBook?: string,
   ): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     return this.vehiclesService.getAvailableVehicles({
       type,
@@ -157,6 +164,8 @@ export class VehiclesController {
       latitude: latitude ? Number.parseFloat(latitude) : undefined,
       longitude: longitude ? Number.parseFloat(longitude) : undefined,
       radiusKm: radiusKm ? Number.parseFloat(radiusKm) : undefined,
+      instantBook:
+        instantBook !== undefined ? instantBook === 'true' : undefined,
     });
   }
 

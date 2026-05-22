@@ -361,7 +361,7 @@ describe('TrustScoreService', () => {
     prisma.user.findUnique.mockResolvedValue({
       id: USER_ID,
       trustScore: 80,
-      idCardNum: '012345678901',
+      kycVerifications: [{ id: 'kyc-1' }],
       status: UserStatus.ACTIVE,
     });
     prisma.vehicle.findMany.mockResolvedValue([
@@ -415,7 +415,7 @@ describe('TrustScoreService', () => {
       .mockResolvedValueOnce({
         id: USER_ID,
         trustScore: 50,
-        idCardNum: null,
+        kycVerifications: [],
         status: UserStatus.ACTIVE,
       })
       .mockResolvedValueOnce(makeUser({ trustScore: 50 }));

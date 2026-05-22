@@ -19,8 +19,11 @@ import {
 import {
   BookingCreatedEvent,
   BookingCancelledEvent,
+  BookingApprovedEvent,
 } from '../events/booking.events';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { BookingLockService } from './booking-lock.service';
+import { KycService } from '../kyc/kyc.service';
 
 @Injectable()
 export class BookingsService {
@@ -33,6 +36,8 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly trustScoreService: TrustScoreService,
+    private readonly bookingLockService: BookingLockService,
+    private readonly kycService: KycService,
   ) {}
 
   /**
@@ -138,6 +143,7 @@ export class BookingsService {
     }
 
     await this.trustScoreService.assertCanCreateBooking(userId);
+    await this.kycService.assertApproved(userId, 'booking');
 
     // Get vehicle details
     const vehicle = await this.prisma.vehicle.findUnique({
@@ -169,6 +175,20 @@ export class BookingsService {
     if (!isAvailable) {
       throw new ConflictException(
         'Vehicle is already booked for the selected time period',
+      );
+    }
+
+    const hasConflictingLock =
+      await this.bookingLockService.hasConflictingLock(
+        dto.vehicleId,
+        startTime,
+        endTime,
+        userId,
+      );
+
+    if (hasConflictingLock) {
+      throw new ConflictException(
+        'This time slot is temporarily held by another user. Please try again in a few minutes.',
       );
     }
 
@@ -218,7 +238,48 @@ export class BookingsService {
       ),
     );
 
-    return BookingEntity.fromPrisma(booking);
+    // Instant book: auto-approve if vehicle has instant book enabled
+    let finalBooking = booking;
+    if (vehicle.instantBook) {
+      finalBooking = await this.prisma.booking.update({
+        where: { id: booking.id },
+        data: {
+          status: BookingStatus.CONFIRMED,
+          confirmedAt: new Date(),
+        },
+        include: {
+          vehicle: true,
+          renter: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      });
+
+      this.logger.log(`Booking ${booking.id} auto-approved (instant book)`);
+
+      // Emit approved event for notification
+      this.eventEmitter.emit(
+        'booking.approved',
+        new BookingApprovedEvent(
+          booking.id,
+          userId,
+          vehicle.ownerId,
+          dto.vehicleId,
+        ),
+      );
+    }
+
+    await this.bookingLockService.releaseLocksByVehicleAndTime(
+      dto.vehicleId,
+      startTime,
+      endTime,
+    );
+
+    return BookingEntity.fromPrisma(finalBooking);
   }
 
   /**
@@ -301,10 +362,13 @@ export class BookingsService {
   }
 
   /**
-   * Cancel booking (renter) with time-based cancellation policy:
+   * Cancel booking (renter or owner) with time-based cancellation policy:
+   *   Renter:
    *   - >24h before start: full refund, no trust penalty
    *   - 1-24h before start: 50% refund, -5 trust
    *   - <1h before start: no refund, -10 trust
+   *   Owner:
+   *   - Always full refund to renter, -10 trust penalty to owner
    */
   async cancelBooking(
     bookingId: string,
@@ -319,9 +383,14 @@ export class BookingsService {
       throw new NotFoundException('Booking not found');
     }
 
-    // Only renter can cancel
-    if (booking.renterId !== userId) {
-      throw new BadRequestException('You can only cancel your own bookings');
+    // Determine caller role
+    const isRenter = booking.renterId === userId;
+    const isOwner = booking.ownerId === userId;
+
+    if (!isRenter && !isOwner) {
+      throw new BadRequestException(
+        'You can only cancel bookings you are involved in',
+      );
     }
 
     // Can only cancel pending or confirmed bookings
@@ -342,21 +411,25 @@ export class BookingsService {
     let refundRate: number;
     let trustPenalty = 0;
 
-    if (hoursUntilStart > 24) {
-      // Early cancellation: full refund, no penalty
+    if (isOwner) {
+      // Owner cancellation: always full refund to renter, owner gets heavy penalty
+      refundRate = 1.0;
+      trustPenalty = 10;
+    } else if (hoursUntilStart > 24) {
+      // Renter early cancellation: full refund, no penalty
       refundRate = 1.0;
     } else if (hoursUntilStart >= 1) {
-      // Medium: 50% refund, moderate penalty
+      // Renter medium: 50% refund, moderate penalty
       refundRate = 0.5;
       trustPenalty = booking.status === BookingStatus.CONFIRMED ? 5 : 0;
     } else {
-      // Late cancellation: no refund, heavy penalty
+      // Renter late cancellation: no refund, heavy penalty
       refundRate = 0;
       trustPenalty = booking.status === BookingStatus.CONFIRMED ? 10 : 0;
     }
 
     this.logger.log(
-      `Cancellation policy: ${hoursUntilStart.toFixed(1)}h before start → refundRate=${refundRate}, trustPenalty=${trustPenalty}`,
+      `Cancellation by ${isOwner ? 'owner' : 'renter'}: ${hoursUntilStart.toFixed(1)}h before start → refundRate=${refundRate}, trustPenalty=${trustPenalty}`,
     );
 
     // Cancel booking and handle refund atomically
@@ -366,6 +439,7 @@ export class BookingsService {
         data: {
           status: BookingStatus.CANCELLED,
           cancellationReason: dto.reason,
+          cancelledBy: isOwner ? 'OWNER' : 'RENTER',
           cancelledAt: new Date(),
         },
       });
@@ -387,6 +461,7 @@ export class BookingsService {
               gatewayResponse: {
                 refundType: 'full',
                 refundRate,
+                cancelledBy: isOwner ? 'OWNER' : 'RENTER',
                 cancelledAt: new Date().toISOString(),
               },
             },
@@ -434,15 +509,23 @@ export class BookingsService {
       return cancelled;
     });
 
-    this.logger.log(`Booking ${bookingId} cancelled by renter ${userId}`);
+    this.logger.log(
+      `Booking ${bookingId} cancelled by ${isOwner ? 'owner' : 'renter'} ${userId}`,
+    );
 
     // Apply trust penalty based on cancellation window
     if (trustPenalty > 0) {
+      const eventType = isOwner
+        ? TrustScoreEventType.BOOKING_REJECTED_BY_OWNER
+        : TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER;
+      const reason = isOwner
+        ? 'Owner cancelled a booking'
+        : 'Renter cancelled a confirmed booking';
       await this.trustScoreService.recordViolation(
         userId,
-        TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER,
+        eventType,
         trustPenalty,
-        'Renter cancelled a confirmed booking',
+        reason,
         { bookingId, hoursUntilStart, refundRate },
       );
     }
@@ -452,10 +535,10 @@ export class BookingsService {
       'booking.cancelled',
       new BookingCancelledEvent(
         bookingId,
-        userId,
+        booking.renterId,
         booking.ownerId,
         dto.reason,
-        'renter',
+        isOwner ? 'owner' : 'renter',
       ),
     );
 

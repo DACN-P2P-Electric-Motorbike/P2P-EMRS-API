@@ -7,33 +7,36 @@ datasource db {
 }
 
 model User {
-  id                    String         @id @default(uuid())
-  email                 String         @unique
+  id                    String              @id @default(uuid())
+  email                 String              @unique
   password              String
-  fullName              String         @map("full_name")
-  phone                 String         @unique
-  avatarUrl             String?        @map("avatar_url")
-  roles                 UserRole[]     @default([RENTER])
-  status                UserStatus     @default(ACTIVE)
-  trustScore            Float          @default(100.0) @map("trust_score")
-  idCardNum             String?        @unique @map("id_card_num")
+  fullName              String              @map("full_name")
+  phone                 String              @unique
+  avatarUrl             String?             @map("avatar_url")
+  roles                 UserRole[]          @default([RENTER])
+  status                UserStatus          @default(ACTIVE)
+  trustScore            Float               @default(100.0) @map("trust_score")
+  idCardNum             String?             @unique @map("id_card_num")
   address               String?
-  createdAt             DateTime       @default(now()) @map("created_at")
-  updatedAt             DateTime       @updatedAt @map("updated_at")
-  bookingsAsOwner       Booking[]      @relation("BookingOwner")
-  bookingsAsRenter      Booking[]      @relation("BookingRenter")
-  receivedNotifications Notification[] @relation("NotificationReceiver")
-  sentNotifications     Notification[] @relation("NotificationSender")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  bookingsAsOwner       Booking[]           @relation("BookingOwner")
+  bookingsAsRenter      Booking[]           @relation("BookingRenter")
+  receivedNotifications Notification[]      @relation("NotificationReceiver")
+  sentNotifications     Notification[]      @relation("NotificationSender")
   otpCodes              OtpCode[]
-  paymentsAsPayer       Payment[]      @relation("PaymentPayer")
-  paymentsAsReceiver    Payment[]      @relation("PaymentReceiver")
+  paymentsAsPayer       Payment[]           @relation("PaymentPayer")
+  paymentsAsReceiver    Payment[]           @relation("PaymentReceiver")
   reviews               Review[]
   trustScoreEvents      TrustScoreEvent[]
   trustScoreWarnings    TrustScoreWarning[]
   trips                 Trip[]
-  vehicles              Vehicle[]      @relation("VehicleOwner")
+  vehicles              Vehicle[]           @relation("VehicleOwner")
   fcmTokens             FcmToken[]
   privacyRequests       PrivacyRequest[]
+  bookingLocks          BookingLock[]
+  kycVerifications      KycVerification[]   @relation("KycApplicant")
+  reviewedKycRecords    KycVerification[]   @relation("KycReviewer")
 
   @@index([email])
   @@index([phone])
@@ -92,41 +95,51 @@ model OtpCode {
 }
 
 model Vehicle {
-  id              String           @id @default(uuid())
-  name            String?
-  type            VehicleType      @default(OTHER)
-  brand           VehicleBrand     @default(OTHER)
-  model           String
-  year            Int?
-  licensePlate    String           @unique @map("license_plate")
-  description     String?
-  images          String[]
-  features        VehicleFeature[]
-  batteryCapacity Float?           @map("battery_capacity")
-  batteryLevel    Int              @default(100) @map("battery_level")
-  maxSpeed        Float?           @map("max_speed")
-  range           Float?
-  pricePerHour    Decimal          @map("price_per_hour") @db.Decimal(10, 2)
-  pricePerDay     Decimal?         @map("price_per_day") @db.Decimal(10, 2)
-  deposit         Float?
-  status          VehicleStatus    @default(PENDING_APPROVAL)
-  isAvailable     Boolean          @default(true) @map("is_available")
-  latitude        Float?
-  longitude       Float?
-  address         String
-  licenseNumber   String?          @map("license_number")
-  licenseFront    String?          @map("license_front")
-  licenseBack     String?          @map("license_back")
-  ownerId         String           @map("owner_id")
-  totalTrips      Int              @default(0) @map("total_trips")
-  totalRating     Float            @default(5.0) @map("total_rating")
-  reviewCount     Int              @default(0) @map("review_count")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-  bookings        Booking[]
-  reviews         Review[]
-  trips           Trip[]
-  owner           User             @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  id               String           @id @default(uuid())
+  name             String?
+  type             VehicleType      @default(OTHER)
+  brand            VehicleBrand     @default(OTHER)
+  model            String
+  year             Int?
+  licensePlate     String           @unique @map("license_plate")
+  description      String?
+  images           String[]
+  features         VehicleFeature[]
+  batteryCapacity  Float?           @map("battery_capacity")
+  batteryLevel     Int              @default(100) @map("battery_level")
+  maxSpeed         Float?           @map("max_speed")
+  range            Float?
+  pricePerHour     Decimal          @map("price_per_hour") @db.Decimal(10, 2)
+  pricePerDay      Decimal?         @map("price_per_day") @db.Decimal(10, 2)
+  deposit          Float?
+  status           VehicleStatus    @default(PENDING_APPROVAL)
+  isAvailable      Boolean          @default(true) @map("is_available")
+  latitude         Float?
+  longitude        Float?
+  address          String
+  licenseNumber    String?          @map("license_number")
+  licenseFront     String?          @map("license_front")
+  licenseBack      String?          @map("license_back")
+  ownerId          String           @map("owner_id")
+  totalTrips       Int              @default(0) @map("total_trips")
+  totalRating      Float            @default(5.0) @map("total_rating")
+  reviewCount      Int              @default(0) @map("review_count")
+  instantBook      Boolean          @default(false) @map("instant_book")
+  dailyKmLimit     Int?             @map("daily_km_limit")
+  excessKmPrice    Float?           @map("excess_km_price")
+  weeklyDiscount   Float?           @map("weekly_discount")
+  monthlyDiscount  Float?           @map("monthly_discount")
+  allowSmoke       Boolean          @default(false) @map("allow_smoke")
+  allowPets        Boolean          @default(false) @map("allow_pets")
+  geoRestriction   String?          @map("geo_restriction")
+  batteryReturnMin Int?             @map("battery_return_min")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  bookings         Booking[]
+  reviews          Review[]
+  trips            Trip[]
+  bookingLocks     BookingLock[]
+  owner            User             @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@index([ownerId])
   @@index([status])
@@ -150,6 +163,7 @@ model Booking {
   deposit            Float
   notes              String?
   cancellationReason String?        @map("cancellation_reason")
+  cancelledBy        String?        @map("cancelled_by")
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
   confirmedAt        DateTime?      @map("confirmed_at")
@@ -391,9 +405,9 @@ model FcmToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, platform], name: "fcm_tokens_user_id_platform_key")
   @@index([userId], name: "fcm_tokens_user_id_idx")
   @@index([token], name: "fcm_tokens_token_idx")
-  @@unique([userId, platform], name: "fcm_tokens_user_id_platform_key")
   @@map("fcm_tokens")
 }
 
@@ -413,6 +427,51 @@ model PrivacyRequest {
   @@index([status], name: "privacy_requests_status_idx")
   @@index([dueAt], name: "privacy_requests_due_at_idx")
   @@map("privacy_requests")
+}
+
+model BookingLock {
+  id        String   @id @default(uuid())
+  vehicleId String   @map("vehicle_id")
+  userId    String   @map("user_id")
+  startTime DateTime @map("start_time")
+  endTime   DateTime @map("end_time")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("booking_locks")
+}
+
+model KycVerification {
+  id              String    @id @default(uuid())
+  userId          String    @unique @map("user_id")
+  selfieUrl       String    @map("selfie_url")
+  idCardFrontUrl  String    @map("id_card_front_url")
+  idCardBackUrl   String    @map("id_card_back_url")
+  status          KycStatus @default(PENDING)
+  rejectionReason String?   @map("rejection_reason")
+  reviewedBy      String?   @map("reviewed_by")
+  reviewedAt      DateTime? @map("reviewed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user     User  @relation("KycApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("KycReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([reviewedBy])
+  @@map("kyc_verifications")
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum PrivacyRequestType {

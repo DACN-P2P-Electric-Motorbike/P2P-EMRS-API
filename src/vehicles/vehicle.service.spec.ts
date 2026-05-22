@@ -27,6 +27,7 @@ import {
 import { VehiclesService } from './vehicles.service';
 import { PrismaService } from '../database/prisma.service';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { KycService } from '../kyc/kyc.service';
 import {
   createMockVehicle,
   MockVehicle,
@@ -75,6 +76,10 @@ describe('VehiclesService', () => {
   };
   const mockBookingDelegate = {
     findFirst: jest.fn(),
+    findMany: jest.fn(),
+  };
+  const mockBookingLockDelegate = {
+    findMany: jest.fn(),
   };
   const mockUserDelegate = {
     findUnique: jest.fn(),
@@ -84,6 +89,9 @@ describe('VehiclesService', () => {
   const mockEventEmitter = { emit: jest.fn() };
   const mockTrustScoreService = {
     assertCanRegisterVehicle: jest.fn().mockResolvedValue(undefined),
+  };
+  const mockKycService = {
+    assertApproved: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {
@@ -95,6 +103,7 @@ describe('VehiclesService', () => {
           useValue: {
             vehicle: mockVehicleDelegate,
             booking: mockBookingDelegate,
+            bookingLock: mockBookingLockDelegate,
             user: mockUserDelegate,
           },
         },
@@ -106,6 +115,10 @@ describe('VehiclesService', () => {
           provide: TrustScoreService,
           useValue: mockTrustScoreService,
         },
+        {
+          provide: KycService,
+          useValue: mockKycService,
+        },
       ],
     }).compile();
 
@@ -113,6 +126,9 @@ describe('VehiclesService', () => {
 
     // Clear all mocks before each test
     jest.clearAllMocks();
+    mockBookingDelegate.findMany.mockResolvedValue([]);
+    mockBookingLockDelegate.findMany.mockResolvedValue([]);
+    mockKycService.assertApproved.mockResolvedValue(undefined);
   });
 
   // ─── registerVehicle ────────────────────────────────────────────────────────
@@ -203,6 +219,69 @@ describe('VehiclesService', () => {
       // Assert
       expect(result).toBeDefined();
       expect(result.status).toBe(VehicleStatus.PENDING_APPROVAL);
+      expect(mockKycService.assertApproved).not.toHaveBeenCalled();
+    });
+
+    it('should require owner KYC approval before registering a vehicle', async () => {
+      mockKycService.assertApproved.mockRejectedValueOnce(
+        new ForbiddenException('KYC verification is required'),
+      );
+
+      await expect(
+        service.registerVehicle(OWNER_ID, ownerRoles, dto),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(mockKycService.assertApproved).toHaveBeenCalledWith(
+        OWNER_ID,
+        'vehicle',
+      );
+      expect(mockVehicleDelegate.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should persist instant-book and listing policy fields when provided', async () => {
+      const createdVehicle: MockVehicle = createMockVehicle({
+        status: VehicleStatus.PENDING_APPROVAL,
+        instantBook: true,
+        dailyKmLimit: 120,
+        excessKmPrice: 3000,
+        weeklyDiscount: 10,
+        monthlyDiscount: 20,
+        allowSmoke: false,
+        allowPets: true,
+        geoRestriction: 'province_only',
+        batteryReturnMin: 30,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+      mockVehicleDelegate.create.mockResolvedValue(createdVehicle);
+
+      await service.registerVehicle(OWNER_ID, ownerRoles, {
+        ...dto,
+        instantBook: true,
+        dailyKmLimit: 120,
+        excessKmPrice: 3000,
+        weeklyDiscount: 10,
+        monthlyDiscount: 20,
+        allowSmoke: false,
+        allowPets: true,
+        geoRestriction: 'province_only',
+        batteryReturnMin: 30,
+      });
+
+      expect(mockVehicleDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            instantBook: true,
+            dailyKmLimit: 120,
+            excessKmPrice: 3000,
+            weeklyDiscount: 10,
+            monthlyDiscount: 20,
+            allowSmoke: false,
+            allowPets: true,
+            geoRestriction: 'province_only',
+            batteryReturnMin: 30,
+          }),
+        }),
+      );
     });
   });
 
@@ -327,6 +406,44 @@ describe('VehiclesService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             pricePerHour: expect.objectContaining({ gte: 10000, lte: 50000 }),
+          }),
+        }),
+      );
+    });
+
+    it('should filter by instant book when requested', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({ instantBook: true }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(1);
+
+      await service.getAvailableVehicles({ instantBook: true });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ instantBook: true }),
+        }),
+      );
+    });
+
+    it('should exclude active booking locks in requested rental window', async () => {
+      const startTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const endTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+      mockBookingDelegate.findMany.mockResolvedValue([
+        { vehicleId: 'booked-vehicle' },
+      ]);
+      mockBookingLockDelegate.findMany.mockResolvedValue([
+        { vehicleId: 'locked-vehicle' },
+      ]);
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['booked-vehicle', 'locked-vehicle'] },
           }),
         }),
       );
@@ -545,6 +662,41 @@ describe('VehiclesService', () => {
         }),
       );
     });
+
+    it('should include instant-book policy fields when provided', async () => {
+      const vehicle = createMockVehicle({ ownerId: OWNER_ID });
+      const updated = createMockVehicle({ instantBook: true });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      await service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+        instantBook: true,
+        dailyKmLimit: 100,
+        excessKmPrice: 2500,
+        weeklyDiscount: 8,
+        monthlyDiscount: 18,
+        allowSmoke: false,
+        allowPets: true,
+        geoRestriction: 'nationwide',
+        batteryReturnMin: 25,
+      } as any);
+
+      expect(mockVehicleDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            instantBook: true,
+            dailyKmLimit: 100,
+            excessKmPrice: 2500,
+            weeklyDiscount: 8,
+            monthlyDiscount: 18,
+            allowSmoke: false,
+            allowPets: true,
+            geoRestriction: 'nationwide',
+            batteryReturnMin: 25,
+          }),
+        }),
+      );
+    });
   });
 
   // ─── deleteVehicle ──────────────────────────────────────────────────────────
@@ -733,18 +885,25 @@ describe('VehiclesService', () => {
   // ─── getAvailableVehicles — pagination & price edges ────────────────────────
 
   describe('getAvailableVehicles (pagination & single-sided price)', () => {
-    it('should pass limit and offset to findMany', async () => {
-      mockVehicleDelegate.findMany.mockResolvedValue([]);
-      mockVehicleDelegate.count.mockResolvedValue(0);
+    it('should paginate ranked results in memory', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({ id: 'v1', totalTrips: 10 }),
+        createMockVehicle({ id: 'v2', totalTrips: 1 }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(2);
 
-      await service.getAvailableVehicles({ limit: 5, offset: 10 });
+      const result = await service.getAvailableVehicles({
+        limit: 1,
+        offset: 1,
+      });
 
       expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          take: 5,
-          skip: 10,
+          take: 200,
+          skip: 0,
         }),
       );
+      expect(result.vehicles).toHaveLength(1);
     });
 
     it('should apply only minPrice when maxPrice omitted', async () => {

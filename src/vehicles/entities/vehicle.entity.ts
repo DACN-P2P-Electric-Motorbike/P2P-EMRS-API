@@ -126,6 +126,42 @@ export class VehicleEntity implements Vehicle {
   @Expose()
   reviewCount: number;
 
+  @ApiProperty({ description: 'Instant booking enabled' })
+  @Expose()
+  instantBook: boolean;
+
+  @ApiPropertyOptional({ description: 'Max km per day (null = unlimited)' })
+  @Expose()
+  dailyKmLimit: number | null;
+
+  @ApiPropertyOptional({ description: 'Price per excess km in VND' })
+  @Expose()
+  excessKmPrice: number | null;
+
+  @ApiPropertyOptional({ description: 'Weekly discount percentage' })
+  @Expose()
+  weeklyDiscount: number | null;
+
+  @ApiPropertyOptional({ description: 'Monthly discount percentage' })
+  @Expose()
+  monthlyDiscount: number | null;
+
+  @ApiProperty({ description: 'Smoking allowed' })
+  @Expose()
+  allowSmoke: boolean;
+
+  @ApiProperty({ description: 'Pets allowed' })
+  @Expose()
+  allowPets: boolean;
+
+  @ApiPropertyOptional({ description: 'Geographic restriction' })
+  @Expose()
+  geoRestriction: string | null;
+
+  @ApiPropertyOptional({ description: 'Minimum battery return level' })
+  @Expose()
+  batteryReturnMin: number | null;
+
   @ApiProperty({ description: 'Owner user ID' })
   @Expose()
   ownerId: string;

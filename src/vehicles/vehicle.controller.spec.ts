@@ -177,6 +177,12 @@ describe('VehiclesController', () => {
         '50000',
         '10',
         '0',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
       );
 
       // Assert
@@ -186,8 +192,37 @@ describe('VehiclesController', () => {
         maxPrice: 50000,
         limit: 10,
         offset: 0,
+        startTime: undefined,
+        endTime: undefined,
+        latitude: undefined,
+        longitude: undefined,
+        radiusKm: undefined,
+        instantBook: undefined,
       });
       expect(result).toEqual(mockResponse);
+    });
+
+    it('should parse instantBook query param as boolean', async () => {
+      const mockResponse = { vehicles: [], total: 0 };
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue(mockResponse);
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'true',
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ instantBook: true }),
+      );
     });
   });
 

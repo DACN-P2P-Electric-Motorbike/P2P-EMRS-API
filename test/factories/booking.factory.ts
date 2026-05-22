@@ -35,6 +35,7 @@ export type MockBooking = {
   deposit: number;
   notes: string | null;
   cancellationReason: string | null;
+  cancelledBy: string | null;
   createdAt: Date;
   updatedAt: Date;
   confirmedAt: Date | null;
@@ -69,6 +70,7 @@ export function createMockBooking(
     deposit: 500000,
     notes: null,
     cancellationReason: null,
+    cancelledBy: null,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
     confirmedAt: null,

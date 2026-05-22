@@ -61,6 +61,17 @@ export class UpdateVehicleDto {
   pricePerHour?: number;
 
   @ApiPropertyOptional({
+    description: 'Price per day in VND',
+    example: 150000,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  pricePerDay?: number | null;
+
+  @ApiPropertyOptional({
     description: 'Vehicle location address',
   })
   @IsOptional()
@@ -107,4 +118,65 @@ export class UpdateVehicleDto {
   @IsBoolean()
   @Type(() => Boolean)
   isAvailable?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable instant booking (auto-approve)' })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  instantBook?: boolean;
+
+  @ApiPropertyOptional({ description: 'Maximum km allowed per day' })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Type(() => Number)
+  dailyKmLimit?: number | null;
+
+  @ApiPropertyOptional({ description: 'Price per excess km (VND)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  excessKmPrice?: number | null;
+
+  @ApiPropertyOptional({ description: 'Weekly discount percentage (0-100)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  weeklyDiscount?: number | null;
+
+  @ApiPropertyOptional({ description: 'Monthly discount percentage (0-100)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  monthlyDiscount?: number | null;
+
+  @ApiPropertyOptional({ description: 'Allow smoking in/near the vehicle' })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allowSmoke?: boolean;
+
+  @ApiPropertyOptional({ description: 'Allow pets in the vehicle' })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allowPets?: boolean;
+
+  @ApiPropertyOptional({ description: 'Geographic restriction' })
+  @IsOptional()
+  @IsString()
+  geoRestriction?: string | null;
+
+  @ApiPropertyOptional({ description: 'Minimum battery return level (0-100)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  batteryReturnMin?: number | null;
 }

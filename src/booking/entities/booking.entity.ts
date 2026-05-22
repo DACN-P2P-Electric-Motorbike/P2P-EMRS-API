@@ -47,6 +47,10 @@ export class BookingEntity implements Booking {
   @Expose()
   cancellationReason: string | null;
 
+  @ApiPropertyOptional({ description: 'Who cancelled: OWNER or RENTER' })
+  @Expose()
+  cancelledBy: string | null;
+
   @ApiProperty()
   @Expose()
   createdAt: Date;

@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsArray,
+  IsBoolean,
   Min,
   Max,
   IsLatitude,
@@ -168,4 +169,92 @@ export class CreateVehicleDto {
   @Max(100)
   @Type(() => Number)
   batteryLevel?: number;
+
+  @ApiPropertyOptional({
+    description: 'Enable instant booking (auto-approve)',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  instantBook?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Maximum km allowed per day (null = unlimited)',
+    example: 100,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Type(() => Number)
+  dailyKmLimit?: number;
+
+  @ApiPropertyOptional({
+    description: 'Price per km over the daily limit (VND)',
+    example: 3000,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  excessKmPrice?: number;
+
+  @ApiPropertyOptional({
+    description: 'Weekly rental discount percentage (0-100)',
+    example: 10,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  weeklyDiscount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Monthly rental discount percentage (0-100)',
+    example: 20,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  monthlyDiscount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Allow smoking in/near the vehicle',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allowSmoke?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Allow pets in the vehicle',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allowPets?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Geographic restriction (e.g., "province_only", "nationwide", "no_restriction")',
+    example: 'no_restriction',
+  })
+  @IsOptional()
+  @IsString()
+  geoRestriction?: string;
+
+  @ApiPropertyOptional({
+    description: 'Minimum battery level required on return (0-100, EV-specific)',
+    example: 20,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  batteryReturnMin?: number;
 }

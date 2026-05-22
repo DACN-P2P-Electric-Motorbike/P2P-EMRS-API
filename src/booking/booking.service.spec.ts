@@ -19,14 +19,17 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BookingStatus, VehicleStatus, Prisma } from '@prisma/client';
 
 import { BookingsService } from './bookings.service';
+import { BookingLockService } from './booking-lock.service';
 import { PrismaService } from '../database/prisma.service';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { KycService } from '../kyc/kyc.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -104,6 +107,13 @@ describe('BookingsService', () => {
     assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
     recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
   };
+  const mockBookingLockService = {
+    hasConflictingLock: jest.fn().mockResolvedValue(false),
+    releaseLocksByVehicleAndTime: jest.fn().mockResolvedValue(undefined),
+  };
+  const mockKycService = {
+    assertApproved: jest.fn().mockResolvedValue(undefined),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -137,12 +147,30 @@ describe('BookingsService', () => {
           provide: TrustScoreService,
           useValue: mockTrustScoreService,
         },
+        {
+          provide: BookingLockService,
+          useValue: mockBookingLockService,
+        },
+        {
+          provide: KycService,
+          useValue: mockKycService,
+        },
       ],
     }).compile();
 
     service = module.get<BookingsService>(BookingsService);
 
     jest.clearAllMocks();
+    mockTrustScoreService.assertCanCreateBooking.mockResolvedValue(undefined);
+    mockTrustScoreService.recordViolation.mockResolvedValue({
+      warned: true,
+      score: 100,
+    });
+    mockBookingLockService.hasConflictingLock.mockResolvedValue(false);
+    mockBookingLockService.releaseLocksByVehicleAndTime.mockResolvedValue(
+      undefined,
+    );
+    mockKycService.assertApproved.mockResolvedValue(undefined);
   });
 
   // ─── createBooking ──────────────────────────────────────────────────────────
@@ -167,6 +195,15 @@ describe('BookingsService', () => {
       // Assert
       expect(result.status).toBe(BookingStatus.PENDING);
       expect(result.renterId).toBe(RENTER_ID);
+      expect(mockBookingLockService.hasConflictingLock).toHaveBeenCalledWith(
+        dto.vehicleId,
+        expect.any(Date),
+        expect.any(Date),
+        RENTER_ID,
+      );
+      expect(
+        mockBookingLockService.releaseLocksByVehicleAndTime,
+      ).toHaveBeenCalledWith(dto.vehicleId, expect.any(Date), expect.any(Date));
     });
 
     it('should emit event "booking.created" via EventEmitter2 after booking is created', async () => {
@@ -208,6 +245,22 @@ describe('BookingsService', () => {
       ).rejects.toThrow('Vehicle is not available for booking');
     });
 
+    it('should require renter KYC approval before booking', async () => {
+      mockKycService.assertApproved.mockRejectedValueOnce(
+        new ForbiddenException('KYC verification is required'),
+      );
+
+      await expect(
+        service.createBooking(RENTER_ID, buildCreateBookingDto() as any),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(mockKycService.assertApproved).toHaveBeenCalledWith(
+        RENTER_ID,
+        'booking',
+      );
+      expect(mockVehicleDelegate.findUnique).not.toHaveBeenCalled();
+    });
+
     it('should throw ConflictException when vehicle is already booked for overlapping time', async () => {
       // Arrange — vehicle is available but time slot is conflicted
       const vehicle = createAvailableVehicle();
@@ -227,6 +280,22 @@ describe('BookingsService', () => {
       ).rejects.toThrow(
         'Vehicle is already booked for the selected time period',
       );
+    });
+
+    it('should throw ConflictException when another renter holds an active booking lock', async () => {
+      const vehicle = createAvailableVehicle();
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockService.hasConflictingLock.mockResolvedValue(true);
+
+      const dto = buildCreateBookingDto();
+
+      await expect(
+        service.createBooking(RENTER_ID, dto as any),
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        service.createBooking(RENTER_ID, dto as any),
+      ).rejects.toThrow('temporarily held by another user');
     });
 
     it('should throw BadRequestException("You cannot book your own vehicle") when renterId equals ownerId', async () => {
@@ -522,7 +591,7 @@ describe('BookingsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw BadRequestException when userId is not the renter of the booking', async () => {
+    it('should throw BadRequestException when userId is not involved in the booking', async () => {
       // Arrange — booking belongs to RENTER_ID, but THIRD_PARTY_ID tries to cancel
       const booking = createMockBooking({
         renterId: RENTER_ID,
@@ -538,7 +607,7 @@ describe('BookingsService', () => {
       ).rejects.toThrow(BadRequestException);
       await expect(
         service.cancelBooking(BOOKING_ID, THIRD_PARTY_ID, dto as any),
-      ).rejects.toThrow('You can only cancel your own bookings');
+      ).rejects.toThrow('You can only cancel bookings you are involved in');
     });
   });
 
