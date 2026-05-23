@@ -201,6 +201,8 @@ model Booking {
   payment            Payment?
   trip               Trip?
   handovers          VehicleHandover[]
+  depositLedger      DepositLedger?
+  postTripCharges    PostTripCharge[]
 
   @@index([renterId])
   @@index([ownerId])
@@ -237,6 +239,7 @@ model Trip {
   vehicle          Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   review           Review?
   handovers        VehicleHandover[]
+  postTripCharges  PostTripCharge[]
 
   @@index([renterId])
   @@index([vehicleId])
@@ -245,23 +248,24 @@ model Trip {
 }
 
 model Payment {
-  id              String        @id @default(uuid())
-  bookingId       String        @unique @map("booking_id")
-  payerId         String        @map("payer_id")
-  receiverId      String        @map("receiver_id")
+  id              String         @id @default(uuid())
+  bookingId       String         @unique @map("booking_id")
+  payerId         String         @map("payer_id")
+  receiverId      String         @map("receiver_id")
   amount          Float
-  platformFee     Float         @map("platform_fee")
-  ownerAmount     Float         @map("owner_amount")
+  platformFee     Float          @map("platform_fee")
+  ownerAmount     Float          @map("owner_amount")
   method          PaymentMethod
-  status          PaymentStatus @default(PENDING)
-  transactionId   String?       @map("transaction_id")
-  gatewayResponse Json?         @map("gateway_response")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-  paidAt          DateTime?     @map("paid_at")
-  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  payer           User          @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
-  receiver        User          @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  status          PaymentStatus  @default(PENDING)
+  transactionId   String?        @map("transaction_id")
+  gatewayResponse Json?          @map("gateway_response")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  paidAt          DateTime?      @map("paid_at")
+  booking         Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payer           User           @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
+  receiver        User           @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  depositLedger   DepositLedger?
 
   @@index([payerId])
   @@index([receiverId])
@@ -422,6 +426,44 @@ enum PaymentMethod {
   CASH
 }
 
+enum DepositLedgerStatus {
+  NOT_HELD
+  HELD
+  PENDING_CHARGES
+  PARTIALLY_CAPTURED
+  CAPTURED
+  RELEASE_PENDING
+  RELEASED
+  DISPUTED
+  REFUNDED
+}
+
+enum PostTripChargeType {
+  LATE_RETURN
+  EXCESS_DISTANCE
+  LOW_BATTERY
+  CLEANING
+  DAMAGE
+  ROADSIDE_ASSISTANCE
+  OTHER
+}
+
+enum PostTripChargeStatus {
+  PENDING_REVIEW
+  APPROVED
+  WAIVED
+  DISPUTED
+  DEDUCTED_FROM_DEPOSIT
+  PAID
+  CANCELLED
+}
+
+enum PostTripChargeSource {
+  SYSTEM
+  OWNER
+  ADMIN
+}
+
 enum TripStatus {
   NOT_STARTED
   ONGOING
@@ -539,6 +581,60 @@ model HandoverPhoto {
   @@index([handoverId])
   @@index([photoType])
   @@map("handover_photos")
+}
+
+model DepositLedger {
+  id                  String              @id @default(uuid())
+  bookingId           String              @unique @map("booking_id")
+  paymentId           String?             @unique @map("payment_id")
+  status              DepositLedgerStatus @default(NOT_HELD)
+  heldAmount          Float               @default(0) @map("held_amount")
+  pendingChargeAmount Float               @default(0) @map("pending_charge_amount")
+  capturedAmount      Float               @default(0) @map("captured_amount")
+  releasedAmount      Float               @default(0) @map("released_amount")
+  refundedAmount      Float               @default(0) @map("refunded_amount")
+  notes               String?
+  heldAt              DateTime?           @map("held_at")
+  releaseDueAt        DateTime?           @map("release_due_at")
+  releasedAt          DateTime?           @map("released_at")
+  disputedAt          DateTime?           @map("disputed_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  booking Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([releaseDueAt])
+  @@map("deposit_ledgers")
+}
+
+model PostTripCharge {
+  id          String               @id @default(uuid())
+  bookingId   String               @map("booking_id")
+  tripId      String?              @map("trip_id")
+  type        PostTripChargeType
+  status      PostTripChargeStatus @default(PENDING_REVIEW)
+  source      PostTripChargeSource @default(SYSTEM)
+  amount      Float
+  quantity    Float?
+  unitPrice   Float?               @map("unit_price")
+  description String
+  evidence    Json?
+  reviewedBy  String?              @map("reviewed_by")
+  reviewedAt  DateTime?            @map("reviewed_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  trip    Trip?   @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([tripId])
+  @@index([type])
+  @@index([status])
+  @@index([source])
+  @@map("post_trip_charges")
 }
 
 model KycVerification {

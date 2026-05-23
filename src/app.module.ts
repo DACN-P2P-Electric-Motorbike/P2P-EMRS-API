@@ -20,6 +20,7 @@ import { PrivacyModule } from './privacy/privacy.module';
 import { TrustScoreModule } from './trust-score/trust-score.module';
 import { KycModule } from './kyc/kyc.module';
 import { HandoverModule } from './handover/handover.module';
+import { FinancialModule } from './financial/financial.module';
 
 @Module({
   imports: [
@@ -76,6 +77,9 @@ import { HandoverModule } from './handover/handover.module';
 
     // Vehicle handover / check-in / check-out
     HandoverModule,
+
+    // Deposit ledger / post-trip charges
+    FinancialModule,
 
     EventListenerModule,
 
