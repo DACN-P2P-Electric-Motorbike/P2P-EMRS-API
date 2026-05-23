@@ -26,6 +26,7 @@ describe('HandoverController', () => {
       createCheckIn: jest.fn().mockResolvedValue(handover),
       createCheckOut: jest.fn().mockResolvedValue(handover),
       getByBooking: jest.fn().mockResolvedValue({ bookingId: 'booking-uuid' }),
+      getAdminReviewQueue: jest.fn().mockResolvedValue([{ bookingId: 'b1' }]),
       confirm: jest.fn().mockResolvedValue(handover),
     } as unknown as jest.Mocked<HandoverService>;
 
@@ -52,5 +53,14 @@ describe('HandoverController', () => {
       UserRole.RENTER,
     ]);
     expect(service.confirm).toHaveBeenCalledWith('handover-uuid', 'user-uuid');
+  });
+
+  it('delegates the admin review queue query', async () => {
+    await expect(controller.getAdminReviewQueue('25')).resolves.toEqual({
+      status: 'success',
+      data: [{ bookingId: 'b1' }],
+    });
+
+    expect(service.getAdminReviewQueue).toHaveBeenCalledWith(25);
   });
 });

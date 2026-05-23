@@ -73,6 +73,7 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
 const mockPrisma = () => ({
   booking: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
   },
   vehicleHandover: {
     create: jest.fn(),
@@ -220,6 +221,76 @@ describe('HandoverService', () => {
     expect(result.differences).toEqual({
       kmDriven: 60,
       batteryDelta: -38,
+    });
+  });
+
+  it('lists handover evidence for the admin review queue', async () => {
+    const checkIn = makeHandover({
+      type: HandoverType.CHECK_IN,
+      confirmedByOwner: true,
+      confirmedByRenter: true,
+      odometerReading: 1200,
+      batteryLevel: 90,
+    });
+    const checkOut = makeHandover({
+      id: 'checkout-uuid',
+      type: HandoverType.CHECK_OUT,
+      confirmedByOwner: true,
+      confirmedByRenter: false,
+      odometerReading: 1260,
+      batteryLevel: 50,
+    });
+    prisma.booking.findMany.mockResolvedValue([
+      {
+        ...makeBooking({
+          status: BookingStatus.COMPLETED,
+          handovers: [checkIn, checkOut],
+        }),
+        startTime: new Date('2026-05-22T08:00:00.000Z'),
+        endTime: new Date('2026-05-22T10:00:00.000Z'),
+        renter: {
+          id: RENTER_ID,
+          fullName: 'Renter One',
+          email: 'renter@example.com',
+          phone: '0909000001',
+          trustScore: 100,
+        },
+        owner: {
+          id: OWNER_ID,
+          fullName: 'Owner One',
+          email: 'owner@example.com',
+          phone: '0909000002',
+          trustScore: 110,
+        },
+        vehicle: {
+          id: 'vehicle-uuid',
+          brand: 'VINFAST',
+          model: 'Klara S',
+          licensePlate: '51A-12345',
+          images: ['https://cdn.example.com/vehicle.jpg'],
+        },
+        trip: {
+          id: TRIP_ID,
+          status: TripStatus.COMPLETED,
+          startedAt: new Date('2026-05-22T08:00:00.000Z'),
+          completedAt: new Date('2026-05-22T10:00:00.000Z'),
+        },
+      },
+    ]);
+
+    const result = await service.getAdminReviewQueue(20);
+
+    expect(prisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { handovers: { some: {} } },
+        take: 20,
+      }),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].booking.vehicle.licensePlate).toBe('51A-12345');
+    expect(result[0].handover.differences).toEqual({
+      kmDriven: 60,
+      batteryDelta: -40,
     });
   });
 

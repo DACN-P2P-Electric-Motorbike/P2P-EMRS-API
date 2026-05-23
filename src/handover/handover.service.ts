@@ -134,6 +134,74 @@ export class HandoverService {
     return this.toSummary(booking.id, booking.handovers);
   }
 
+  async getAdminReviewQueue(limit = 50) {
+    const take = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
+    const bookings = await this.prisma.booking.findMany({
+      where: {
+        handovers: {
+          some: {},
+        },
+      },
+      include: {
+        renter: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+            trustScore: true,
+          },
+        },
+        owner: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+            trustScore: true,
+          },
+        },
+        vehicle: {
+          select: {
+            id: true,
+            brand: true,
+            model: true,
+            licensePlate: true,
+            images: true,
+          },
+        },
+        trip: {
+          select: {
+            id: true,
+            status: true,
+            startedAt: true,
+            completedAt: true,
+          },
+        },
+        handovers: {
+          include: this.handoverInclude(),
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take,
+    });
+
+    return bookings.map((booking) => ({
+      booking: {
+        id: booking.id,
+        status: booking.status,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        renter: booking.renter,
+        owner: booking.owner,
+        vehicle: booking.vehicle,
+        trip: booking.trip,
+      },
+      handover: this.toSummary(booking.id, booking.handovers),
+    }));
+  }
+
   async confirm(
     handoverId: string,
     userId: string,

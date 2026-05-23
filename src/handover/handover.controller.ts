@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -18,7 +19,8 @@ import {
 } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { JwtAuthGuard } from '../auth/guards';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard, RolesGuard } from '../auth/guards';
 import { CreateHandoverDto } from './dto';
 import {
   HandoverSummaryEntity,
@@ -32,6 +34,22 @@ import { HandoverService } from './handover.service';
 @ApiBearerAuth()
 export class HandoverController {
   constructor(private readonly handoverService: HandoverService) {}
+
+  @Get('admin/queue')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'List handover evidence queue for admin review' })
+  @ApiResponse({
+    status: 200,
+    description: 'Bookings with check-in/check-out handover evidence',
+  })
+  async getAdminReviewQueue(@Query('limit') limit?: string) {
+    return {
+      status: 'success',
+      data: await this.handoverService.getAdminReviewQueue(Number(limit)),
+    };
+  }
 
   @Post('check-in')
   @HttpCode(HttpStatus.CREATED)
