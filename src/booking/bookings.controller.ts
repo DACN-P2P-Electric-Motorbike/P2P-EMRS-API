@@ -24,6 +24,7 @@ import { BookingEntity } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { CreateBookingLockDto } from './dto/booking-lock.dto';
+import { CancellationRefundPreviewEntity } from './entities/cancellation-refund-preview.entity';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { BookingStatus } from '@prisma/client';
@@ -118,6 +119,28 @@ export class BookingsController {
     @CurrentUser('id') userId: string,
   ): Promise<BookingEntity[]> {
     return this.bookingsService.getBookingHistory(userId);
+  }
+
+  @Get(':id/cancellation-preview')
+  @ApiOperation({
+    summary: 'Preview cancellation refund',
+    description:
+      'Returns the cancellation policy, rental/deposit refund split, forfeited amount, and trust penalty before confirming cancellation.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Booking ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Cancellation refund preview',
+    type: CancellationRefundPreviewEntity,
+  })
+  async getCancellationRefundPreview(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ): Promise<CancellationRefundPreviewEntity> {
+    return this.bookingsService.getCancellationRefundPreview(id, userId);
   }
 
   @Get(':id')

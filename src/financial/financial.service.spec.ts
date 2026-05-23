@@ -281,6 +281,125 @@ describe('FinancialService', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it('lets owners submit manual damage charges for admin review', async () => {
+    const manualCharge = makeCharge({
+      type: PostTripChargeType.DAMAGE,
+      source: PostTripChargeSource.OWNER,
+      status: PostTripChargeStatus.PENDING_REVIEW,
+      amount: 75000,
+      quantity: null,
+      unitPrice: null,
+      description: 'Rear panel scratch',
+      evidence: {
+        manual: {
+          createdBy: OWNER_ID,
+          createdRole: UserRole.OWNER,
+        },
+      },
+    });
+    const syncedDeposit = makeDeposit({
+      status: DepositLedgerStatus.PENDING_CHARGES,
+      pendingChargeAmount: 75000,
+      releasedAmount: 425000,
+    });
+
+    prisma.booking.findUnique
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [] }))
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [manualCharge] }))
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: syncedDeposit,
+          postTripCharges: [manualCharge],
+        }),
+      );
+    prisma.postTripCharge.create.mockResolvedValue(manualCharge);
+    prisma.depositLedger.update.mockResolvedValue(syncedDeposit);
+
+    const result = await service.createManualPostTripCharge(
+      BOOKING_ID,
+      OWNER_ID,
+      [UserRole.OWNER],
+      {
+        type: PostTripChargeType.DAMAGE,
+        amount: 75000,
+        description: 'Rear panel scratch',
+        evidenceUrls: ['https://example.com/scratch.jpg'],
+      },
+    );
+
+    expect(prisma.postTripCharge.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: BOOKING_ID,
+        tripId: TRIP_ID,
+        type: PostTripChargeType.DAMAGE,
+        source: PostTripChargeSource.OWNER,
+        status: PostTripChargeStatus.PENDING_REVIEW,
+        amount: 75000,
+        description: 'Rear panel scratch',
+        reviewedBy: null,
+        reviewedAt: null,
+        evidence: expect.objectContaining({
+          manual: expect.objectContaining({
+            createdBy: OWNER_ID,
+            createdRole: UserRole.OWNER,
+            evidenceUrls: ['https://example.com/scratch.jpg'],
+          }),
+        }),
+      }),
+    });
+    expect(result.totalPendingCharges).toBe(75000);
+  });
+
+  it('lets admins create immediately approved manual cleaning charges', async () => {
+    const manualCharge = makeCharge({
+      type: PostTripChargeType.CLEANING,
+      source: PostTripChargeSource.ADMIN,
+      status: PostTripChargeStatus.APPROVED,
+      amount: 30000,
+      description: 'Cleaning fee approved by support',
+      reviewedBy: ADMIN_ID,
+      reviewedAt: new Date(),
+    });
+    const syncedDeposit = makeDeposit({
+      status: DepositLedgerStatus.PENDING_CHARGES,
+      pendingChargeAmount: 30000,
+      releasedAmount: 470000,
+    });
+
+    prisma.booking.findUnique
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [] }))
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [manualCharge] }))
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: syncedDeposit,
+          postTripCharges: [manualCharge],
+        }),
+      );
+    prisma.postTripCharge.create.mockResolvedValue(manualCharge);
+    prisma.depositLedger.update.mockResolvedValue(syncedDeposit);
+
+    const result = await service.createManualPostTripCharge(
+      BOOKING_ID,
+      ADMIN_ID,
+      [UserRole.ADMIN],
+      {
+        type: PostTripChargeType.CLEANING,
+        amount: 30000,
+        description: 'Cleaning fee approved by support',
+      },
+    );
+
+    expect(prisma.postTripCharge.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        source: PostTripChargeSource.ADMIN,
+        status: PostTripChargeStatus.APPROVED,
+        reviewedBy: ADMIN_ID,
+        reviewedAt: expect.any(Date),
+      }),
+    });
+    expect(result.totalApprovedCharges).toBe(30000);
+  });
+
   it('approves a charge and syncs pending deposit amount', async () => {
     const charge = makeCharge();
     const approvedCharge = makeCharge({

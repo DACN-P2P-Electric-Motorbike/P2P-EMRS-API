@@ -33,6 +33,7 @@ const mockBookingsService = {
   getUpcomingBookings: jest.fn(),
   getBookingHistory: jest.fn(),
   getBookingById: jest.fn(),
+  getCancellationRefundPreview: jest.fn(),
   cancelBooking: jest.fn(),
   getVehicleSchedule: jest.fn(),
 };
@@ -181,6 +182,45 @@ describe('BookingsController', () => {
       await expect(
         controller.getBooking('nonexistent', RENTER_ID),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('GET /:id/cancellation-preview', () => {
+    it('should return cancellation refund preview for the current user', async () => {
+      const preview = {
+        bookingId: BOOKING_ID,
+        cancelledBy: 'RENTER',
+        cancellable: true,
+        hoursUntilStart: 12,
+        policyCode: 'RENTER_STANDARD_PARTIAL_REFUND',
+        rentalRefundRate: 0.5,
+        trustPenalty: 5,
+        rentalAmount: 100000,
+        depositAmount: 500000,
+        paidAmount: 600000,
+        refundableRentalAmount: 50000,
+        refundableDepositAmount: 500000,
+        refundAmount: 550000,
+        forfeitedRentalAmount: 50000,
+        forfeitedDepositAmount: 0,
+        forfeitedAmount: 50000,
+        isPaid: true,
+        paymentStatus: 'COMPLETED',
+        refundType: 'partial',
+      };
+      mockBookingsService.getCancellationRefundPreview.mockResolvedValue(
+        preview,
+      );
+
+      const result = await controller.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(result).toEqual(preview);
+      expect(
+        mockBookingsService.getCancellationRefundPreview,
+      ).toHaveBeenCalledWith(BOOKING_ID, RENTER_ID);
     });
   });
 

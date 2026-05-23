@@ -19,6 +19,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
 import {
   DepositLedgerEntity,
@@ -299,6 +300,94 @@ export class FinancialService {
         },
       });
     }
+
+    await this.syncDepositForBooking(booking.id);
+    const updated = await this.findBookingWithFinancials(booking.id);
+    if (!updated) throw new NotFoundException('Booking not found');
+    return this.toSummary(updated);
+  }
+
+  async createManualPostTripCharge(
+    bookingId: string,
+    userId: string,
+    roles: UserRole[] = [],
+    dto: CreatePostTripChargeDto,
+  ): Promise<FinancialSummaryEntity> {
+    const booking = await this.findBookingWithFinancials(bookingId);
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    const isAdmin = roles.includes(UserRole.ADMIN);
+    const isOwner = booking.ownerId === userId;
+    if (!isAdmin && !isOwner) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (
+      booking.status !== BookingStatus.COMPLETED ||
+      booking.trip?.status !== TripStatus.COMPLETED
+    ) {
+      throw new BadRequestException(
+        'Manual post-trip charges can only be added after trip completion',
+      );
+    }
+
+    const allowedTypes: PostTripChargeType[] = [
+      PostTripChargeType.CLEANING,
+      PostTripChargeType.DAMAGE,
+      PostTripChargeType.ROADSIDE_ASSISTANCE,
+      PostTripChargeType.OTHER,
+    ];
+    if (!allowedTypes.includes(dto.type)) {
+      throw new BadRequestException('Unsupported manual post-trip charge type');
+    }
+
+    const finalizedDepositStatuses: DepositLedgerStatus[] = [
+      DepositLedgerStatus.CAPTURED,
+      DepositLedgerStatus.RELEASED,
+      DepositLedgerStatus.REFUNDED,
+    ];
+    if (
+      booking.depositLedger &&
+      finalizedDepositStatuses.includes(booking.depositLedger.status)
+    ) {
+      throw new BadRequestException(
+        'Cannot add manual charges after the deposit is finalized',
+      );
+    }
+
+    const now = new Date();
+    const status = isAdmin
+      ? PostTripChargeStatus.APPROVED
+      : PostTripChargeStatus.PENDING_REVIEW;
+
+    await this.prisma.postTripCharge.create({
+      data: {
+        bookingId: booking.id,
+        tripId: booking.trip?.id,
+        type: dto.type,
+        source: isAdmin
+          ? PostTripChargeSource.ADMIN
+          : PostTripChargeSource.OWNER,
+        status,
+        amount: this.roundMoney(dto.amount),
+        quantity: dto.quantity,
+        unitPrice: dto.unitPrice,
+        description: dto.description.trim(),
+        reviewedBy: isAdmin ? userId : null,
+        reviewedAt: isAdmin ? now : null,
+        evidence: {
+          manual: {
+            createdBy: userId,
+            createdRole: isAdmin ? UserRole.ADMIN : UserRole.OWNER,
+            createdAt: now.toISOString(),
+            evidenceUrls: dto.evidenceUrls ?? [],
+          },
+        },
+      },
+    });
 
     await this.syncDepositForBooking(booking.id);
     const updated = await this.findBookingWithFinancials(booking.id);

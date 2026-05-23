@@ -21,6 +21,7 @@ import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '../auth/guards';
+import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
 import { FinancialSummaryEntity } from './entities/financial.entity';
 import { FinancialService } from './financial.service';
@@ -85,6 +86,29 @@ export class FinancialController {
   ): Promise<FinancialSummaryEntity> {
     return this.financialService.recalculatePostTripChargesForBooking(
       bookingId,
+    );
+  }
+
+  @Post('bookings/:bookingId/charges')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create a manual post-trip charge',
+    description:
+      'Owner/admin charge submission for cleaning, damage, roadside assistance, or other approved post-trip fees. Owner submissions require admin review; admin submissions are approved immediately.',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking UUID' })
+  @ApiResponse({ status: 201, type: FinancialSummaryEntity })
+  async createManualPostTripCharge(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('roles') roles: UserRole[] = [],
+    @Body() dto: CreatePostTripChargeDto,
+  ): Promise<FinancialSummaryEntity> {
+    return this.financialService.createManualPostTripCharge(
+      bookingId,
+      userId,
+      roles,
+      dto,
     );
   }
 

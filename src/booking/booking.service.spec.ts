@@ -23,7 +23,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BookingStatus, VehicleStatus, Prisma } from '@prisma/client';
+import {
+  BookingStatus,
+  DepositLedgerStatus,
+  PaymentStatus,
+  VehicleStatus,
+  Prisma,
+} from '@prisma/client';
 
 import { BookingsService } from './bookings.service';
 import { BookingLockService } from './booking-lock.service';
@@ -98,6 +104,13 @@ describe('BookingsService', () => {
     create: jest.fn(),
     update: jest.fn(),
   };
+  const mockPaymentDelegate = {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  };
+  const mockDepositLedgerDelegate = {
+    updateMany: jest.fn(),
+  };
   const mockUserDelegate = {
     findUnique: jest.fn(),
     update: jest.fn(),
@@ -124,16 +137,16 @@ describe('BookingsService', () => {
           useValue: {
             vehicle: mockVehicleDelegate,
             booking: mockBookingDelegate,
+            payment: mockPaymentDelegate,
+            depositLedger: mockDepositLedgerDelegate,
             user: mockUserDelegate,
             // Simulate Prisma interactive transaction by immediately invoking
             // the callback with a mock transactional client
             $transaction: jest.fn().mockImplementation(async (callback) =>
               callback({
                 booking: mockBookingDelegate,
-                payment: {
-                  findUnique: jest.fn().mockResolvedValue(null),
-                  update: jest.fn(),
-                },
+                payment: mockPaymentDelegate,
+                depositLedger: mockDepositLedgerDelegate,
                 user: mockUserDelegate,
               }),
             ),
@@ -166,6 +179,9 @@ describe('BookingsService', () => {
       warned: true,
       score: 100,
     });
+    mockPaymentDelegate.findUnique.mockResolvedValue(null);
+    mockPaymentDelegate.update.mockResolvedValue({});
+    mockDepositLedgerDelegate.updateMany.mockResolvedValue({ count: 0 });
     mockBookingLockService.hasConflictingLock.mockResolvedValue(false);
     mockBookingLockService.releaseLocksByVehicleAndTime.mockResolvedValue(
       undefined,
@@ -490,6 +506,35 @@ describe('BookingsService', () => {
   // ─── cancelBooking ──────────────────────────────────────────────────────────
 
   describe('cancelBooking', () => {
+    it('previews rental/deposit cancellation refund split for a paid booking', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+        }),
+        payment: {
+          amount: 600000,
+          status: PaymentStatus.COMPLETED,
+        },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.rentalRefundRate).toBe(0.5);
+      expect(preview.refundableRentalAmount).toBe(50000);
+      expect(preview.refundableDepositAmount).toBe(500000);
+      expect(preview.refundAmount).toBe(550000);
+      expect(preview.forfeitedRentalAmount).toBe(50000);
+      expect(preview.trustPenalty).toBe(5);
+      expect(preview.policyCode).toBe('RENTER_STANDARD_PARTIAL_REFUND');
+    });
+
     it('should set booking status to CANCELLED when called by the renter', async () => {
       // Arrange
       const booking = createMockBooking({
@@ -523,6 +568,75 @@ describe('BookingsService', () => {
         expect.objectContaining({
           where: { id: BOOKING_ID },
           data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
+        }),
+      );
+    });
+
+    it('records explicit refund breakdown and refunds deposit on paid cancellation', async () => {
+      const booking = createMockBooking({
+        status: BookingStatus.CONFIRMED,
+        renterId: RENTER_ID,
+        startTime: futureDate(12),
+        totalPrice: 100000,
+        deposit: 500000,
+      });
+      const cancelledBooking = createMockBooking({
+        status: BookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+      });
+      const payment = {
+        id: 'payment-id',
+        bookingId: BOOKING_ID,
+        amount: 600000,
+        status: PaymentStatus.COMPLETED,
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue({
+        ...booking,
+        payment,
+      });
+      mockBookingDelegate.update.mockResolvedValue(cancelledBooking);
+      mockPaymentDelegate.findUnique.mockResolvedValue(payment);
+
+      await service.cancelBooking(BOOKING_ID, RENTER_ID, {
+        reason: 'Schedule changed',
+      } as any);
+
+      expect(mockPaymentDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: payment.id },
+          data: expect.objectContaining({
+            status: PaymentStatus.REFUNDED,
+            gatewayResponse: expect.objectContaining({
+              refundType: 'partial',
+              refundRate: 0.5,
+              refundAmount: 550000,
+              cancellationRefundBreakdown: expect.objectContaining({
+                refundableRentalAmount: 50000,
+                refundableDepositAmount: 500000,
+                forfeitedRentalAmount: 50000,
+                forfeitedDepositAmount: 0,
+              }),
+            }),
+          }),
+        }),
+      );
+      expect(mockDepositLedgerDelegate.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { bookingId: BOOKING_ID },
+          data: expect.objectContaining({
+            status: DepositLedgerStatus.REFUNDED,
+            refundedAmount: 500000,
+          }),
+        }),
+      );
+      expect(mockTrustScoreService.recordViolation).toHaveBeenCalledWith(
+        RENTER_ID,
+        expect.any(String),
+        5,
+        'Renter cancelled a confirmed booking',
+        expect.objectContaining({
+          rentalRefundRate: 0.5,
+          refundAmount: 550000,
         }),
       );
     });

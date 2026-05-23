@@ -9,6 +9,7 @@ describe('FinancialController', () => {
     getBookingFinancialSummary: jest.fn(),
     getAdminFinancialQueue: jest.fn(),
     recalculatePostTripChargesForBooking: jest.fn(),
+    createManualPostTripCharge: jest.fn(),
     updateChargeStatus: jest.fn(),
     captureApprovedChargesFromDeposit: jest.fn(),
     releaseDeposit: jest.fn(),
@@ -77,6 +78,29 @@ describe('FinancialController', () => {
     expect(service.updateChargeStatus).toHaveBeenCalledWith(
       'charge-1',
       'admin-1',
+      dto,
+    );
+  });
+
+  it('delegates manual post-trip charge creation', async () => {
+    const dto = {
+      type: 'DAMAGE',
+      amount: 75000,
+      description: 'Rear panel scratch',
+    } as any;
+    service.createManualPostTripCharge.mockResolvedValue({ bookingId: 'b1' });
+
+    await controller.createManualPostTripCharge(
+      'b1',
+      'owner-1',
+      [UserRole.OWNER],
+      dto,
+    );
+
+    expect(service.createManualPostTripCharge).toHaveBeenCalledWith(
+      'b1',
+      'owner-1',
+      [UserRole.OWNER],
       dto,
     );
   });
