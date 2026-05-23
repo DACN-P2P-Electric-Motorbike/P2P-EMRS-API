@@ -22,6 +22,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '../auth/guards';
 import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
+import { DisputePostTripChargeDto } from './dto/dispute-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
 import { FinancialSummaryEntity } from './entities/financial.entity';
 import { FinancialService } from './financial.service';
@@ -129,6 +130,23 @@ export class FinancialController {
     @Body() dto: UpdateChargeStatusDto,
   ): Promise<FinancialSummaryEntity> {
     return this.financialService.updateChargeStatus(chargeId, adminId, dto);
+  }
+
+  @Post('charges/:chargeId/dispute')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Dispute a post-trip charge',
+    description:
+      'Renter-only dispute action for pending or approved post-trip charges before deposit capture.',
+  })
+  @ApiParam({ name: 'chargeId', description: 'Post-trip charge UUID' })
+  @ApiResponse({ status: 200, type: FinancialSummaryEntity })
+  async disputePostTripCharge(
+    @Param('chargeId') chargeId: string,
+    @CurrentUser('id') renterId: string,
+    @Body() dto: DisputePostTripChargeDto,
+  ): Promise<FinancialSummaryEntity> {
+    return this.financialService.disputePostTripCharge(chargeId, renterId, dto);
   }
 
   @Post('bookings/:bookingId/capture-approved')

@@ -20,6 +20,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
+import { DisputePostTripChargeDto } from './dto/dispute-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
 import {
   DepositLedgerEntity,
@@ -442,7 +443,7 @@ export class FinancialService {
         amount: nextAmount,
         reviewedBy: adminId,
         reviewedAt: new Date(),
-        evidence: this.mergeEvidence(charge.evidence, {
+        evidence: this.mergeEvidence(charge.evidence, 'review', {
           reviewNotes: dto.notes?.trim() || undefined,
           reviewedBy: adminId,
           reviewedAt: new Date().toISOString(),
@@ -454,6 +455,57 @@ export class FinancialService {
     const booking = await this.findBookingWithFinancials(charge.bookingId);
     if (!booking) throw new NotFoundException('Booking not found');
     return this.toSummary(booking);
+  }
+
+  async disputePostTripCharge(
+    chargeId: string,
+    renterId: string,
+    dto: DisputePostTripChargeDto,
+  ): Promise<FinancialSummaryEntity> {
+    const charge = await this.prisma.postTripCharge.findUnique({
+      where: { id: chargeId },
+    });
+
+    if (!charge) {
+      throw new NotFoundException('Post-trip charge not found');
+    }
+
+    const booking = await this.findBookingWithFinancials(charge.bookingId);
+    if (!booking || booking.renterId !== renterId) {
+      throw new NotFoundException('Post-trip charge not found');
+    }
+
+    if (
+      !(
+        [
+          PostTripChargeStatus.PENDING_REVIEW,
+          PostTripChargeStatus.APPROVED,
+        ] as PostTripChargeStatus[]
+      ).includes(charge.status)
+    ) {
+      throw new BadRequestException(
+        'Only pending or approved charges can be disputed',
+      );
+    }
+
+    const now = new Date();
+    await this.prisma.postTripCharge.update({
+      where: { id: chargeId },
+      data: {
+        status: PostTripChargeStatus.DISPUTED,
+        evidence: this.mergeEvidence(charge.evidence, 'dispute', {
+          reason: dto.reason.trim(),
+          disputedBy: renterId,
+          disputedAt: now.toISOString(),
+          evidenceUrls: dto.evidenceUrls ?? [],
+        }),
+      },
+    });
+
+    await this.syncDepositForBooking(charge.bookingId);
+    const updated = await this.findBookingWithFinancials(charge.bookingId);
+    if (!updated) throw new NotFoundException('Booking not found');
+    return this.toSummary(updated);
   }
 
   async captureApprovedChargesFromDeposit(
@@ -758,14 +810,19 @@ export class FinancialService {
       DepositLedgerStatus.REFUNDED,
       DepositLedgerStatus.CAPTURED,
     ];
+    const hasDisputedCharge = activeCharges.some(
+      (charge) => charge.status === PostTripChargeStatus.DISPUTED,
+    );
     const nextStatus =
       booking.depositLedger.heldAmount <= 0
         ? DepositLedgerStatus.NOT_HELD
         : finalStatuses.includes(booking.depositLedger.status)
           ? booking.depositLedger.status
-          : pendingChargeAmount > 0
-            ? DepositLedgerStatus.PENDING_CHARGES
-            : DepositLedgerStatus.RELEASE_PENDING;
+          : hasDisputedCharge
+            ? DepositLedgerStatus.DISPUTED
+            : pendingChargeAmount > 0
+              ? DepositLedgerStatus.PENDING_CHARGES
+              : DepositLedgerStatus.RELEASE_PENDING;
 
     return this.prisma.depositLedger.update({
       where: { id: booking.depositLedger.id },
@@ -778,9 +835,7 @@ export class FinancialService {
           pendingChargeAmount === 0
             ? this.addHours(new Date(), this.RELEASE_REVIEW_HOURS)
             : null,
-        disputedAt: activeCharges.some(
-          (charge) => charge.status === PostTripChargeStatus.DISPUTED,
-        )
+        disputedAt: hasDisputedCharge
           ? (booking.depositLedger.disputedAt ?? new Date())
           : booking.depositLedger.disputedAt,
       },
@@ -805,6 +860,11 @@ export class FinancialService {
         (charge) => charge.status === PostTripChargeStatus.APPROVED,
       ),
     );
+    const totalDisputedCharges = this.sumCharges(
+      booking.postTripCharges.filter(
+        (charge) => charge.status === PostTripChargeStatus.DISPUTED,
+      ),
+    );
     const totalCapturedCharges = this.sumCharges(
       booking.postTripCharges.filter((charge) =>
         (
@@ -819,7 +879,11 @@ export class FinancialService {
     const ledgerCaptured = booking.depositLedger?.capturedAmount ?? 0;
     const releasableDeposit = Math.max(
       0,
-      heldAmount - ledgerCaptured - totalPendingCharges - totalApprovedCharges,
+      heldAmount -
+        ledgerCaptured -
+        totalPendingCharges -
+        totalApprovedCharges -
+        totalDisputedCharges,
     );
 
     return new FinancialSummaryEntity({
@@ -863,6 +927,7 @@ export class FinancialService {
 
   private mergeEvidence(
     existing: Prisma.JsonValue | null,
+    key: 'review' | 'dispute',
     patch: Record<string, unknown>,
   ): Prisma.InputJsonValue {
     const base =
@@ -871,7 +936,7 @@ export class FinancialService {
         : {};
     return {
       ...base,
-      review: Object.fromEntries(
+      [key]: Object.fromEntries(
         Object.entries(patch).filter(([, value]) => value !== undefined),
       ),
     } as Prisma.InputJsonValue;

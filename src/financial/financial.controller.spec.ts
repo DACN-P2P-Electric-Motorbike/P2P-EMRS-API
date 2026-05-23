@@ -10,6 +10,7 @@ describe('FinancialController', () => {
     getAdminFinancialQueue: jest.fn(),
     recalculatePostTripChargesForBooking: jest.fn(),
     createManualPostTripCharge: jest.fn(),
+    disputePostTripCharge: jest.fn(),
     updateChargeStatus: jest.fn(),
     captureApprovedChargesFromDeposit: jest.fn(),
     releaseDeposit: jest.fn(),
@@ -101,6 +102,22 @@ describe('FinancialController', () => {
       'b1',
       'owner-1',
       [UserRole.OWNER],
+      dto,
+    );
+  });
+
+  it('delegates renter charge disputes', async () => {
+    const dto = {
+      reason: 'The damage existed before pickup',
+      evidenceUrls: ['https://example.com/check-in.jpg'],
+    };
+    service.disputePostTripCharge.mockResolvedValue({ bookingId: 'b1' });
+
+    await controller.disputePostTripCharge('charge-1', 'renter-1', dto);
+
+    expect(service.disputePostTripCharge).toHaveBeenCalledWith(
+      'charge-1',
+      'renter-1',
       dto,
     );
   });

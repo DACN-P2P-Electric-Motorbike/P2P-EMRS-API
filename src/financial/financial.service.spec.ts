@@ -400,6 +400,97 @@ describe('FinancialService', () => {
     expect(result.totalApprovedCharges).toBe(30000);
   });
 
+  it('lets renters dispute pending or approved charges and marks deposit disputed', async () => {
+    const approvedCharge = makeCharge({
+      status: PostTripChargeStatus.APPROVED,
+      amount: 40000,
+      evidence: {
+        manual: {
+          createdBy: OWNER_ID,
+        },
+      },
+    });
+    const disputedCharge = makeCharge({
+      ...approvedCharge,
+      status: PostTripChargeStatus.DISPUTED,
+      evidence: {
+        manual: {
+          createdBy: OWNER_ID,
+        },
+        dispute: {
+          reason: 'Damage existed before pickup',
+          disputedBy: RENTER_ID,
+        },
+      },
+    });
+    const disputedDeposit = makeDeposit({
+      status: DepositLedgerStatus.DISPUTED,
+      pendingChargeAmount: 40000,
+      releasedAmount: 460000,
+      disputedAt: new Date('2026-05-23T08:00:00.000Z'),
+    });
+
+    prisma.postTripCharge.findUnique.mockResolvedValue(approvedCharge);
+    prisma.booking.findUnique
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [approvedCharge] }))
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [disputedCharge] }))
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: disputedDeposit,
+          postTripCharges: [disputedCharge],
+        }),
+      );
+    prisma.postTripCharge.update.mockResolvedValue(disputedCharge);
+    prisma.depositLedger.update.mockResolvedValue(disputedDeposit);
+
+    const result = await service.disputePostTripCharge(
+      'charge-uuid',
+      RENTER_ID,
+      {
+        reason: 'Damage existed before pickup',
+        evidenceUrls: ['https://example.com/check-in.jpg'],
+      },
+    );
+
+    expect(prisma.postTripCharge.update).toHaveBeenCalledWith({
+      where: { id: 'charge-uuid' },
+      data: expect.objectContaining({
+        status: PostTripChargeStatus.DISPUTED,
+        evidence: expect.objectContaining({
+          manual: expect.objectContaining({ createdBy: OWNER_ID }),
+          dispute: expect.objectContaining({
+            reason: 'Damage existed before pickup',
+            disputedBy: RENTER_ID,
+            evidenceUrls: ['https://example.com/check-in.jpg'],
+          }),
+        }),
+      }),
+    });
+    expect(prisma.depositLedger.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: DepositLedgerStatus.DISPUTED,
+          pendingChargeAmount: 40000,
+          releasedAmount: 460000,
+          disputedAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(result.deposit?.status).toBe(DepositLedgerStatus.DISPUTED);
+    expect(result.releasableDeposit).toBe(460000);
+  });
+
+  it('hides charge disputes from non-renters', async () => {
+    prisma.postTripCharge.findUnique.mockResolvedValue(makeCharge());
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+    await expect(
+      service.disputePostTripCharge('charge-uuid', OWNER_ID, {
+        reason: 'Owner cannot dispute as renter',
+      }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
   it('approves a charge and syncs pending deposit amount', async () => {
     const charge = makeCharge();
     const approvedCharge = makeCharge({
