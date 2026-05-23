@@ -174,6 +174,33 @@ export class UploadController {
     return this.uploadService.uploadFile(file, 'handovers');
   }
 
+  @Post('incident')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload an incident or claim evidence image' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Incident evidence image uploaded successfully',
+  })
+  async uploadIncidentImage(
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<UploadResult> {
+    return this.uploadService.uploadFile(file, 'incidents');
+  }
+
   @Delete()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

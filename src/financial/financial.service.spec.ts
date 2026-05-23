@@ -141,6 +141,9 @@ const mockPrisma = () => ({
     update: jest.fn(),
     updateMany: jest.fn(),
   },
+  incidentReport: {
+    findFirst: jest.fn(),
+  },
   $transaction: jest.fn((operations: Promise<unknown>[]) =>
     Promise.all(operations),
   ),
@@ -583,6 +586,17 @@ describe('FinancialService', () => {
 
     await expect(service.releaseDeposit(BOOKING_ID, ADMIN_ID)).rejects.toThrow(
       'Cannot release deposit while charges are pending, approved, or disputed',
+    );
+  });
+
+  it('blocks deposit release while incident reports are open', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ postTripCharges: [] }),
+    );
+    prisma.incidentReport.findFirst.mockResolvedValue({ id: 'incident-uuid' });
+
+    await expect(service.releaseDeposit(BOOKING_ID, ADMIN_ID)).rejects.toThrow(
+      'Cannot release deposit while incident reports are open or under review',
     );
   });
 });

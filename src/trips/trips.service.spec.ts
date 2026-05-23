@@ -11,6 +11,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { TripsService } from './trips.service';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { IncidentsService } from '../incidents/incidents.service';
 
 const RENTER_ID = 'renter-uuid';
 const OWNER_ID = 'owner-uuid';
@@ -112,6 +113,9 @@ describe('TripsService', () => {
     recordViolation: jest.fn(),
     recordTransactionMilestone: jest.fn(),
   };
+  const incidentsService = {
+    createFromTripIssue: jest.fn(),
+  };
 
   beforeEach(async () => {
     prisma = mockPrisma();
@@ -123,6 +127,7 @@ describe('TripsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: eventEmitter },
         { provide: TrustScoreService, useValue: trustScoreService },
+        { provide: IncidentsService, useValue: incidentsService },
       ],
     }).compile();
 

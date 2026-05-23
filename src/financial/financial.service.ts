@@ -9,6 +9,7 @@ import {
   DepositLedger,
   DepositLedgerStatus,
   HandoverType,
+  IncidentStatus,
   PaymentStatus,
   PostTripCharge,
   PostTripChargeSource,
@@ -597,6 +598,21 @@ export class FinancialService {
     if (blockingCharge) {
       throw new BadRequestException(
         'Cannot release deposit while charges are pending, approved, or disputed',
+      );
+    }
+
+    const blockingIncident = await this.prisma.incidentReport.findFirst({
+      where: {
+        bookingId,
+        status: {
+          in: [IncidentStatus.OPEN, IncidentStatus.UNDER_REVIEW],
+        },
+      },
+      select: { id: true },
+    });
+    if (blockingIncident) {
+      throw new BadRequestException(
+        'Cannot release deposit while incident reports are open or under review',
       );
     }
 

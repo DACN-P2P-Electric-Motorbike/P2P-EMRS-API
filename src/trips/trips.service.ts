@@ -21,6 +21,7 @@ import {
 import { TripIssueReportedEvent } from '../events/admin.events';
 import { TripStartedEvent, TripCompletedEvent } from '../events/trip.events';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { IncidentsService } from '../incidents/incidents.service';
 
 @Injectable()
 export class TripsService {
@@ -33,6 +34,7 @@ export class TripsService {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly trustScoreService: TrustScoreService,
+    private readonly incidentsService: IncidentsService,
   ) {}
 
   /**
@@ -331,6 +333,15 @@ export class TripsService {
       ),
     ]);
 
+    if (dto.hasIssues && dto.issueDescription?.trim()) {
+      await this.incidentsService.createFromTripIssue({
+        tripId: updatedTrip.id,
+        bookingId: updatedTrip.bookingId,
+        reporterId: userId,
+        description: dto.issueDescription,
+      });
+    }
+
     // Emit event so both renter and owner get notified
     this.eventEmitter.emit(
       'trip.completed',
@@ -440,6 +451,16 @@ export class TripsService {
       },
     });
 
+    const incident = await this.incidentsService.createFromTripIssue({
+      tripId: updatedTrip.id,
+      bookingId: updatedTrip.bookingId,
+      reporterId: userId,
+      description: dto.issueDescription,
+      category: dto.category,
+      severity: dto.severity,
+      evidenceUrls: dto.evidenceUrls,
+    });
+
     // NOTE: Trust score is NOT auto-adjusted here. The renter is reporting
     // a problem (e.g. vehicle breakdown) and should not be penalised for it.
     // An admin review event is emitted instead; the admin can act on it.
@@ -455,6 +476,7 @@ export class TripsService {
         updatedTrip.renterId,
         updatedTrip.vehicleId,
         dto.issueDescription,
+        incident.id,
       ),
     );
 

@@ -21,6 +21,7 @@ import { TrustScoreModule } from './trust-score/trust-score.module';
 import { KycModule } from './kyc/kyc.module';
 import { HandoverModule } from './handover/handover.module';
 import { FinancialModule } from './financial/financial.module';
+import { IncidentsModule } from './incidents/incidents.module';
 
 @Module({
   imports: [
@@ -80,6 +81,9 @@ import { FinancialModule } from './financial/financial.module';
 
     // Deposit ledger / post-trip charges
     FinancialModule,
+
+    // Incident report / claim foundation
+    IncidentsModule,
 
     EventListenerModule,
 

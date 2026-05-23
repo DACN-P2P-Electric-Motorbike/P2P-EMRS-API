@@ -35,8 +35,9 @@ export class AdminEventListener {
       type: 'TRIP_ISSUE',
       title: 'Sự cố chuyến đi',
       message: event.issueDescription,
-      link: '/reports',
+      link: '/incident-reports',
       tripId: event.tripId,
+      incidentReportId: event.incidentReportId,
       timestamp: new Date().toISOString(),
     });
   }
