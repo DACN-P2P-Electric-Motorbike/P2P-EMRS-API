@@ -17,9 +17,12 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  AvailabilityWindowType,
+  BatteryType,
   VehicleStatus,
   VehicleType,
   VehicleBrand,
+  VehicleCondition,
   UserRole,
   Prisma,
 } from '@prisma/client';
@@ -81,6 +84,12 @@ describe('VehiclesService', () => {
   const mockBookingLockDelegate = {
     findMany: jest.fn(),
   };
+  const mockVehicleAvailabilityWindowDelegate = {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
+  };
   const mockUserDelegate = {
     findUnique: jest.fn(),
     findMany: jest.fn(),
@@ -104,6 +113,7 @@ describe('VehiclesService', () => {
             vehicle: mockVehicleDelegate,
             booking: mockBookingDelegate,
             bookingLock: mockBookingLockDelegate,
+            vehicleAvailabilityWindow: mockVehicleAvailabilityWindowDelegate,
             user: mockUserDelegate,
           },
         },
@@ -128,6 +138,8 @@ describe('VehiclesService', () => {
     jest.clearAllMocks();
     mockBookingDelegate.findMany.mockResolvedValue([]);
     mockBookingLockDelegate.findMany.mockResolvedValue([]);
+    mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([]);
+    mockVehicleAvailabilityWindowDelegate.findFirst.mockResolvedValue(null);
     mockKycService.assertApproved.mockResolvedValue(undefined);
   });
 
@@ -279,6 +291,43 @@ describe('VehiclesService', () => {
             allowPets: true,
             geoRestriction: 'province_only',
             batteryReturnMin: 30,
+          }),
+        }),
+      );
+    });
+
+    it('should persist EV condition and battery lifecycle fields when provided', async () => {
+      const createdVehicle: MockVehicle = createMockVehicle({
+        status: VehicleStatus.PENDING_APPROVAL,
+        firstRegistrationYear: 2024,
+        condition: VehicleCondition.GOOD,
+        batteryType: BatteryType.REMOVABLE,
+        batteryHealth: 94,
+        batteryCycleCount: 180,
+        batteryLastServicedAt: new Date('2026-05-01T00:00:00.000Z'),
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+      mockVehicleDelegate.create.mockResolvedValue(createdVehicle);
+
+      await service.registerVehicle(OWNER_ID, ownerRoles, {
+        ...dto,
+        firstRegistrationYear: 2024,
+        condition: VehicleCondition.GOOD,
+        batteryType: BatteryType.REMOVABLE,
+        batteryHealth: 94,
+        batteryCycleCount: 180,
+        batteryLastServicedAt: '2026-05-01T00:00:00.000Z',
+      });
+
+      expect(mockVehicleDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            firstRegistrationYear: 2024,
+            condition: VehicleCondition.GOOD,
+            batteryType: BatteryType.REMOVABLE,
+            batteryHealth: 94,
+            batteryCycleCount: 180,
+            batteryLastServicedAt: new Date('2026-05-01T00:00:00.000Z'),
           }),
         }),
       );
@@ -444,6 +493,35 @@ describe('VehiclesService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             id: { notIn: ['booked-vehicle', 'locked-vehicle'] },
+          }),
+        }),
+      );
+    });
+
+    it('should exclude blocked calendar windows and uncovered available calendars', async () => {
+      const startTime = '2026-05-25T08:00:00.000Z';
+      const endTime = '2026-05-25T10:00:00.000Z';
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockDelegate.findMany.mockResolvedValue([]);
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([{ vehicleId: 'blocked-vehicle' }])
+        .mockResolvedValueOnce([
+          { vehicleId: 'calendar-covered' },
+          { vehicleId: 'calendar-missing' },
+        ])
+        .mockResolvedValueOnce([{ vehicleId: 'calendar-covered' }]);
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      expect(
+        mockVehicleAvailabilityWindowDelegate.findMany,
+      ).toHaveBeenCalledTimes(3);
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['blocked-vehicle', 'calendar-missing'] },
           }),
         }),
       );
@@ -697,6 +775,35 @@ describe('VehiclesService', () => {
         }),
       );
     });
+
+    it('should include EV condition and battery lifecycle fields when provided', async () => {
+      const vehicle = createMockVehicle({ ownerId: OWNER_ID });
+      const updated = createMockVehicle({ batteryHealth: 91 });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      await service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
+        firstRegistrationYear: 2023,
+        condition: VehicleCondition.LIKE_NEW,
+        batteryType: BatteryType.FIXED_NON_REMOVABLE,
+        batteryHealth: 91,
+        batteryCycleCount: 220,
+        batteryLastServicedAt: '2026-05-02T00:00:00.000Z',
+      } as any);
+
+      expect(mockVehicleDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            firstRegistrationYear: 2023,
+            condition: VehicleCondition.LIKE_NEW,
+            batteryType: BatteryType.FIXED_NON_REMOVABLE,
+            batteryHealth: 91,
+            batteryCycleCount: 220,
+            batteryLastServicedAt: new Date('2026-05-02T00:00:00.000Z'),
+          }),
+        }),
+      );
+    });
   });
 
   // ─── deleteVehicle ──────────────────────────────────────────────────────────
@@ -933,6 +1040,155 @@ describe('VehiclesService', () => {
             pricePerHour: expect.objectContaining({ lte: 99000 }),
           }),
         }),
+      );
+    });
+  });
+
+  // ─── Availability calendar ─────────────────────────────────────────────────
+
+  describe('availability calendar', () => {
+    const availabilityWindow = {
+      id: 'window-1',
+      vehicleId: VEHICLE_ID,
+      type: AvailabilityWindowType.AVAILABLE,
+      startTime: new Date('2026-05-25T08:00:00.000Z'),
+      endTime: new Date('2026-05-25T18:00:00.000Z'),
+      note: 'Day rentals',
+      createdAt: new Date('2026-05-22T00:00:00.000Z'),
+      updatedAt: new Date('2026-05-22T00:00:00.000Z'),
+    };
+
+    it('should list availability windows for the owner', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        availabilityWindow,
+      ]);
+
+      const result = await service.getAvailabilityWindows(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+      );
+
+      expect(result).toHaveLength(1);
+      expect(
+        mockVehicleAvailabilityWindowDelegate.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { vehicleId: VEHICLE_ID },
+        }),
+      );
+    });
+
+    it('should reject availability access for a non-owner', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OTHER_OWNER_ID }),
+      );
+
+      await expect(
+        service.getAvailabilityWindows(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should create a valid availability window', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
+        availabilityWindow,
+      );
+
+      const result = await service.createAvailabilityWindow(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        {
+          type: AvailabilityWindowType.AVAILABLE,
+          startTime: '2026-05-25T08:00:00.000Z',
+          endTime: '2026-05-25T18:00:00.000Z',
+          note: 'Day rentals',
+        },
+      );
+
+      expect(result.id).toBe('window-1');
+      expect(mockVehicleAvailabilityWindowDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            vehicleId: VEHICLE_ID,
+            type: AvailabilityWindowType.AVAILABLE,
+            startTime: new Date('2026-05-25T08:00:00.000Z'),
+            endTime: new Date('2026-05-25T18:00:00.000Z'),
+          }),
+        }),
+      );
+    });
+
+    it('should reject availability windows with end before start', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            startTime: '2026-05-25T18:00:00.000Z',
+            endTime: '2026-05-25T08:00:00.000Z',
+          },
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject overlapping availability windows of the same type', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findFirst.mockResolvedValue({
+        id: 'window-existing',
+      });
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            startTime: '2026-05-25T10:00:00.000Z',
+            endTime: '2026-05-25T12:00:00.000Z',
+          },
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(
+        mockVehicleAvailabilityWindowDelegate.create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should delete an owned availability window', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findFirst.mockResolvedValue({
+        id: 'window-1',
+      });
+      mockVehicleAvailabilityWindowDelegate.delete.mockResolvedValue(
+        availabilityWindow,
+      );
+
+      await service.deleteAvailabilityWindow(VEHICLE_ID, 'window-1', OWNER_ID, [
+        UserRole.OWNER,
+      ]);
+
+      expect(mockVehicleAvailabilityWindowDelegate.delete).toHaveBeenCalledWith(
+        {
+          where: { id: 'window-1' },
+        },
       );
     });
   });

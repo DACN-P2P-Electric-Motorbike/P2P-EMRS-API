@@ -15,6 +15,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { VehicleStatus, VehicleBrand, UserRole } from '@prisma/client';
+import { AvailabilityWindowType } from '@prisma/client';
 
 import { VehiclesController } from './vehicles.controller';
 import { VehiclesService } from './vehicles.service';
@@ -32,6 +33,9 @@ const mockVehiclesService = {
   getMyVehicles: jest.fn(),
   getAvailableVehicles: jest.fn(),
   getVehicleById: jest.fn(),
+  getAvailabilityWindows: jest.fn(),
+  createAvailabilityWindow: jest.fn(),
+  deleteAvailabilityWindow: jest.fn(),
   updateVehicle: jest.fn(),
   toggleAvailability: jest.fn(),
   deleteVehicle: jest.fn(),
@@ -222,6 +226,79 @@ describe('VehiclesController', () => {
 
       expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
         expect.objectContaining({ instantBook: true }),
+      );
+    });
+  });
+
+  // ─── availability calendar ─────────────────────────────────────────────────
+  describe('availability calendar endpoints', () => {
+    it('should delegate availability listing to service', async () => {
+      const user = createMockUser();
+      const windows = [
+        {
+          id: 'window-1',
+          vehicleId: VEHICLE_ID,
+          type: AvailabilityWindowType.AVAILABLE,
+          startTime: new Date('2026-05-25T08:00:00.000Z'),
+          endTime: new Date('2026-05-25T18:00:00.000Z'),
+          note: null,
+          createdAt: new Date('2026-05-22T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-22T00:00:00.000Z'),
+        },
+      ];
+      mockVehiclesService.getAvailabilityWindows.mockResolvedValue(windows);
+
+      const result = await controller.getAvailabilityWindows(
+        VEHICLE_ID,
+        user,
+        '2026-05-25T00:00:00.000Z',
+        '2026-05-26T00:00:00.000Z',
+      );
+
+      expect(result).toEqual(windows);
+      expect(mockVehiclesService.getAvailabilityWindows).toHaveBeenCalledWith(
+        VEHICLE_ID,
+        user.id,
+        user.roles,
+        '2026-05-25T00:00:00.000Z',
+        '2026-05-26T00:00:00.000Z',
+      );
+    });
+
+    it('should delegate availability creation to service', async () => {
+      const user = createMockUser();
+      const dto = {
+        type: AvailabilityWindowType.BLOCKED,
+        startTime: '2026-05-25T12:00:00.000Z',
+        endTime: '2026-05-25T14:00:00.000Z',
+      };
+      mockVehiclesService.createAvailabilityWindow.mockResolvedValue({
+        id: 'window-1',
+        vehicleId: VEHICLE_ID,
+        ...dto,
+      });
+
+      await controller.createAvailabilityWindow(VEHICLE_ID, user, dto);
+
+      expect(mockVehiclesService.createAvailabilityWindow).toHaveBeenCalledWith(
+        VEHICLE_ID,
+        user.id,
+        user.roles,
+        dto,
+      );
+    });
+
+    it('should delegate availability deletion to service', async () => {
+      const user = createMockUser();
+      mockVehiclesService.deleteAvailabilityWindow.mockResolvedValue(undefined);
+
+      await controller.deleteAvailabilityWindow(VEHICLE_ID, 'window-1', user);
+
+      expect(mockVehiclesService.deleteAvailabilityWindow).toHaveBeenCalledWith(
+        VEHICLE_ID,
+        'window-1',
+        user.id,
+        user.roles,
       );
     });
   });

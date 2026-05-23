@@ -5,6 +5,8 @@ import {
   VehicleType,
   VehicleBrand,
   VehicleFeature,
+  VehicleCondition,
+  BatteryType,
   Prisma,
 } from '@prisma/client';
 import { Expose } from 'class-transformer';
@@ -161,6 +163,33 @@ export class VehicleEntity implements Vehicle {
   @ApiPropertyOptional({ description: 'Minimum battery return level' })
   @Expose()
   batteryReturnMin: number | null;
+
+  @ApiPropertyOptional({ description: 'Vehicle first registration year' })
+  @Expose()
+  firstRegistrationYear: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Current vehicle condition',
+    enum: VehicleCondition,
+  })
+  @Expose()
+  condition: VehicleCondition | null;
+
+  @ApiPropertyOptional({ description: 'EV battery pack type', enum: BatteryType })
+  @Expose()
+  batteryType: BatteryType | null;
+
+  @ApiPropertyOptional({ description: 'Battery health percentage' })
+  @Expose()
+  batteryHealth: number | null;
+
+  @ApiPropertyOptional({ description: 'Approximate battery charge cycle count' })
+  @Expose()
+  batteryCycleCount: number | null;
+
+  @ApiPropertyOptional({ description: 'Last battery service date' })
+  @Expose()
+  batteryLastServicedAt: Date | null;
 
   @ApiProperty({ description: 'Owner user ID' })
   @Expose()

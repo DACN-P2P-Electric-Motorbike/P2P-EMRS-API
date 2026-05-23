@@ -10,9 +10,15 @@ import {
   Max,
   IsLatitude,
   IsLongitude,
+  IsDateString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { VehicleType, VehicleStatus } from '@prisma/client';
+import {
+  BatteryType,
+  VehicleCondition,
+  VehicleType,
+  VehicleStatus,
+} from '@prisma/client';
 
 export class UpdateVehicleDto {
   @ApiPropertyOptional({
@@ -179,4 +185,48 @@ export class UpdateVehicleDto {
   @Max(100)
   @Type(() => Number)
   batteryReturnMin?: number | null;
+
+  @ApiPropertyOptional({ description: 'Vehicle first registration year' })
+  @IsOptional()
+  @IsNumber()
+  @Min(1990)
+  @Max(2100)
+  @Type(() => Number)
+  firstRegistrationYear?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Current vehicle condition',
+    enum: VehicleCondition,
+  })
+  @IsOptional()
+  @IsEnum(VehicleCondition)
+  condition?: VehicleCondition | null;
+
+  @ApiPropertyOptional({
+    description: 'EV battery pack type',
+    enum: BatteryType,
+  })
+  @IsOptional()
+  @IsEnum(BatteryType)
+  batteryType?: BatteryType | null;
+
+  @ApiPropertyOptional({ description: 'Battery health percentage (0-100)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  batteryHealth?: number | null;
+
+  @ApiPropertyOptional({ description: 'Approximate battery charge cycle count' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  batteryCycleCount?: number | null;
+
+  @ApiPropertyOptional({ description: 'Last battery service date (ISO 8601)' })
+  @IsOptional()
+  @IsDateString()
+  batteryLastServicedAt?: string | null;
 }

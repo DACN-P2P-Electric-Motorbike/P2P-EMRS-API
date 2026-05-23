@@ -96,51 +96,58 @@ model OtpCode {
 }
 
 model Vehicle {
-  id               String           @id @default(uuid())
-  name             String?
-  type             VehicleType      @default(OTHER)
-  brand            VehicleBrand     @default(OTHER)
-  model            String
-  year             Int?
-  licensePlate     String           @unique @map("license_plate")
-  description      String?
-  images           String[]
-  features         VehicleFeature[]
-  batteryCapacity  Float?           @map("battery_capacity")
-  batteryLevel     Int              @default(100) @map("battery_level")
-  maxSpeed         Float?           @map("max_speed")
-  range            Float?
-  pricePerHour     Decimal          @map("price_per_hour") @db.Decimal(10, 2)
-  pricePerDay      Decimal?         @map("price_per_day") @db.Decimal(10, 2)
-  deposit          Float?
-  status           VehicleStatus    @default(PENDING_APPROVAL)
-  isAvailable      Boolean          @default(true) @map("is_available")
-  latitude         Float?
-  longitude        Float?
-  address          String
-  licenseNumber    String?          @map("license_number")
-  licenseFront     String?          @map("license_front")
-  licenseBack      String?          @map("license_back")
-  ownerId          String           @map("owner_id")
-  totalTrips       Int              @default(0) @map("total_trips")
-  totalRating      Float            @default(5.0) @map("total_rating")
-  reviewCount      Int              @default(0) @map("review_count")
-  instantBook      Boolean          @default(false) @map("instant_book")
-  dailyKmLimit     Int?             @map("daily_km_limit")
-  excessKmPrice    Float?           @map("excess_km_price")
-  weeklyDiscount   Float?           @map("weekly_discount")
-  monthlyDiscount  Float?           @map("monthly_discount")
-  allowSmoke       Boolean          @default(false) @map("allow_smoke")
-  allowPets        Boolean          @default(false) @map("allow_pets")
-  geoRestriction   String?          @map("geo_restriction")
-  batteryReturnMin Int?             @map("battery_return_min")
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
-  bookings         Booking[]
-  reviews          Review[]
-  trips            Trip[]
-  bookingLocks     BookingLock[]
-  owner            User             @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  id                    String                      @id @default(uuid())
+  name                  String?
+  type                  VehicleType                 @default(OTHER)
+  brand                 VehicleBrand                @default(OTHER)
+  model                 String
+  year                  Int?
+  licensePlate          String                      @unique @map("license_plate")
+  description           String?
+  images                String[]
+  features              VehicleFeature[]
+  batteryCapacity       Float?                      @map("battery_capacity")
+  batteryLevel          Int                         @default(100) @map("battery_level")
+  maxSpeed              Float?                      @map("max_speed")
+  range                 Float?
+  pricePerHour          Decimal                     @map("price_per_hour") @db.Decimal(10, 2)
+  pricePerDay           Decimal?                    @map("price_per_day") @db.Decimal(10, 2)
+  deposit               Float?
+  status                VehicleStatus               @default(PENDING_APPROVAL)
+  isAvailable           Boolean                     @default(true) @map("is_available")
+  latitude              Float?
+  longitude             Float?
+  address               String
+  licenseNumber         String?                     @map("license_number")
+  licenseFront          String?                     @map("license_front")
+  licenseBack           String?                     @map("license_back")
+  ownerId               String                      @map("owner_id")
+  totalTrips            Int                         @default(0) @map("total_trips")
+  totalRating           Float                       @default(5.0) @map("total_rating")
+  reviewCount           Int                         @default(0) @map("review_count")
+  instantBook           Boolean                     @default(false) @map("instant_book")
+  dailyKmLimit          Int?                        @map("daily_km_limit")
+  excessKmPrice         Float?                      @map("excess_km_price")
+  weeklyDiscount        Float?                      @map("weekly_discount")
+  monthlyDiscount       Float?                      @map("monthly_discount")
+  allowSmoke            Boolean                     @default(false) @map("allow_smoke")
+  allowPets             Boolean                     @default(false) @map("allow_pets")
+  geoRestriction        String?                     @map("geo_restriction")
+  batteryReturnMin      Int?                        @map("battery_return_min")
+  firstRegistrationYear Int?                        @map("first_registration_year")
+  condition             VehicleCondition?
+  batteryType           BatteryType?                @map("battery_type")
+  batteryHealth         Int?                        @map("battery_health")
+  batteryCycleCount     Int?                        @map("battery_cycle_count")
+  batteryLastServicedAt DateTime?                   @map("battery_last_serviced_at")
+  createdAt             DateTime                    @default(now()) @map("created_at")
+  updatedAt             DateTime                    @updatedAt @map("updated_at")
+  bookings              Booking[]
+  reviews               Review[]
+  trips                 Trip[]
+  bookingLocks          BookingLock[]
+  availabilityWindows   VehicleAvailabilityWindow[]
+  owner                 User                        @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@index([ownerId])
   @@index([status])
@@ -150,6 +157,24 @@ model Vehicle {
   @@index([licensePlate])
   @@index([latitude, longitude])
   @@map("vehicles")
+}
+
+model VehicleAvailabilityWindow {
+  id        String                 @id @default(uuid())
+  vehicleId String                 @map("vehicle_id")
+  type      AvailabilityWindowType
+  startTime DateTime               @map("start_time")
+  endTime   DateTime               @map("end_time")
+  note      String?
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([type])
+  @@index([startTime, endTime])
+  @@map("vehicle_availability_windows")
 }
 
 model Booking {
@@ -352,6 +377,25 @@ enum VehicleFeature {
   DIFFICULT_TERRAIN
   GPS_TRACKING
   ANTI_THEFT
+}
+
+enum VehicleCondition {
+  NEW
+  LIKE_NEW
+  GOOD
+  FAIR
+  NEEDS_MAINTENANCE
+}
+
+enum BatteryType {
+  FIXED_NON_REMOVABLE
+  REMOVABLE
+  SWAPPABLE
+}
+
+enum AvailabilityWindowType {
+  AVAILABLE
+  BLOCKED
 }
 
 enum BookingStatus {

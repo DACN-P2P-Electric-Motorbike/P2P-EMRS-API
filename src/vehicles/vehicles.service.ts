@@ -8,9 +8,15 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
-import { CreateVehicleDto, UpdateVehicleDto } from './dto';
-import { VehicleEntity } from './entities/vehicle.entity';
 import {
+  CreateAvailabilityWindowDto,
+  CreateVehicleDto,
+  UpdateVehicleDto,
+} from './dto';
+import { VehicleEntity } from './entities/vehicle.entity';
+import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
+import {
+  AvailabilityWindowType,
   VehicleStatus,
   UserRole,
   BookingStatus,
@@ -99,6 +105,14 @@ export class VehiclesService {
         allowPets: dto.allowPets ?? false,
         geoRestriction: dto.geoRestriction,
         batteryReturnMin: dto.batteryReturnMin,
+        firstRegistrationYear: dto.firstRegistrationYear,
+        condition: dto.condition,
+        batteryType: dto.batteryType,
+        batteryHealth: dto.batteryHealth,
+        batteryCycleCount: dto.batteryCycleCount,
+        batteryLastServicedAt: dto.batteryLastServicedAt
+          ? new Date(dto.batteryLastServicedAt)
+          : undefined,
       },
     });
 
@@ -227,11 +241,20 @@ export class VehiclesService {
       'allowPets',
       'geoRestriction',
       'batteryReturnMin',
+      'firstRegistrationYear',
+      'condition',
+      'batteryType',
+      'batteryHealth',
+      'batteryCycleCount',
+      'batteryLastServicedAt',
     ];
 
     fieldsToMap.forEach((field) => {
       if (dto[field] !== undefined) {
-        updateData[field] = dto[field];
+        updateData[field] =
+          field === 'batteryLastServicedAt' && dto[field] !== null
+            ? new Date(dto[field] as string)
+            : dto[field];
       }
     });
 
@@ -403,10 +426,19 @@ export class VehiclesService {
       where.instantBook = params.instantBook;
     }
 
-    // Date-range availability filter: exclude vehicles with overlapping bookings
+    // Date-range availability filter: exclude vehicles with overlapping bookings,
+    // active checkout locks, blocked owner windows, or missing calendar coverage
+    // for vehicles that have opted into AVAILABLE windows.
     if (params?.startTime && params?.endTime) {
       const requestedStart = new Date(params.startTime);
       const requestedEnd = new Date(params.endTime);
+      if (
+        Number.isNaN(requestedStart.getTime()) ||
+        Number.isNaN(requestedEnd.getTime()) ||
+        requestedStart >= requestedEnd
+      ) {
+        throw new BadRequestException('Invalid availability time range');
+      }
 
       // Find vehicle IDs that have conflicting bookings in the requested window
       const conflictingBookings = await this.prisma.booking.findMany({
@@ -436,10 +468,48 @@ export class VehiclesService {
         distinct: ['vehicleId'],
       });
 
+      const blockedWindows =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: {
+            type: AvailabilityWindowType.BLOCKED,
+            startTime: { lt: requestedEnd },
+            endTime: { gt: requestedStart },
+          },
+          select: { vehicleId: true },
+          distinct: ['vehicleId'],
+        });
+
+      const vehiclesWithAvailableCalendar =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: { type: AvailabilityWindowType.AVAILABLE },
+          select: { vehicleId: true },
+          distinct: ['vehicleId'],
+        });
+
+      const calendarCoveredVehicles =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: {
+            type: AvailabilityWindowType.AVAILABLE,
+            startTime: { lte: requestedStart },
+            endTime: { gte: requestedEnd },
+          },
+          select: { vehicleId: true },
+          distinct: ['vehicleId'],
+        });
+
+      const calendarCoveredVehicleIds = new Set(
+        calendarCoveredVehicles.map((window) => window.vehicleId),
+      );
+      const calendarNotCoveredVehicleIds = vehiclesWithAvailableCalendar
+        .map((window) => window.vehicleId)
+        .filter((vehicleId) => !calendarCoveredVehicleIds.has(vehicleId));
+
       const conflictingVehicleIds = [
         ...new Set([
           ...conflictingBookings.map((b) => b.vehicleId),
           ...conflictingLocks.map((l) => l.vehicleId),
+          ...blockedWindows.map((window) => window.vehicleId),
+          ...calendarNotCoveredVehicleIds,
         ]),
       ];
 
@@ -565,6 +635,150 @@ export class VehiclesService {
       vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
       total: rawTotal,
     };
+  }
+
+  private assertValidAvailabilityRange(startTime: Date, endTime: Date): void {
+    if (
+      Number.isNaN(startTime.getTime()) ||
+      Number.isNaN(endTime.getTime()) ||
+      startTime >= endTime
+    ) {
+      throw new BadRequestException(
+        'Availability window end time must be after start time',
+      );
+    }
+  }
+
+  private async assertVehicleCalendarAccess(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+  ): Promise<void> {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { id: true, ownerId: true },
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Vehicle not found');
+    }
+
+    if (vehicle.ownerId !== userId && !userRole.includes(UserRole.ADMIN)) {
+      throw new ForbiddenException(
+        'You can only manage availability for your own vehicles',
+      );
+    }
+  }
+
+  async getAvailabilityWindows(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+    from?: string,
+    to?: string,
+  ): Promise<VehicleAvailabilityWindowEntity[]> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const where: {
+      vehicleId: string;
+      startTime?: { lt?: Date; gte?: Date };
+      endTime?: { gt?: Date; lte?: Date };
+    } = { vehicleId };
+
+    if (from || to) {
+      const fromDate = from ? new Date(from) : undefined;
+      const toDate = to ? new Date(to) : undefined;
+
+      if (
+        (fromDate && Number.isNaN(fromDate.getTime())) ||
+        (toDate && Number.isNaN(toDate.getTime())) ||
+        (fromDate && toDate && fromDate >= toDate)
+      ) {
+        throw new BadRequestException('Invalid availability query range');
+      }
+
+      if (fromDate && toDate) {
+        where.startTime = { lt: toDate };
+        where.endTime = { gt: fromDate };
+      } else if (fromDate) {
+        where.endTime = { gt: fromDate };
+      } else if (toDate) {
+        where.startTime = { lt: toDate };
+      }
+    }
+
+    const windows = await this.prisma.vehicleAvailabilityWindow.findMany({
+      where,
+      orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    return windows.map((window) =>
+      VehicleAvailabilityWindowEntity.fromPrisma(window),
+    );
+  }
+
+  async createAvailabilityWindow(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+    dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const startTime = new Date(dto.startTime);
+    const endTime = new Date(dto.endTime);
+    this.assertValidAvailabilityRange(startTime, endTime);
+
+    const overlappingWindow =
+      await this.prisma.vehicleAvailabilityWindow.findFirst({
+        where: {
+          vehicleId,
+          type: dto.type,
+          startTime: { lt: endTime },
+          endTime: { gt: startTime },
+        },
+        select: { id: true },
+      });
+
+    if (overlappingWindow) {
+      throw new BadRequestException(
+        'Availability window overlaps an existing window of the same type',
+      );
+    }
+
+    const window = await this.prisma.vehicleAvailabilityWindow.create({
+      data: {
+        vehicleId,
+        type: dto.type,
+        startTime,
+        endTime,
+        note: dto.note,
+      },
+    });
+
+    return VehicleAvailabilityWindowEntity.fromPrisma(window);
+  }
+
+  async deleteAvailabilityWindow(
+    vehicleId: string,
+    windowId: string,
+    userId: string,
+    userRole: UserRole[],
+  ): Promise<void> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const window = await this.prisma.vehicleAvailabilityWindow.findFirst({
+      where: { id: windowId, vehicleId },
+      select: { id: true },
+    });
+
+    if (!window) {
+      throw new NotFoundException('Availability window not found');
+    }
+
+    await this.prisma.vehicleAvailabilityWindow.delete({
+      where: { id: windowId },
+    });
   }
 
   /**

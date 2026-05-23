@@ -20,8 +20,13 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { VehiclesService } from './vehicles.service';
-import { CreateVehicleDto, UpdateVehicleDto } from './dto';
+import {
+  CreateAvailabilityWindowDto,
+  CreateVehicleDto,
+  UpdateVehicleDto,
+} from './dto';
 import { VehicleEntity } from './entities/vehicle.entity';
+import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserEntity } from '../auth/entities/user.entity';
@@ -167,6 +172,97 @@ export class VehiclesController {
       instantBook:
         instantBook !== undefined ? instantBook === 'true' : undefined,
     });
+  }
+
+  @Get(':id/availability')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get vehicle availability windows',
+    description:
+      'Owner/admin only. Returns calendar windows for a vehicle. AVAILABLE windows define bookable periods; BLOCKED windows exclude periods.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    description: 'Only return windows overlapping this start time',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    description: 'Only return windows overlapping this end time',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Vehicle availability windows',
+    type: [VehicleAvailabilityWindowEntity],
+  })
+  async getAvailabilityWindows(
+    @Param('id') id: string,
+    @CurrentUser() user: UserEntity,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<VehicleAvailabilityWindowEntity[]> {
+    return this.vehiclesService.getAvailabilityWindows(
+      id,
+      user.id,
+      user.roles,
+      from,
+      to,
+    );
+  }
+
+  @Post(':id/availability')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create vehicle availability window',
+    description:
+      'Owner/admin only. Adds an AVAILABLE or BLOCKED calendar window for a vehicle.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiResponse({
+    status: 201,
+    description: 'Availability window created',
+    type: VehicleAvailabilityWindowEntity,
+  })
+  async createAvailabilityWindow(
+    @Param('id') id: string,
+    @CurrentUser() user: UserEntity,
+    @Body() dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    return this.vehiclesService.createAvailabilityWindow(
+      id,
+      user.id,
+      user.roles,
+      dto,
+    );
+  }
+
+  @Delete(':id/availability/:windowId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete vehicle availability window',
+    description: 'Owner/admin only. Removes a calendar window from a vehicle.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiParam({ name: 'windowId', description: 'Availability window ID' })
+  @ApiResponse({ status: 204, description: 'Availability window deleted' })
+  async deleteAvailabilityWindow(
+    @Param('id') id: string,
+    @Param('windowId') windowId: string,
+    @CurrentUser() user: UserEntity,
+  ): Promise<void> {
+    return this.vehiclesService.deleteAvailabilityWindow(
+      id,
+      windowId,
+      user.id,
+      user.roles,
+    );
   }
 
   @Get(':id')
