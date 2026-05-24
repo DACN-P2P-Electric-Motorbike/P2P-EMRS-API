@@ -16,6 +16,7 @@ import {
   VehicleStatus,
   PaymentStatus,
   Prisma,
+  ProtectionPlanType,
   TrustScoreEventType,
 } from '@prisma/client';
 import {
@@ -34,6 +35,30 @@ export class BookingsService {
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
   private readonly MIN_BOOKING_MINUTES = 30;
   private readonly MAX_BOOKING_DAYS = 30;
+  private readonly PROTECTION_PLANS: Record<
+    ProtectionPlanType,
+    {
+      feeRate: number;
+      deductible: number;
+      coverageLimit: number;
+    }
+  > = {
+    [ProtectionPlanType.BASIC]: {
+      feeRate: 0,
+      deductible: 3_000_000,
+      coverageLimit: 5_000_000,
+    },
+    [ProtectionPlanType.STANDARD]: {
+      feeRate: 0.05,
+      deductible: 1_500_000,
+      coverageLimit: 15_000_000,
+    },
+    [ProtectionPlanType.PREMIUM]: {
+      feeRate: 0.1,
+      deductible: 500_000,
+      coverageLimit: 30_000_000,
+    },
+  };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -63,6 +88,24 @@ export class BookingsService {
 
     // Otherwise use hourly rate
     return Math.ceil(durationHours) * pricePerHour;
+  }
+
+  private calculateProtection(
+    plan: ProtectionPlanType,
+    rentalPrice: number,
+  ): {
+    protectionPlan: ProtectionPlanType;
+    protectionFee: number;
+    protectionDeductible: number;
+    protectionCoverageLimit: number;
+  } {
+    const config = this.PROTECTION_PLANS[plan];
+    return {
+      protectionPlan: plan,
+      protectionFee: this.roundMoney(rentalPrice * config.feeRate),
+      protectionDeductible: config.deductible,
+      protectionCoverageLimit: config.coverageLimit,
+    };
   }
 
   /**
@@ -201,6 +244,10 @@ export class BookingsService {
       vehicle.pricePerHour.toNumber(),
       vehicle.pricePerDay?.toNumber() ?? vehicle.pricePerHour.toNumber() * 24,
     );
+    const protection = this.calculateProtection(
+      dto.protectionPlan ?? ProtectionPlanType.STANDARD,
+      totalPrice,
+    );
 
     // Create booking
     const booking = await this.prisma.booking.create({
@@ -212,6 +259,7 @@ export class BookingsService {
         endTime,
         totalPrice,
         deposit: vehicle.deposit ?? 0,
+        ...protection,
         notes: dto.notes,
         status: BookingStatus.PENDING,
       },
@@ -568,6 +616,7 @@ export class BookingsService {
       startTime: Date;
       totalPrice: number;
       deposit: number;
+      protectionFee?: number | null;
     },
     payment: { amount: number; status: PaymentStatus } | null,
     userId: string,
@@ -603,6 +652,7 @@ export class BookingsService {
 
     const isPaid = payment?.status === PaymentStatus.COMPLETED;
     const rentalAmount = this.roundMoney(booking.totalPrice);
+    const protectionAmount = this.roundMoney(booking.protectionFee ?? 0);
     const depositAmount = this.roundMoney(booking.deposit);
     const paidAmount = isPaid ? this.roundMoney(payment.amount) : 0;
     const refundableDepositAmount = isPaid
@@ -611,16 +661,34 @@ export class BookingsService {
     const refundableRentalAmount = isPaid
       ? Math.min(rentalAmount, this.roundMoney(rentalAmount * rentalRefundRate))
       : 0;
+    const refundableProtectionAmount = isPaid
+      ? Math.min(
+          protectionAmount,
+          this.roundMoney(protectionAmount * rentalRefundRate),
+        )
+      : 0;
     const refundAmount = Math.min(
       paidAmount,
-      this.roundMoney(refundableDepositAmount + refundableRentalAmount),
+      this.roundMoney(
+        refundableDepositAmount +
+          refundableRentalAmount +
+          refundableProtectionAmount,
+      ),
     );
     const forfeitedRentalAmount = isPaid
       ? Math.max(0, this.roundMoney(rentalAmount - refundableRentalAmount))
       : 0;
+    const forfeitedProtectionAmount = isPaid
+      ? Math.max(
+          0,
+          this.roundMoney(protectionAmount - refundableProtectionAmount),
+        )
+      : 0;
     const forfeitedDepositAmount = 0;
     const forfeitedAmount = this.roundMoney(
-      forfeitedRentalAmount + forfeitedDepositAmount,
+      forfeitedRentalAmount +
+        forfeitedProtectionAmount +
+        forfeitedDepositAmount,
     );
     const refundType =
       refundAmount <= 0
@@ -638,12 +706,15 @@ export class BookingsService {
       rentalRefundRate,
       trustPenalty,
       rentalAmount,
+      protectionAmount,
       depositAmount,
       paidAmount,
       refundableRentalAmount,
+      refundableProtectionAmount,
       refundableDepositAmount,
       refundAmount,
       forfeitedRentalAmount,
+      forfeitedProtectionAmount,
       forfeitedDepositAmount,
       forfeitedAmount,
       isPaid,

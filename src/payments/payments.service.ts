@@ -200,9 +200,11 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('Can only pay for confirmed bookings');
     }
 
-    // Renter pays rental plus deposit. Platform commission applies only to
-    // rental revenue; deposit is a held/refundable amount.
-    const totalAmount = booking.totalPrice + booking.deposit;
+    // Renter pays rental plus selected protection fee plus deposit.
+    // Platform commission applies only to rental revenue; deposit is a
+    // held/refundable amount and protection is tracked on the booking.
+    const protectionFee = booking.protectionFee ?? 0;
+    const totalAmount = booking.totalPrice + protectionFee + booking.deposit;
     const platformFee = booking.totalPrice * this.PLATFORM_FEE_RATE;
     const ownerAmount = booking.totalPrice - platformFee;
 
@@ -464,9 +466,7 @@ export class PaymentsService implements OnModuleInit {
           where: { id: paymentId },
           data: {
             status: PaymentStatus.FAILED,
-            ...(failureMetadata
-              ? { gatewayResponse: failureMetadata }
-              : {}),
+            ...(failureMetadata ? { gatewayResponse: failureMetadata } : {}),
           },
         });
         throw new BadRequestException(
@@ -738,7 +738,8 @@ export class PaymentsService implements OnModuleInit {
     }
 
     return {
-      status: payment.status === PaymentStatus.COMPLETED ? 'success' : 'pending',
+      status:
+        payment.status === PaymentStatus.COMPLETED ? 'success' : 'pending',
       bookingId: payment.bookingId,
     };
   }

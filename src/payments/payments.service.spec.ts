@@ -30,6 +30,7 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   status: BookingStatus.CONFIRMED,
   totalPrice: 100_000,
   deposit: 20_000,
+  protectionFee: 0,
   payment: null,
   vehicle: { id: VEHICLE_ID, name: 'Test EV' },
   ...overrides,
@@ -260,10 +261,9 @@ describe('PaymentsService', () => {
 
       expect(result.status).toBe(PaymentStatus.PENDING);
       expect(result.method).toBe(PaymentMethod.CASH);
-      expect((service as any).payos.paymentRequests.cancel).toHaveBeenCalledWith(
-        12345678,
-        'User changed payment method',
-      );
+      expect(
+        (service as any).payos.paymentRequests.cancel,
+      ).toHaveBeenCalledWith(12345678, 'User changed payment method');
       expect(prisma.payment.update).toHaveBeenCalledWith({
         where: { id: PAYMENT_ID },
         data: {
@@ -320,7 +320,9 @@ describe('PaymentsService', () => {
       const result = await service.createPayment(RENTER_ID, dto);
 
       expect(result.status).toBe(PaymentStatus.COMPLETED);
-      expect((service as any).payos.paymentRequests.cancel).not.toHaveBeenCalled();
+      expect(
+        (service as any).payos.paymentRequests.cancel,
+      ).not.toHaveBeenCalled();
     });
 
     it('should skip PayOS cancel when reconcile reports CANCELLED', async () => {
@@ -347,7 +349,9 @@ describe('PaymentsService', () => {
       const result = await service.createPayment(RENTER_ID, dto);
 
       expect(result.method).toBe(PaymentMethod.CASH);
-      expect((service as any).payos.paymentRequests.cancel).not.toHaveBeenCalled();
+      expect(
+        (service as any).payos.paymentRequests.cancel,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException when booking is not CONFIRMED', async () => {
@@ -368,6 +372,20 @@ describe('PaymentsService', () => {
 
       const callArg = prisma.payment.create.mock.calls[0][0].data;
       expect(callArg.amount).toBe(120_000);
+      expect(callArg.platformFee).toBe(15_000);
+      expect(callArg.ownerAmount).toBe(85_000);
+    });
+
+    it('should include protection fee in renter payment amount without changing owner payout', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ protectionFee: 10_000 }),
+      );
+      prisma.payment.create.mockResolvedValue(makePayment({ amount: 130_000 }));
+
+      await service.createPayment(RENTER_ID, dto);
+
+      const callArg = prisma.payment.create.mock.calls[0][0].data;
+      expect(callArg.amount).toBe(130_000);
       expect(callArg.platformFee).toBe(15_000);
       expect(callArg.ownerAmount).toBe(85_000);
     });
@@ -798,9 +816,7 @@ describe('PaymentsService', () => {
     });
 
     it('should reject amounts below the PayOS 1000 VND minimum', async () => {
-      prisma.payment.findUnique.mockResolvedValue(
-        makePayment({ amount: 500 }),
-      );
+      prisma.payment.findUnique.mockResolvedValue(makePayment({ amount: 500 }));
 
       await expect(
         service.initiatePayOSPayment(PAYMENT_ID, RENTER_ID),
@@ -816,8 +832,10 @@ describe('PaymentsService', () => {
       const previousReturnUrl = process.env.PAYOS_RETURN_URL;
       const previousCancelUrl = process.env.PAYOS_CANCEL_URL;
       process.env.NODE_ENV = 'production';
-      process.env.PAYOS_RETURN_URL = 'http://localhost:3000/payments/payos-return';
-      process.env.PAYOS_CANCEL_URL = 'https://api.example.com/payments/payos-cancel';
+      process.env.PAYOS_RETURN_URL =
+        'http://localhost:3000/payments/payos-return';
+      process.env.PAYOS_CANCEL_URL =
+        'https://api.example.com/payments/payos-cancel';
 
       prisma.payment.findUnique.mockResolvedValue(makePayment());
 

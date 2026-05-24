@@ -3,7 +3,7 @@
  * @member Member A — Dương Hoàng Long
  * @coverage target ≥80%
  */
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, ProtectionPlanType } from '@prisma/client';
 
 // ─── Stable test UUIDs ────────────────────────────────────────────────────────
 /** UUID for the renter used across booking tests */
@@ -33,6 +33,10 @@ export type MockBooking = {
   endTime: Date;
   totalPrice: number;
   deposit: number;
+  protectionPlan: ProtectionPlanType;
+  protectionFee: number;
+  protectionDeductible: number;
+  protectionCoverageLimit: number;
   notes: string | null;
   cancellationReason: string | null;
   cancelledBy: string | null;
@@ -68,6 +72,10 @@ export function createMockBooking(
     endTime,
     totalPrice: 100000,
     deposit: 500000,
+    protectionPlan: ProtectionPlanType.STANDARD,
+    protectionFee: 0,
+    protectionDeductible: 1500000,
+    protectionCoverageLimit: 15000000,
     notes: null,
     cancellationReason: null,
     cancelledBy: null,

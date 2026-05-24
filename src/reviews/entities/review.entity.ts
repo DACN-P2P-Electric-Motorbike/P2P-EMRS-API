@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Review } from '@prisma/client';
+import { Review, ReviewType } from '@prisma/client';
 import { Expose } from 'class-transformer';
 
 export class ReviewEntity implements Review {
@@ -10,6 +10,10 @@ export class ReviewEntity implements Review {
   @ApiProperty()
   @Expose()
   userId: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @Expose()
+  revieweeId: string | null;
 
   @ApiProperty()
   @Expose()
@@ -23,6 +27,10 @@ export class ReviewEntity implements Review {
   @Expose()
   bookingId?: string | null;
 
+  @ApiProperty({ enum: ReviewType })
+  @Expose()
+  reviewType: ReviewType;
+
   @ApiProperty({ minimum: 1, maximum: 5 })
   @Expose()
   rating: number;
@@ -30,6 +38,22 @@ export class ReviewEntity implements Review {
   @ApiPropertyOptional()
   @Expose()
   comment: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @Expose()
+  visibleAt: Date | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @Expose()
+  revealedAt: Date | null;
+
+  @ApiProperty()
+  @Expose()
+  isRevealed: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  @Expose()
+  trustAppliedAt: Date | null;
 
   @ApiProperty()
   @Expose()
@@ -56,9 +80,23 @@ export class ReviewEntity implements Review {
   }
 
   static fromPrisma(review: any): ReviewEntity {
+    const visibleAt =
+      review.visibleAt instanceof Date
+        ? review.visibleAt
+        : review.visibleAt
+          ? new Date(review.visibleAt)
+          : null;
+    const revealedAt =
+      review.revealedAt instanceof Date
+        ? review.revealedAt
+        : review.revealedAt
+          ? new Date(review.revealedAt)
+          : null;
     return new ReviewEntity({
       ...review,
       bookingId: review.bookingId ?? review.trip?.bookingId ?? null,
+      isRevealed:
+        Boolean(revealedAt) || Boolean(visibleAt && visibleAt <= new Date()),
     });
   }
 }

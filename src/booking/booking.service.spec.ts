@@ -27,6 +27,7 @@ import {
   BookingStatus,
   DepositLedgerStatus,
   PaymentStatus,
+  ProtectionPlanType,
   VehicleStatus,
   Prisma,
 } from '@prisma/client';
@@ -220,6 +221,37 @@ describe('BookingsService', () => {
       expect(
         mockBookingLockService.releaseLocksByVehicleAndTime,
       ).toHaveBeenCalledWith(dto.vehicleId, expect.any(Date), expect.any(Date));
+    });
+
+    it('should persist selected protection tier with calculated fee and deductible', async () => {
+      const vehicle = createAvailableVehicle();
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+        protectionPlan: ProtectionPlanType.PREMIUM,
+        protectionFee: 5000,
+        protectionDeductible: 500000,
+        protectionCoverageLimit: 30000000,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+
+      const dto = buildCreateBookingDto({
+        protectionPlan: ProtectionPlanType.PREMIUM,
+      });
+
+      await service.createBooking(RENTER_ID, dto as any);
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            protectionPlan: ProtectionPlanType.PREMIUM,
+            protectionFee: 5000,
+            protectionDeductible: 500000,
+            protectionCoverageLimit: 30000000,
+          }),
+        }),
+      );
     });
 
     it('should emit event "booking.created" via EventEmitter2 after booking is created', async () => {

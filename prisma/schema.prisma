@@ -27,7 +27,8 @@ model User {
   otpCodes                OtpCode[]
   paymentsAsPayer         Payment[]           @relation("PaymentPayer")
   paymentsAsReceiver      Payment[]           @relation("PaymentReceiver")
-  reviews                 Review[]
+  reviews                 Review[]            @relation("ReviewReviewer")
+  receivedReviews         Review[]            @relation("ReviewReviewee")
   trustScoreEvents        TrustScoreEvent[]
   trustScoreWarnings      TrustScoreWarning[]
   trips                   Trip[]
@@ -180,32 +181,36 @@ model VehicleAvailabilityWindow {
 }
 
 model Booking {
-  id                 String            @id @default(uuid())
-  renterId           String            @map("renter_id")
-  ownerId            String            @map("owner_id")
-  vehicleId          String            @map("vehicle_id")
-  status             BookingStatus     @default(PENDING)
-  startTime          DateTime          @map("start_time")
-  endTime            DateTime          @map("end_time")
-  totalPrice         Float             @map("total_price")
-  deposit            Float
-  notes              String?
-  cancellationReason String?           @map("cancellation_reason")
-  cancelledBy        String?           @map("cancelled_by")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
-  confirmedAt        DateTime?         @map("confirmed_at")
-  cancelledAt        DateTime?         @map("cancelled_at")
-  owner              User              @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  renter             User              @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle            Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  notifications      Notification[]
-  payment            Payment?
-  trip               Trip?
-  handovers          VehicleHandover[]
-  depositLedger      DepositLedger?
-  postTripCharges    PostTripCharge[]
-  incidentReports    IncidentReport[]
+  id                      String             @id @default(uuid())
+  renterId                String             @map("renter_id")
+  ownerId                 String             @map("owner_id")
+  vehicleId               String             @map("vehicle_id")
+  status                  BookingStatus      @default(PENDING)
+  startTime               DateTime           @map("start_time")
+  endTime                 DateTime           @map("end_time")
+  totalPrice              Float              @map("total_price")
+  deposit                 Float
+  protectionPlan          ProtectionPlanType @default(STANDARD) @map("protection_plan")
+  protectionFee           Float              @default(0) @map("protection_fee")
+  protectionDeductible    Float              @default(1500000) @map("protection_deductible")
+  protectionCoverageLimit Float              @default(15000000) @map("protection_coverage_limit")
+  notes                   String?
+  cancellationReason      String?            @map("cancellation_reason")
+  cancelledBy             String?            @map("cancelled_by")
+  createdAt               DateTime           @default(now()) @map("created_at")
+  updatedAt               DateTime           @updatedAt @map("updated_at")
+  confirmedAt             DateTime?          @map("confirmed_at")
+  cancelledAt             DateTime?          @map("cancelled_at")
+  owner                   User               @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  renter                  User               @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle                 Vehicle            @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  notifications           Notification[]
+  payment                 Payment?
+  trip                    Trip?
+  handovers               VehicleHandover[]
+  depositLedger           DepositLedger?
+  postTripCharges         PostTripCharge[]
+  incidentReports         IncidentReport[]
 
   @@index([renterId])
   @@index([ownerId])
@@ -240,7 +245,7 @@ model Trip {
   booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   renter           User              @relation(fields: [renterId], references: [id], onDelete: Cascade)
   vehicle          Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  review           Review?
+  reviews          Review[]
   handovers        VehicleHandover[]
   postTripCharges  PostTripCharge[]
   incidentReports  IncidentReport[]
@@ -278,20 +283,31 @@ model Payment {
 }
 
 model Review {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  vehicleId String   @map("vehicle_id")
-  tripId    String?  @unique @map("trip_id")
-  rating    Int
-  comment   String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  trip      Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  id             String     @id @default(uuid())
+  userId         String     @map("user_id")
+  revieweeId     String?    @map("reviewee_id")
+  vehicleId      String     @map("vehicle_id")
+  tripId         String?    @map("trip_id")
+  reviewType     ReviewType @default(RENTER_TO_OWNER) @map("review_type")
+  rating         Int
+  comment        String?
+  visibleAt      DateTime?  @map("visible_at")
+  revealedAt     DateTime?  @map("revealed_at")
+  trustAppliedAt DateTime?  @map("trust_applied_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  user           User       @relation("ReviewReviewer", fields: [userId], references: [id], onDelete: Cascade)
+  reviewee       User?      @relation("ReviewReviewee", fields: [revieweeId], references: [id], onDelete: SetNull)
+  vehicle        Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  trip           Trip?      @relation(fields: [tripId], references: [id], onDelete: SetNull)
 
+  @@unique([tripId, userId], name: "reviews_trip_id_user_id_key")
   @@index([userId])
+  @@index([revieweeId])
   @@index([vehicleId])
+  @@index([reviewType])
+  @@index([visibleAt])
+  @@index([revealedAt])
   @@map("reviews")
 }
 
@@ -428,6 +444,17 @@ enum PaymentMethod {
   MOMO
   CREDIT_CARD
   CASH
+}
+
+enum ProtectionPlanType {
+  BASIC
+  STANDARD
+  PREMIUM
+}
+
+enum ReviewType {
+  RENTER_TO_OWNER
+  OWNER_TO_RENTER
 }
 
 enum DepositLedgerStatus {
