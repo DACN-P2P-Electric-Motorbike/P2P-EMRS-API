@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   BookingStatus,
@@ -17,11 +18,14 @@ import {
   PostTripChargeSource,
   PostTripChargeStatus,
   PostTripChargeType,
+  NotificationType,
   Prisma,
   TripStatus,
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { NotificationGateway } from '../notification/notification.gateway';
+import { NotificationService } from '../notification/notification.service';
 import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
 import { DisputePostTripChargeDto } from './dto/dispute-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
@@ -61,6 +65,8 @@ type ComputedCharge = {
   evidence: Prisma.InputJsonValue;
 };
 
+type FinancialNotificationRecipient = 'renter' | 'owner';
+
 @Injectable()
 export class FinancialService {
   private readonly logger = new Logger(FinancialService.name);
@@ -68,7 +74,13 @@ export class FinancialService {
   private readonly DEFAULT_LOW_BATTERY_FEE_PER_PERCENT = 5000;
   private readonly RELEASE_REVIEW_HOURS = 24;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly notificationService?: NotificationService,
+    @Optional()
+    private readonly notificationGateway?: NotificationGateway,
+  ) {}
 
   async recordPaymentCompleted(
     bookingId: string,
@@ -123,6 +135,14 @@ export class FinancialService {
           ...baseData,
         },
       });
+      await this.notifyDepositUpdated({
+        booking,
+        depositLedger: created,
+        transition: 'HELD',
+        title: 'Tiền cọc đã được giữ',
+        message: `Tiền cọc ${this.formatMoney(created.heldAmount)} VND đã được ghi nhận cho booking của bạn.`,
+        recipients: ['renter'],
+      });
       return DepositLedgerEntity.fromPrisma(created);
     }
 
@@ -131,6 +151,12 @@ export class FinancialService {
       heldAmount > 0
         ? DepositLedgerStatus.HELD
         : booking.depositLedger.status;
+
+    const shouldNotifyHold =
+      heldAmount > 0 &&
+      (booking.depositLedger.status !== nextStatus ||
+        booking.depositLedger.heldAmount !== heldAmount ||
+        !booking.depositLedger.heldAt);
 
     const updated = await this.prisma.depositLedger.update({
       where: { id: booking.depositLedger.id },
@@ -142,6 +168,17 @@ export class FinancialService {
         notes: booking.depositLedger.notes ?? baseData.notes,
       },
     });
+
+    if (shouldNotifyHold) {
+      await this.notifyDepositUpdated({
+        booking,
+        depositLedger: updated,
+        transition: 'HELD',
+        title: 'Tiền cọc đã được giữ',
+        message: `Tiền cọc ${this.formatMoney(updated.heldAmount)} VND đã được ghi nhận cho booking của bạn.`,
+        recipients: ['renter'],
+      });
+    }
 
     return DepositLedgerEntity.fromPrisma(updated);
   }
@@ -404,7 +441,7 @@ export class FinancialService {
       ? PostTripChargeStatus.APPROVED
       : PostTripChargeStatus.PENDING_REVIEW;
 
-    await this.prisma.postTripCharge.create({
+    const createdCharge = await this.prisma.postTripCharge.create({
       data: {
         bookingId: booking.id,
         tripId: booking.trip?.id,
@@ -433,6 +470,15 @@ export class FinancialService {
     await this.syncDepositForBooking(booking.id);
     const updated = await this.findBookingWithFinancials(booking.id);
     if (!updated) throw new NotFoundException('Booking not found');
+    await this.notifyPostTripChargeUpdated({
+      booking: updated,
+      charge: createdCharge,
+      senderId: userId,
+      transition: 'CREATED',
+      title: 'Phí sau chuyến mới',
+      message: `Phí ${createdCharge.type} ${this.formatMoney(createdCharge.amount)} VND đã được ghi nhận và đang chờ xử lý.`,
+      recipients: isAdmin ? ['renter', 'owner'] : ['renter'],
+    });
     return this.toSummary(updated);
   }
 
@@ -476,7 +522,7 @@ export class FinancialService {
         ? dto.amount
         : charge.amount;
 
-    await this.prisma.postTripCharge.update({
+    const reviewedCharge = await this.prisma.postTripCharge.update({
       where: { id: chargeId },
       data: {
         status: dto.status,
@@ -494,6 +540,15 @@ export class FinancialService {
     await this.syncDepositForBooking(charge.bookingId);
     const booking = await this.findBookingWithFinancials(charge.bookingId);
     if (!booking) throw new NotFoundException('Booking not found');
+    await this.notifyPostTripChargeUpdated({
+      booking,
+      charge: reviewedCharge,
+      senderId: adminId,
+      transition: dto.status,
+      title: 'Phí sau chuyến đã được xử lý',
+      message: `Phí ${reviewedCharge.type} hiện ở trạng thái ${dto.status}.`,
+      recipients: ['renter', 'owner'],
+    });
     return this.toSummary(booking);
   }
 
@@ -529,7 +584,7 @@ export class FinancialService {
     }
 
     const now = new Date();
-    await this.prisma.postTripCharge.update({
+    const disputedCharge = await this.prisma.postTripCharge.update({
       where: { id: chargeId },
       data: {
         status: PostTripChargeStatus.DISPUTED,
@@ -545,6 +600,15 @@ export class FinancialService {
     await this.syncDepositForBooking(charge.bookingId);
     const updated = await this.findBookingWithFinancials(charge.bookingId);
     if (!updated) throw new NotFoundException('Booking not found');
+    await this.notifyPostTripChargeUpdated({
+      booking: updated,
+      charge: disputedCharge,
+      senderId: renterId,
+      transition: 'DISPUTED',
+      title: 'Phí sau chuyến bị tranh chấp',
+      message: `Người thuê đã tranh chấp phí ${disputedCharge.type}. Admin cần xem xét trước khi xử lý cọc.`,
+      recipients: ['owner'],
+    });
     return this.toSummary(updated);
   }
 
@@ -611,6 +675,18 @@ export class FinancialService {
 
     const updated = await this.findBookingWithFinancials(bookingId);
     if (!updated) throw new NotFoundException('Booking not found');
+    await this.notifyDepositUpdated({
+      booking: updated,
+      depositLedger: updated.depositLedger,
+      senderId: adminId,
+      transition: nextStatus,
+      title: 'Tiền cọc đã được khấu trừ',
+      message: `Admin đã khấu trừ ${this.formatMoney(totalApproved)} VND phí đã duyệt từ tiền cọc.`,
+      recipients: ['renter', 'owner'],
+      data: {
+        capturedAmount: totalApproved,
+      },
+    });
     return this.toSummary(updated);
   }
 
@@ -676,6 +752,24 @@ export class FinancialService {
 
     const updated = await this.findBookingWithFinancials(bookingId);
     if (!updated) throw new NotFoundException('Booking not found');
+    await this.notifyDepositUpdated({
+      booking: updated,
+      depositLedger: updated.depositLedger,
+      senderId: adminId,
+      transition: releasableAmount > 0 ? 'RELEASED' : 'CAPTURED',
+      title:
+        releasableAmount > 0
+          ? 'Tiền cọc đã được hoàn'
+          : 'Tiền cọc đã được chốt',
+      message:
+        releasableAmount > 0
+          ? `Admin đã ghi nhận hoàn ${this.formatMoney(releasableAmount)} VND tiền cọc còn lại.`
+          : 'Không còn tiền cọc để hoàn sau khi đối soát các khoản phí.',
+      recipients: ['renter'],
+      data: {
+        releasedAmount: releasableAmount,
+      },
+    });
     return this.toSummary(updated);
   }
 
@@ -690,10 +784,7 @@ export class FinancialService {
     if (
       booking.ownerPayout &&
       (
-        [
-          PayoutStatus.COMPLETED,
-          PayoutStatus.CANCELLED,
-        ] as PayoutStatus[]
+        [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED] as PayoutStatus[]
       ).includes(booking.ownerPayout.status)
     ) {
       return OwnerPayoutEntity.fromPrisma(booking.ownerPayout);
@@ -714,9 +805,7 @@ export class FinancialService {
     const grossRentalAmount = this.roundMoney(booking.totalPrice);
     const platformFee = this.roundMoney(payment?.platformFee ?? 0);
     const ownerRentalAmount = this.roundMoney(payment?.ownerAmount ?? 0);
-    const payoutAmount = this.roundMoney(
-      ownerRentalAmount + finalChargeAmount,
-    );
+    const payoutAmount = this.roundMoney(ownerRentalAmount + finalChargeAmount);
     const existingStatus = booking.ownerPayout?.status;
     const nextStatus = holdReason
       ? PayoutStatus.ON_HOLD
@@ -760,6 +849,23 @@ export class FinancialService {
       },
     });
 
+    if (!existingStatus || existingStatus !== payout.status) {
+      await this.notifyPayoutUpdated({
+        booking,
+        payout,
+        senderId: adminId,
+        transition: payout.status,
+        title:
+          payout.status === PayoutStatus.ON_HOLD
+            ? 'Payout đang bị giữ'
+            : 'Payout đã sẵn sàng',
+        message:
+          payout.status === PayoutStatus.ON_HOLD
+            ? `Payout owner đang bị giữ: ${payout.holdReason}`
+            : `Payout ${this.formatMoney(payout.payoutAmount)} VND đã sẵn sàng để xử lý.`,
+      });
+    }
+
     return OwnerPayoutEntity.fromPrisma(payout);
   }
 
@@ -789,10 +895,7 @@ export class FinancialService {
 
     if (
       (
-        [
-          PayoutStatus.PROCESSING,
-          PayoutStatus.COMPLETED,
-        ] as PayoutStatus[]
+        [PayoutStatus.PROCESSING, PayoutStatus.COMPLETED] as PayoutStatus[]
       ).includes(dto.status)
     ) {
       const booking = await this.findBookingWithFinancials(payout.bookingId);
@@ -806,7 +909,9 @@ export class FinancialService {
       }
 
       if (payout.payoutAmount <= 0) {
-        throw new BadRequestException('Payout amount must be greater than zero');
+        throw new BadRequestException(
+          'Payout amount must be greater than zero',
+        );
       }
     }
 
@@ -833,7 +938,175 @@ export class FinancialService {
       },
     });
 
+    const booking = await this.findBookingWithFinancials(updated.bookingId);
+    if (booking) {
+      await this.notifyPayoutUpdated({
+        booking,
+        payout: updated,
+        senderId: adminId,
+        transition: updated.status,
+        title: 'Trạng thái payout đã cập nhật',
+        message: `Payout owner hiện ở trạng thái ${updated.status}.`,
+      });
+    }
+
     return OwnerPayoutEntity.fromPrisma(updated);
+  }
+
+  private async notifyDepositUpdated(input: {
+    booking: { id: string; renterId: string; ownerId: string };
+    depositLedger: DepositLedger | null;
+    senderId?: string;
+    transition: string;
+    title: string;
+    message: string;
+    recipients: FinancialNotificationRecipient[];
+    data?: Record<string, unknown>;
+  }): Promise<void> {
+    if (!input.depositLedger) return;
+
+    await this.notifyFinancialParticipants({
+      booking: input.booking,
+      senderId: input.senderId,
+      type: NotificationType.DEPOSIT_UPDATED,
+      socketEvent: 'deposit_updated',
+      title: input.title,
+      message: input.message,
+      recipients: input.recipients,
+      data: {
+        transition: input.transition,
+        depositLedgerId: input.depositLedger.id,
+        status: input.depositLedger.status,
+        heldAmount: input.depositLedger.heldAmount,
+        capturedAmount: input.depositLedger.capturedAmount,
+        releasedAmount: input.depositLedger.releasedAmount,
+        ...input.data,
+      },
+    });
+  }
+
+  private async notifyPostTripChargeUpdated(input: {
+    booking: { id: string; renterId: string; ownerId: string };
+    charge: PostTripCharge;
+    senderId?: string;
+    transition: string;
+    title: string;
+    message: string;
+    recipients: FinancialNotificationRecipient[];
+  }): Promise<void> {
+    await this.notifyFinancialParticipants({
+      booking: input.booking,
+      senderId: input.senderId,
+      type: NotificationType.POST_TRIP_CHARGE_UPDATED,
+      socketEvent: 'post_trip_charge_updated',
+      title: input.title,
+      message: input.message,
+      recipients: input.recipients,
+      data: {
+        transition: input.transition,
+        chargeId: input.charge.id,
+        chargeType: input.charge.type,
+        status: input.charge.status,
+        amount: input.charge.amount,
+      },
+    });
+  }
+
+  private async notifyPayoutUpdated(input: {
+    booking: { id: string; renterId: string; ownerId: string };
+    payout: OwnerPayout;
+    senderId?: string;
+    transition: string;
+    title: string;
+    message: string;
+  }): Promise<void> {
+    await this.notifyFinancialParticipants({
+      booking: input.booking,
+      senderId: input.senderId,
+      type: NotificationType.PAYOUT_UPDATED,
+      socketEvent: 'payout_updated',
+      title: input.title,
+      message: input.message,
+      recipients: ['owner'],
+      data: {
+        transition: input.transition,
+        payoutId: input.payout.id,
+        status: input.payout.status,
+        payoutAmount: input.payout.payoutAmount,
+      },
+    });
+  }
+
+  private async notifyFinancialParticipants(input: {
+    booking: { id: string; renterId: string; ownerId: string };
+    senderId?: string;
+    type: NotificationType;
+    socketEvent: string;
+    title: string;
+    message: string;
+    recipients: FinancialNotificationRecipient[];
+    data?: Record<string, unknown>;
+  }): Promise<void> {
+    if (!this.notificationService) return;
+
+    const receivers = input.recipients.reduce<
+      Array<{ id: string; role: FinancialNotificationRecipient }>
+    >((acc, recipient) => {
+      const id =
+        recipient === 'renter' ? input.booking.renterId : input.booking.ownerId;
+      if (!acc.some((receiver) => receiver.id === id)) {
+        acc.push({ id, role: recipient });
+      }
+      return acc;
+    }, []);
+    const baseData = this.stringifyNotificationData({
+      bookingId: input.booking.id,
+      ...input.data,
+    });
+
+    try {
+      for (const receiver of receivers) {
+        const data = {
+          ...baseData,
+          recipientRole: receiver.role,
+        };
+        const notification = await this.notificationService.createNotification({
+          receiverId: receiver.id,
+          senderId: input.senderId,
+          type: input.type,
+          title: input.title,
+          message: input.message,
+          bookingId: input.booking.id,
+          data,
+        });
+
+        if (this.notificationGateway?.isUserOnline(receiver.id)) {
+          this.notificationGateway.sendToUser(receiver.id, input.socketEvent, {
+            notification,
+            bookingId: input.booking.id,
+            ...data,
+          });
+        }
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send ${input.type} notification for booking ${input.booking.id}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private stringifyNotificationData(
+    data: Record<string, unknown>,
+  ): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(data)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .map(([key, value]) => [key, String(value)]),
+    );
+  }
+
+  private formatMoney(amount: number): string {
+    return new Intl.NumberFormat('vi-VN').format(this.roundMoney(amount));
   }
 
   private async findBookingWithFinancials(bookingId: string) {
@@ -1117,9 +1390,9 @@ export class FinancialService {
     });
   }
 
-  private async getPayoutHoldReason(booking: FinancialBooking): Promise<
-    string | null
-  > {
+  private async getPayoutHoldReason(
+    booking: FinancialBooking,
+  ): Promise<string | null> {
     if (booking.status !== BookingStatus.COMPLETED) {
       return 'booking is not completed';
     }

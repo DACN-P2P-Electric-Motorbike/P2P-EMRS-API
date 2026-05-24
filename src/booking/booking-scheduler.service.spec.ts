@@ -1,10 +1,13 @@
-import { BookingStatus, PaymentStatus } from '@prisma/client';
+import { BookingStatus, NotificationType, PaymentStatus } from '@prisma/client';
 import { BookingSchedulerService } from './booking-scheduler.service';
 
 const mockPrisma = () => ({
   booking: {
     findMany: jest.fn(),
     updateMany: jest.fn(),
+  },
+  notification: {
+    findFirst: jest.fn(),
   },
 });
 
@@ -104,5 +107,137 @@ describe('BookingSchedulerService', () => {
 
     expect(prisma.booking.updateMany).not.toHaveBeenCalled();
     expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it('sends deduped pickup reminders to booking participants', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn().mockReturnValue(true),
+      sendToUser: jest.fn(),
+    };
+    service = new BookingSchedulerService(
+      prisma as any,
+      eventEmitter as any,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    const booking = {
+      id: 'booking-1',
+      renterId: 'renter-1',
+      ownerId: 'owner-1',
+      startTime: new Date('2026-05-24T03:30:00.000Z'),
+      endTime: new Date('2026-05-24T05:30:00.000Z'),
+    };
+    prisma.booking.findMany
+      .mockResolvedValueOnce([booking])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    await service.sendThresholdReminders();
+
+    expect(prisma.booking.findMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        status: BookingStatus.CONFIRMED,
+        startTime: { gte: expect.any(Date), lte: expect.any(Date) },
+        payment: { is: { status: PaymentStatus.COMPLETED } },
+      },
+      select: {
+        id: true,
+        renterId: true,
+        ownerId: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: 'renter-1',
+        type: NotificationType.BOOKING_REMINDER,
+        title: 'Sắp đến giờ nhận xe',
+        bookingId: 'booking-1',
+        data: expect.objectContaining({
+          recipientRole: 'renter',
+          reminderKind: 'PICKUP_SOON',
+        }),
+      }),
+    );
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: 'owner-1',
+        type: NotificationType.BOOKING_REMINDER,
+        title: 'Sắp đến giờ nhận xe',
+        bookingId: 'booking-1',
+        data: expect.objectContaining({
+          recipientRole: 'owner',
+          reminderKind: 'PICKUP_SOON',
+        }),
+      }),
+    );
+    expect(notificationGateway.sendToUser).toHaveBeenCalledWith(
+      'renter-1',
+      'booking_reminder',
+      expect.objectContaining({
+        bookingId: 'booking-1',
+        reminderKind: 'PICKUP_SOON',
+      }),
+    );
+  });
+
+  it('sends late-return alerts for ongoing trips without check-out', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn().mockReturnValue(false),
+      sendToUser: jest.fn(),
+    };
+    service = new BookingSchedulerService(
+      prisma as any,
+      eventEmitter as any,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    const booking = {
+      id: 'late-booking',
+      renterId: 'renter-1',
+      ownerId: 'owner-1',
+      startTime: new Date('2026-05-24T01:00:00.000Z'),
+      endTime: new Date('2026-05-24T03:00:00.000Z'),
+    };
+    prisma.booking.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([booking]);
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    await service.sendThresholdReminders();
+
+    expect(prisma.booking.findMany).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: BookingStatus.ONGOING,
+          endTime: { lte: expect.any(Date) },
+        }),
+      }),
+    );
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: 'renter-1',
+        type: NotificationType.TRIP_REMINDER,
+        title: 'Xe đang trả muộn',
+        bookingId: 'late-booking',
+        data: expect.objectContaining({
+          recipientRole: 'renter',
+          reminderKind: 'LATE_RETURN',
+        }),
+      }),
+    );
+    expect(notificationGateway.sendToUser).not.toHaveBeenCalled();
   });
 });

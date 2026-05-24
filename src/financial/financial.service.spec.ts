@@ -3,6 +3,7 @@ import {
   BookingStatus,
   DepositLedgerStatus,
   HandoverType,
+  NotificationType,
   PaymentMethod,
   PaymentStatus,
   PayoutStatus,
@@ -207,6 +208,43 @@ describe('FinancialService', () => {
       }),
     });
     expect(result?.status).toBe(DepositLedgerStatus.HELD);
+  });
+
+  it('notifies the renter when a deposit is held', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn().mockReturnValue(true),
+      sendToUser: jest.fn(),
+    };
+    service = new FinancialService(
+      prisma as unknown as PrismaService,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ depositLedger: null }),
+    );
+    prisma.depositLedger.create.mockResolvedValue(makeDeposit());
+
+    await service.recordPaymentCompleted(BOOKING_ID, PAYMENT_ID);
+
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: RENTER_ID,
+        type: NotificationType.DEPOSIT_UPDATED,
+        bookingId: BOOKING_ID,
+      }),
+    );
+    expect(notificationGateway.sendToUser).toHaveBeenCalledWith(
+      RENTER_ID,
+      'deposit_updated',
+      expect.objectContaining({
+        bookingId: BOOKING_ID,
+        transition: 'HELD',
+      }),
+    );
   });
 
   it('returns not found when a non-participant reads booking financials', async () => {
