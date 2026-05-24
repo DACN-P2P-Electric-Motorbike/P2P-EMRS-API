@@ -24,12 +24,7 @@ import {
 } from './dto/forgot-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { UserEntity } from './entities/user.entity';
-import {
-  User,
-  UserRole,
-  UserStatus,
-  OtpType,
-} from '@prisma/client';
+import { User, UserRole, UserStatus, OtpType } from '@prisma/client';
 import { CreateVehicleDto, VehiclesService } from 'src/vehicles';
 import { NewUserRegisteredEvent } from '../events/admin.events';
 import { CryptoService } from '../security/crypto.service';
@@ -587,28 +582,48 @@ export class AuthService {
     roles: UserRole[],
     vehicleData: CreateVehicleDto,
   ): Promise<any> {
-    // 0. Return if OWNER
-    if (roles.includes(UserRole.OWNER))
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!currentUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    // 0. Return a normal auth-shaped response if the user is already OWNER.
+    if (
+      roles.includes(UserRole.OWNER) ||
+      currentUser.roles.includes(UserRole.OWNER)
+    ) {
       return {
+        user: {
+          id: currentUser.id,
+          roles: currentUser.roles,
+        },
+        accessToken: this.generateAccessToken(currentUser),
         message: 'User has been OWNER',
       };
+    }
 
-    // 1. Add OWNER role to user
+    const promotedRoles = Array.from(
+      new Set([...currentUser.roles, UserRole.OWNER]),
+    );
+
+    // 1. Register the vehicle before persisting OWNER, so KYC/trust failures
+    // do not leave the account partially upgraded.
+    const vehicle = await this.vehiclesService.registerVehicle(
+      userId,
+      promotedRoles,
+      vehicleData,
+    );
+
+    // 2. Add OWNER role to user after vehicle registration succeeds.
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        roles: {
-          push: UserRole.OWNER,
-        },
+        roles: promotedRoles,
       },
     });
-
-    // 2. Register the vehicle under the newly promoted owner
-    const vehicle = await this.vehiclesService.registerVehicle(
-      userId,
-      user.roles,
-      vehicleData,
-    );
 
     // 3. Generate new JWT with updated roles
     const newToken = this.generateAccessToken(user);

@@ -17,12 +17,23 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { ClaimCaseStatus, UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '../auth/guards';
-import { CreateIncidentReportDto, UpdateIncidentStatusDto } from './dto';
-import { IncidentReportEntity } from './entities';
+import {
+  CreateEvidenceAnnotationDto,
+  CreateIncidentReportDto,
+  ReviewClaimCaseDto,
+  UpdateIncidentStatusDto,
+} from './dto';
+import {
+  BookingClaimSummaryEntity,
+  ClaimCaseEntity,
+  ClaimCaseSlaStatus,
+  EvidenceAnnotationEntity,
+  IncidentReportEntity,
+} from './entities';
 import { IncidentsService } from './incidents.service';
 
 @ApiTags('Incidents')
@@ -62,6 +73,121 @@ export class IncidentsController {
     };
   }
 
+  @Get('bookings/:bookingId/claim-summary')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get unified claim workflow summary for a booking',
+    description:
+      'Aggregates incidents, post-trip charges, deposit state, and owner payout state so participant and admin clients can show one claim timeline.',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking UUID' })
+  @ApiResponse({ status: 200, type: BookingClaimSummaryEntity })
+  async getClaimSummaryForBooking(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('roles') roles: UserRole[] = [],
+  ): Promise<BookingClaimSummaryEntity> {
+    return this.incidentsService.getClaimSummaryForBooking(
+      bookingId,
+      userId,
+      roles,
+    );
+  }
+
+  @Get('bookings/:bookingId/evidence-annotations')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List admin evidence annotations for a booking claim review',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking UUID' })
+  @ApiResponse({ status: 200, type: [EvidenceAnnotationEntity] })
+  async listEvidenceAnnotationsForBooking(
+    @Param('bookingId') bookingId: string,
+  ) {
+    return {
+      status: 'success',
+      data: await this.incidentsService.listEvidenceAnnotationsForBooking(
+        bookingId,
+      ),
+    };
+  }
+
+  @Post('bookings/:bookingId/evidence-annotations')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add an admin annotation to claim evidence',
+    description:
+      'Annotations can point at incident reports, post-trip charges, vehicle handovers, or individual handover photos owned by the booking.',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking UUID' })
+  @ApiResponse({ status: 201, type: EvidenceAnnotationEntity })
+  async createEvidenceAnnotation(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser('id') adminId: string,
+    @Body() dto: CreateEvidenceAnnotationDto,
+  ): Promise<EvidenceAnnotationEntity> {
+    return this.incidentsService.createEvidenceAnnotation(
+      bookingId,
+      adminId,
+      dto,
+    );
+  }
+
+  @Post('bookings/:bookingId/claim-case')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create or refresh a durable claim case for a booking',
+    description:
+      'Creates an auditable claim case from existing incident, financial, deposit, and payout state. Existing open cases are refreshed with the latest snapshot.',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking UUID' })
+  @ApiResponse({ status: 201, type: ClaimCaseEntity })
+  async createOrRefreshClaimCase(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser('id') adminId: string,
+  ): Promise<ClaimCaseEntity> {
+    return this.incidentsService.createOrRefreshClaimCase(bookingId, adminId);
+  }
+
+  @Get('admin/claim-cases')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List claim cases for admin review',
+  })
+  async getAdminClaimCases(
+    @Query('status') status?: string,
+    @Query('slaStatus') slaStatus?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const claimCaseStatus = Object.values(ClaimCaseStatus).includes(
+      status as ClaimCaseStatus,
+    )
+      ? (status as ClaimCaseStatus)
+      : undefined;
+    const claimCaseSlaStatus = Object.values(ClaimCaseSlaStatus).includes(
+      slaStatus as ClaimCaseSlaStatus,
+    )
+      ? (slaStatus as ClaimCaseSlaStatus)
+      : undefined;
+
+    return {
+      status: 'success',
+      data: await this.incidentsService.getAdminClaimCases({
+        status: claimCaseStatus,
+        slaStatus: claimCaseSlaStatus,
+        limit: Number(limit),
+      }),
+    };
+  }
+
   @Get('bookings/:bookingId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -92,5 +218,24 @@ export class IncidentsController {
     @Body() dto: UpdateIncidentStatusDto,
   ): Promise<IncidentReportEntity> {
     return this.incidentsService.updateStatus(reportId, adminId, dto);
+  }
+
+  @Patch('claim-cases/:id/review')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Submit a four-eyes claim case review decision',
+    description:
+      'The first Admin review moves the case to pending second review. A different Admin must submit the same decision to finalize the case.',
+  })
+  @ApiParam({ name: 'id', description: 'Claim case UUID' })
+  @ApiResponse({ status: 200, type: ClaimCaseEntity })
+  async reviewClaimCase(
+    @Param('id') claimCaseId: string,
+    @CurrentUser('id') adminId: string,
+    @Body() dto: ReviewClaimCaseDto,
+  ): Promise<ClaimCaseEntity> {
+    return this.incidentsService.reviewClaimCase(claimCaseId, adminId, dto);
   }
 }

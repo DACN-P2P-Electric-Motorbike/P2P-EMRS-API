@@ -7,40 +7,45 @@ datasource db {
 }
 
 model User {
-  id                      String              @id @default(uuid())
-  email                   String              @unique
-  password                String
-  fullName                String              @map("full_name")
-  phone                   String              @unique
-  avatarUrl               String?             @map("avatar_url")
-  roles                   UserRole[]          @default([RENTER])
-  status                  UserStatus          @default(ACTIVE)
-  trustScore              Float               @default(100.0) @map("trust_score")
-  idCardNum               String?             @unique @map("id_card_num")
-  address                 String?
-  createdAt               DateTime            @default(now()) @map("created_at")
-  updatedAt               DateTime            @updatedAt @map("updated_at")
-  bookingsAsOwner         Booking[]           @relation("BookingOwner")
-  bookingsAsRenter        Booking[]           @relation("BookingRenter")
-  receivedNotifications   Notification[]      @relation("NotificationReceiver")
-  sentNotifications       Notification[]      @relation("NotificationSender")
-  otpCodes                OtpCode[]
-  paymentsAsPayer         Payment[]           @relation("PaymentPayer")
-  paymentsAsReceiver      Payment[]           @relation("PaymentReceiver")
-  reviews                 Review[]            @relation("ReviewReviewer")
-  receivedReviews         Review[]            @relation("ReviewReviewee")
-  trustScoreEvents        TrustScoreEvent[]
-  trustScoreWarnings      TrustScoreWarning[]
-  trips                   Trip[]
-  vehicles                Vehicle[]           @relation("VehicleOwner")
-  fcmTokens               FcmToken[]
-  privacyRequests         PrivacyRequest[]
-  bookingLocks            BookingLock[]
-  handoversPerformed      VehicleHandover[]   @relation("HandoverPerformer")
-  kycVerifications        KycVerification[]   @relation("KycApplicant")
-  reviewedKycRecords      KycVerification[]   @relation("KycReviewer")
-  incidentReportsFiled    IncidentReport[]    @relation("IncidentReporter")
-  incidentReportsReviewed IncidentReport[]    @relation("IncidentReviewer")
+  id                       String               @id @default(uuid())
+  email                    String               @unique
+  password                 String
+  fullName                 String               @map("full_name")
+  phone                    String               @unique
+  avatarUrl                String?              @map("avatar_url")
+  roles                    UserRole[]           @default([RENTER])
+  status                   UserStatus           @default(ACTIVE)
+  trustScore               Float                @default(100.0) @map("trust_score")
+  idCardNum                String?              @unique @map("id_card_num")
+  address                  String?
+  createdAt                DateTime             @default(now()) @map("created_at")
+  updatedAt                DateTime             @updatedAt @map("updated_at")
+  bookingsAsOwner          Booking[]            @relation("BookingOwner")
+  bookingsAsRenter         Booking[]            @relation("BookingRenter")
+  receivedNotifications    Notification[]       @relation("NotificationReceiver")
+  sentNotifications        Notification[]       @relation("NotificationSender")
+  otpCodes                 OtpCode[]
+  paymentsAsPayer          Payment[]            @relation("PaymentPayer")
+  paymentsAsReceiver       Payment[]            @relation("PaymentReceiver")
+  ownerPayouts             OwnerPayout[]        @relation("OwnerPayoutOwner")
+  reviews                  Review[]             @relation("ReviewReviewer")
+  receivedReviews          Review[]             @relation("ReviewReviewee")
+  trustScoreEvents         TrustScoreEvent[]
+  trustScoreWarnings       TrustScoreWarning[]
+  trips                    Trip[]
+  vehicles                 Vehicle[]            @relation("VehicleOwner")
+  fcmTokens                FcmToken[]
+  privacyRequests          PrivacyRequest[]
+  bookingLocks             BookingLock[]
+  handoversPerformed       VehicleHandover[]    @relation("HandoverPerformer")
+  kycVerifications         KycVerification[]    @relation("KycApplicant")
+  reviewedKycRecords       KycVerification[]    @relation("KycReviewer")
+  incidentReportsFiled     IncidentReport[]     @relation("IncidentReporter")
+  incidentReportsReviewed  IncidentReport[]     @relation("IncidentReviewer")
+  claimCasesOpened         ClaimCase[]          @relation("ClaimCaseOpenedBy")
+  claimCasesFirstReviewed  ClaimCase[]          @relation("ClaimCaseFirstReviewer")
+  claimCasesSecondReviewed ClaimCase[]          @relation("ClaimCaseSecondReviewer")
+  evidenceAnnotations      EvidenceAnnotation[] @relation("EvidenceAnnotationAuthor")
 
   @@index([email])
   @@index([phone])
@@ -181,29 +186,29 @@ model VehicleAvailabilityWindow {
 }
 
 model Booking {
-  id                      String             @id @default(uuid())
-  renterId                String             @map("renter_id")
-  ownerId                 String             @map("owner_id")
-  vehicleId               String             @map("vehicle_id")
-  status                  BookingStatus      @default(PENDING)
-  startTime               DateTime           @map("start_time")
-  endTime                 DateTime           @map("end_time")
-  totalPrice              Float              @map("total_price")
+  id                      String               @id @default(uuid())
+  renterId                String               @map("renter_id")
+  ownerId                 String               @map("owner_id")
+  vehicleId               String               @map("vehicle_id")
+  status                  BookingStatus        @default(PENDING)
+  startTime               DateTime             @map("start_time")
+  endTime                 DateTime             @map("end_time")
+  totalPrice              Float                @map("total_price")
   deposit                 Float
-  protectionPlan          ProtectionPlanType @default(STANDARD) @map("protection_plan")
-  protectionFee           Float              @default(0) @map("protection_fee")
-  protectionDeductible    Float              @default(1500000) @map("protection_deductible")
-  protectionCoverageLimit Float              @default(15000000) @map("protection_coverage_limit")
+  protectionPlan          ProtectionPlanType   @default(STANDARD) @map("protection_plan")
+  protectionFee           Float                @default(0) @map("protection_fee")
+  protectionDeductible    Float                @default(1500000) @map("protection_deductible")
+  protectionCoverageLimit Float                @default(15000000) @map("protection_coverage_limit")
   notes                   String?
-  cancellationReason      String?            @map("cancellation_reason")
-  cancelledBy             String?            @map("cancelled_by")
-  createdAt               DateTime           @default(now()) @map("created_at")
-  updatedAt               DateTime           @updatedAt @map("updated_at")
-  confirmedAt             DateTime?          @map("confirmed_at")
-  cancelledAt             DateTime?          @map("cancelled_at")
-  owner                   User               @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  renter                  User               @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle                 Vehicle            @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  cancellationReason      String?              @map("cancellation_reason")
+  cancelledBy             String?              @map("cancelled_by")
+  createdAt               DateTime             @default(now()) @map("created_at")
+  updatedAt               DateTime             @updatedAt @map("updated_at")
+  confirmedAt             DateTime?            @map("confirmed_at")
+  cancelledAt             DateTime?            @map("cancelled_at")
+  owner                   User                 @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  renter                  User                 @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle                 Vehicle              @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   notifications           Notification[]
   payment                 Payment?
   trip                    Trip?
@@ -211,6 +216,9 @@ model Booking {
   depositLedger           DepositLedger?
   postTripCharges         PostTripCharge[]
   incidentReports         IncidentReport[]
+  ownerPayout             OwnerPayout?
+  claimCase               ClaimCase?
+  evidenceAnnotations     EvidenceAnnotation[]
 
   @@index([renterId])
   @@index([ownerId])
@@ -275,11 +283,42 @@ model Payment {
   payer           User           @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
   receiver        User           @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
   depositLedger   DepositLedger?
+  ownerPayout     OwnerPayout?
 
   @@index([payerId])
   @@index([receiverId])
   @@index([status])
   @@map("payments")
+}
+
+model OwnerPayout {
+  id                   String       @id @default(uuid())
+  bookingId            String       @unique @map("booking_id")
+  ownerId              String       @map("owner_id")
+  paymentId            String?      @unique @map("payment_id")
+  status               PayoutStatus @default(PENDING)
+  grossRentalAmount    Float        @map("gross_rental_amount")
+  platformFee          Float        @map("platform_fee")
+  ownerRentalAmount    Float        @map("owner_rental_amount")
+  postTripChargeAmount Float        @default(0) @map("post_trip_charge_amount")
+  payoutAmount         Float        @map("payout_amount")
+  holdReason           String?      @map("hold_reason")
+  externalReference    String?      @map("external_reference")
+  notes                String?
+  createdBy            String?      @map("created_by")
+  processedBy          String?      @map("processed_by")
+  processedAt          DateTime?    @map("processed_at")
+  completedAt          DateTime?    @map("completed_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+  booking              Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  owner                User         @relation("OwnerPayoutOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  payment              Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("owner_payouts")
 }
 
 model Review {
@@ -439,6 +478,15 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum PayoutStatus {
+  PENDING
+  ON_HOLD
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
 enum PaymentMethod {
   PAYOS
   MOMO
@@ -520,6 +568,32 @@ enum IncidentStatus {
   REJECTED
 }
 
+enum ClaimCaseStatus {
+  OPEN
+  UNDER_REVIEW
+  PENDING_SECOND_REVIEW
+  APPROVED
+  REJECTED
+  RESOLVED
+  CANCELLED
+}
+
+enum ClaimCaseOutcome {
+  OWNER_CLAIM_APPROVED
+  OWNER_CLAIM_PARTIALLY_APPROVED
+  OWNER_CLAIM_REJECTED
+  DEPOSIT_RELEASE_APPROVED
+  PAYOUT_RELEASE_APPROVED
+  NO_ACTION_REQUIRED
+}
+
+enum EvidenceAnnotationTargetType {
+  INCIDENT_REPORT
+  POST_TRIP_CHARGE
+  VEHICLE_HANDOVER
+  HANDOVER_PHOTO
+}
+
 enum TripStatus {
   NOT_STARTED
   ONGOING
@@ -537,6 +611,12 @@ enum NotificationType {
   PAYMENT_SUCCESS
   PAYMENT_FAILED
   SYSTEM_ALERT
+  DEPOSIT_UPDATED
+  POST_TRIP_CHARGE_UPDATED
+  CLAIM_UPDATED
+  PAYOUT_UPDATED
+  BOOKING_REMINDER
+  TRIP_REMINDER
 }
 
 model FcmToken {
@@ -728,6 +808,67 @@ model IncidentReport {
   @@index([status])
   @@index([createdAt])
   @@map("incident_reports")
+}
+
+model ClaimCase {
+  id                String            @id @default(uuid())
+  caseNumber        String            @unique @map("case_number")
+  bookingId         String            @unique @map("booking_id")
+  status            ClaimCaseStatus   @default(OPEN)
+  outcome           ClaimCaseOutcome?
+  summary           String?
+  openedBy          String?           @map("opened_by")
+  firstDecision     ClaimCaseOutcome? @map("first_decision")
+  firstReviewedBy   String?           @map("first_reviewed_by")
+  firstReviewNotes  String?           @map("first_review_notes")
+  firstReviewedAt   DateTime?         @map("first_reviewed_at")
+  secondDecision    ClaimCaseOutcome? @map("second_decision")
+  secondReviewedBy  String?           @map("second_reviewed_by")
+  secondReviewNotes String?           @map("second_review_notes")
+  secondReviewedAt  DateTime?         @map("second_reviewed_at")
+  resolutionNotes   String?           @map("resolution_notes")
+  resolvedAt        DateTime?         @map("resolved_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  booking             Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  opener              User?                @relation("ClaimCaseOpenedBy", fields: [openedBy], references: [id], onDelete: SetNull)
+  firstReviewer       User?                @relation("ClaimCaseFirstReviewer", fields: [firstReviewedBy], references: [id], onDelete: SetNull)
+  secondReviewer      User?                @relation("ClaimCaseSecondReviewer", fields: [secondReviewedBy], references: [id], onDelete: SetNull)
+  evidenceAnnotations EvidenceAnnotation[]
+
+  @@index([status])
+  @@index([outcome])
+  @@index([openedBy])
+  @@index([firstReviewedBy])
+  @@index([secondReviewedBy])
+  @@index([createdAt])
+  @@map("claim_cases")
+}
+
+model EvidenceAnnotation {
+  id          String                       @id @default(uuid())
+  bookingId   String                       @map("booking_id")
+  claimCaseId String?                      @map("claim_case_id")
+  targetType  EvidenceAnnotationTargetType @map("target_type")
+  targetId    String                       @map("target_id")
+  authorId    String?                      @map("author_id")
+  note        String
+  tags        String[]                     @default([])
+  highlight   Json?
+  createdAt   DateTime                     @default(now()) @map("created_at")
+  updatedAt   DateTime                     @updatedAt @map("updated_at")
+
+  booking   Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  claimCase ClaimCase? @relation(fields: [claimCaseId], references: [id], onDelete: SetNull)
+  author    User?      @relation("EvidenceAnnotationAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([claimCaseId])
+  @@index([authorId])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("evidence_annotations")
 }
 
 model KycVerification {
