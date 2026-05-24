@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PostTripChargeStatus, UserRole } from '@prisma/client';
+import { PayoutStatus, PostTripChargeStatus, UserRole } from '@prisma/client';
 import { FinancialController } from './financial.controller';
 import { FinancialService } from './financial.service';
 
@@ -14,6 +14,8 @@ describe('FinancialController', () => {
     updateChargeStatus: jest.fn(),
     captureApprovedChargesFromDeposit: jest.fn(),
     releaseDeposit: jest.fn(),
+    createOrRefreshOwnerPayout: jest.fn(),
+    updateOwnerPayoutStatus: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -45,11 +47,12 @@ describe('FinancialController', () => {
     service.getAdminFinancialQueue.mockResolvedValue({
       deposits: [],
       charges: [],
+      payouts: [],
     });
 
     await expect(controller.getAdminFinancialQueue('20')).resolves.toEqual({
       status: 'success',
-      data: { deposits: [], charges: [] },
+      data: { deposits: [], charges: [], payouts: [] },
     });
     expect(service.getAdminFinancialQueue).toHaveBeenCalledWith(20);
   });
@@ -136,5 +139,43 @@ describe('FinancialController', () => {
       'admin-1',
     );
     expect(service.releaseDeposit).toHaveBeenCalledWith('b1', 'admin-1');
+  });
+
+  it('delegates owner payout preparation', async () => {
+    service.createOrRefreshOwnerPayout.mockResolvedValue({
+      id: 'payout-1',
+      status: PayoutStatus.PENDING,
+    });
+
+    await expect(
+      controller.createOrRefreshOwnerPayout('b1', 'admin-1'),
+    ).resolves.toEqual({
+      id: 'payout-1',
+      status: PayoutStatus.PENDING,
+    });
+    expect(service.createOrRefreshOwnerPayout).toHaveBeenCalledWith(
+      'b1',
+      'admin-1',
+    );
+  });
+
+  it('delegates owner payout status updates', async () => {
+    const dto = {
+      status: PayoutStatus.COMPLETED,
+      externalReference: 'BANK-TXN-1',
+      notes: 'Paid',
+    };
+    service.updateOwnerPayoutStatus.mockResolvedValue({
+      id: 'payout-1',
+      status: PayoutStatus.COMPLETED,
+    });
+
+    await controller.updateOwnerPayoutStatus('payout-1', 'admin-1', dto);
+
+    expect(service.updateOwnerPayoutStatus).toHaveBeenCalledWith(
+      'payout-1',
+      'admin-1',
+      dto,
+    );
   });
 });

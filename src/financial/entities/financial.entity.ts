@@ -2,6 +2,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   DepositLedger,
   DepositLedgerStatus,
+  OwnerPayout,
+  PayoutStatus,
   PostTripCharge,
   PostTripChargeSource,
   PostTripChargeStatus,
@@ -153,6 +155,92 @@ export class PostTripChargeEntity implements PostTripCharge {
   }
 }
 
+export class OwnerPayoutEntity implements OwnerPayout {
+  @ApiProperty()
+  @Expose()
+  id: string;
+
+  @ApiProperty()
+  @Expose()
+  bookingId: string;
+
+  @ApiProperty()
+  @Expose()
+  ownerId: string;
+
+  @ApiPropertyOptional()
+  @Expose()
+  paymentId: string | null;
+
+  @ApiProperty({ enum: PayoutStatus })
+  @Expose()
+  status: PayoutStatus;
+
+  @ApiProperty()
+  @Expose()
+  grossRentalAmount: number;
+
+  @ApiProperty()
+  @Expose()
+  platformFee: number;
+
+  @ApiProperty()
+  @Expose()
+  ownerRentalAmount: number;
+
+  @ApiProperty()
+  @Expose()
+  postTripChargeAmount: number;
+
+  @ApiProperty()
+  @Expose()
+  payoutAmount: number;
+
+  @ApiPropertyOptional()
+  @Expose()
+  holdReason: string | null;
+
+  @ApiPropertyOptional()
+  @Expose()
+  externalReference: string | null;
+
+  @ApiPropertyOptional()
+  @Expose()
+  notes: string | null;
+
+  @ApiPropertyOptional()
+  @Expose()
+  createdBy: string | null;
+
+  @ApiPropertyOptional()
+  @Expose()
+  processedBy: string | null;
+
+  @ApiPropertyOptional()
+  @Expose()
+  processedAt: Date | null;
+
+  @ApiPropertyOptional()
+  @Expose()
+  completedAt: Date | null;
+
+  @ApiProperty()
+  @Expose()
+  createdAt: Date;
+
+  @ApiProperty()
+  @Expose()
+  updatedAt: Date;
+
+  constructor(partial: Partial<OwnerPayoutEntity>) {
+    Object.assign(this, partial);
+  }
+
+  static fromPrisma(payout: OwnerPayout): OwnerPayoutEntity {
+    return new OwnerPayoutEntity(payout);
+  }
+}
+
 export class FinancialSummaryEntity {
   @ApiProperty()
   @Expose()
@@ -181,6 +269,10 @@ export class FinancialSummaryEntity {
   @ApiProperty()
   @Expose()
   releasableDeposit: number;
+
+  @ApiPropertyOptional({ type: OwnerPayoutEntity, nullable: true })
+  @Expose()
+  ownerPayout?: OwnerPayoutEntity | null;
 
   constructor(partial: Partial<FinancialSummaryEntity>) {
     Object.assign(this, partial);

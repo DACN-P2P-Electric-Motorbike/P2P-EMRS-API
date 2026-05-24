@@ -24,7 +24,11 @@ import { JwtAuthGuard, RolesGuard } from '../auth/guards';
 import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
 import { DisputePostTripChargeDto } from './dto/dispute-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
-import { FinancialSummaryEntity } from './entities/financial.entity';
+import { UpdatePayoutStatusDto } from './dto/update-payout-status.dto';
+import {
+  FinancialSummaryEntity,
+  OwnerPayoutEntity,
+} from './entities/financial.entity';
 import { FinancialService } from './financial.service';
 
 @ApiTags('Financial')
@@ -186,5 +190,46 @@ export class FinancialController {
     @CurrentUser('id') adminId: string,
   ): Promise<FinancialSummaryEntity> {
     return this.financialService.releaseDeposit(bookingId, adminId);
+  }
+
+  @Post('bookings/:bookingId/payout')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Create or refresh owner payout',
+    description:
+      'Admin-only payout preparation. Calculates owner net rental plus finalized post-trip charges and holds payouts until trip, deposit, and incident blockers are cleared.',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking UUID' })
+  @ApiResponse({ status: 200, type: OwnerPayoutEntity })
+  async createOrRefreshOwnerPayout(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser('id') adminId: string,
+  ): Promise<OwnerPayoutEntity> {
+    return this.financialService.createOrRefreshOwnerPayout(bookingId, adminId);
+  }
+
+  @Patch('payouts/:payoutId/status')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update owner payout status',
+    description:
+      'Admin-only payout operation for moving a payout through processing, completed, failed, or cancelled states.',
+  })
+  @ApiParam({ name: 'payoutId', description: 'Owner payout UUID' })
+  @ApiResponse({ status: 200, type: OwnerPayoutEntity })
+  async updateOwnerPayoutStatus(
+    @Param('payoutId') payoutId: string,
+    @CurrentUser('id') adminId: string,
+    @Body() dto: UpdatePayoutStatusDto,
+  ): Promise<OwnerPayoutEntity> {
+    return this.financialService.updateOwnerPayoutStatus(
+      payoutId,
+      adminId,
+      dto,
+    );
   }
 }

@@ -10,6 +10,8 @@ import {
   DepositLedgerStatus,
   HandoverType,
   IncidentStatus,
+  OwnerPayout,
+  PayoutStatus,
   PaymentStatus,
   PostTripCharge,
   PostTripChargeSource,
@@ -23,9 +25,11 @@ import { PrismaService } from '../database/prisma.service';
 import { CreatePostTripChargeDto } from './dto/create-post-trip-charge.dto';
 import { DisputePostTripChargeDto } from './dto/dispute-post-trip-charge.dto';
 import { UpdateChargeStatusDto } from './dto/update-charge-status.dto';
+import { UpdatePayoutStatusDto } from './dto/update-payout-status.dto';
 import {
   DepositLedgerEntity,
   FinancialSummaryEntity,
+  OwnerPayoutEntity,
   PostTripChargeEntity,
 } from './entities/financial.entity';
 
@@ -35,6 +39,7 @@ type FinancialBooking = Prisma.BookingGetPayload<{
     trip: true;
     depositLedger: true;
     postTripCharges: true;
+    ownerPayout: true;
     handovers: true;
     vehicle: {
       select: {
@@ -176,9 +181,19 @@ export class FinancialService {
         };
       }
     >;
+    payouts: Array<
+      OwnerPayout & {
+        booking: {
+          id: string;
+          renterId: string;
+          ownerId: string;
+          vehicleId: string;
+        };
+      }
+    >;
   }> {
     const take = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
-    const [deposits, charges] = await Promise.all([
+    const [deposits, charges, payouts] = await Promise.all([
       this.prisma.depositLedger.findMany({
         where: {
           status: {
@@ -227,9 +242,33 @@ export class FinancialService {
         orderBy: { createdAt: 'desc' },
         take,
       }),
+      this.prisma.ownerPayout.findMany({
+        where: {
+          status: {
+            in: [
+              PayoutStatus.PENDING,
+              PayoutStatus.ON_HOLD,
+              PayoutStatus.PROCESSING,
+              PayoutStatus.FAILED,
+            ],
+          },
+        },
+        include: {
+          booking: {
+            select: {
+              id: true,
+              renterId: true,
+              ownerId: true,
+              vehicleId: true,
+            },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take,
+      }),
     ]);
 
-    return { deposits, charges };
+    return { deposits, charges, payouts };
   }
 
   async recalculatePostTripChargesForBooking(
@@ -633,10 +672,168 @@ export class FinancialService {
         notes: `Deposit release recorded by admin ${adminId}`,
       },
     });
+    await this.createOrRefreshOwnerPayout(bookingId, adminId);
 
     const updated = await this.findBookingWithFinancials(bookingId);
     if (!updated) throw new NotFoundException('Booking not found');
     return this.toSummary(updated);
+  }
+
+  async createOrRefreshOwnerPayout(
+    bookingId: string,
+    adminId: string,
+  ): Promise<OwnerPayoutEntity> {
+    const booking = await this.findBookingWithFinancials(bookingId);
+
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    if (
+      booking.ownerPayout &&
+      (
+        [
+          PayoutStatus.COMPLETED,
+          PayoutStatus.CANCELLED,
+        ] as PayoutStatus[]
+      ).includes(booking.ownerPayout.status)
+    ) {
+      return OwnerPayoutEntity.fromPrisma(booking.ownerPayout);
+    }
+
+    const holdReason = await this.getPayoutHoldReason(booking);
+    const finalChargeAmount = this.sumCharges(
+      booking.postTripCharges.filter((charge) =>
+        (
+          [
+            PostTripChargeStatus.DEDUCTED_FROM_DEPOSIT,
+            PostTripChargeStatus.PAID,
+          ] as PostTripChargeStatus[]
+        ).includes(charge.status),
+      ),
+    );
+    const payment = booking.payment;
+    const grossRentalAmount = this.roundMoney(booking.totalPrice);
+    const platformFee = this.roundMoney(payment?.platformFee ?? 0);
+    const ownerRentalAmount = this.roundMoney(payment?.ownerAmount ?? 0);
+    const payoutAmount = this.roundMoney(
+      ownerRentalAmount + finalChargeAmount,
+    );
+    const existingStatus = booking.ownerPayout?.status;
+    const nextStatus = holdReason
+      ? PayoutStatus.ON_HOLD
+      : existingStatus &&
+          existingStatus !== PayoutStatus.ON_HOLD &&
+          existingStatus !== PayoutStatus.PENDING
+        ? existingStatus
+        : PayoutStatus.PENDING;
+
+    const payout = await this.prisma.ownerPayout.upsert({
+      where: { bookingId: booking.id },
+      create: {
+        bookingId: booking.id,
+        ownerId: booking.ownerId,
+        paymentId: payment?.id ?? null,
+        status: nextStatus,
+        grossRentalAmount,
+        platformFee,
+        ownerRentalAmount,
+        postTripChargeAmount: finalChargeAmount,
+        payoutAmount,
+        holdReason,
+        createdBy: adminId,
+        notes: holdReason
+          ? `Payout held: ${holdReason}`
+          : 'Payout ready for admin processing',
+      },
+      update: {
+        ownerId: booking.ownerId,
+        paymentId: payment?.id ?? null,
+        status: nextStatus,
+        grossRentalAmount,
+        platformFee,
+        ownerRentalAmount,
+        postTripChargeAmount: finalChargeAmount,
+        payoutAmount,
+        holdReason,
+        notes: holdReason
+          ? `Payout held: ${holdReason}`
+          : (booking.ownerPayout?.notes ?? 'Payout ready for admin processing'),
+      },
+    });
+
+    return OwnerPayoutEntity.fromPrisma(payout);
+  }
+
+  async updateOwnerPayoutStatus(
+    payoutId: string,
+    adminId: string,
+    dto: UpdatePayoutStatusDto,
+  ): Promise<OwnerPayoutEntity> {
+    const payout = await this.prisma.ownerPayout.findUnique({
+      where: { id: payoutId },
+    });
+
+    if (!payout) throw new NotFoundException('Owner payout not found');
+
+    if (
+      !(
+        [
+          PayoutStatus.PROCESSING,
+          PayoutStatus.COMPLETED,
+          PayoutStatus.FAILED,
+          PayoutStatus.CANCELLED,
+        ] as PayoutStatus[]
+      ).includes(dto.status)
+    ) {
+      throw new BadRequestException('Unsupported payout status');
+    }
+
+    if (
+      (
+        [
+          PayoutStatus.PROCESSING,
+          PayoutStatus.COMPLETED,
+        ] as PayoutStatus[]
+      ).includes(dto.status)
+    ) {
+      const booking = await this.findBookingWithFinancials(payout.bookingId);
+      if (!booking) throw new NotFoundException('Booking not found');
+
+      const holdReason = await this.getPayoutHoldReason(booking);
+      if (holdReason) {
+        throw new BadRequestException(
+          `Cannot process payout while ${holdReason}`,
+        );
+      }
+
+      if (payout.payoutAmount <= 0) {
+        throw new BadRequestException('Payout amount must be greater than zero');
+      }
+    }
+
+    const now = new Date();
+    const updated = await this.prisma.ownerPayout.update({
+      where: { id: payout.id },
+      data: {
+        status: dto.status,
+        externalReference:
+          dto.externalReference?.trim() || payout.externalReference,
+        notes: dto.notes?.trim() || payout.notes,
+        processedBy: adminId,
+        processedAt:
+          dto.status === PayoutStatus.PROCESSING ||
+          dto.status === PayoutStatus.COMPLETED
+            ? now
+            : (payout.processedAt ?? now),
+        completedAt: dto.status === PayoutStatus.COMPLETED ? now : null,
+        holdReason:
+          dto.status === PayoutStatus.PROCESSING ||
+          dto.status === PayoutStatus.COMPLETED
+            ? null
+            : payout.holdReason,
+      },
+    });
+
+    return OwnerPayoutEntity.fromPrisma(updated);
   }
 
   private async findBookingWithFinancials(bookingId: string) {
@@ -646,6 +843,7 @@ export class FinancialService {
         payment: true,
         trip: true,
         depositLedger: true,
+        ownerPayout: true,
         postTripCharges: {
           orderBy: { createdAt: 'asc' },
         },
@@ -862,6 +1060,7 @@ export class FinancialService {
     id: string;
     depositLedger: DepositLedger | null;
     postTripCharges: PostTripCharge[];
+    ownerPayout?: OwnerPayout | null;
   }): FinancialSummaryEntity {
     const charges = booking.postTripCharges.map(
       PostTripChargeEntity.fromPrisma,
@@ -912,7 +1111,72 @@ export class FinancialService {
       totalApprovedCharges,
       totalCapturedCharges,
       releasableDeposit,
+      ownerPayout: booking.ownerPayout
+        ? OwnerPayoutEntity.fromPrisma(booking.ownerPayout)
+        : null,
     });
+  }
+
+  private async getPayoutHoldReason(booking: FinancialBooking): Promise<
+    string | null
+  > {
+    if (booking.status !== BookingStatus.COMPLETED) {
+      return 'booking is not completed';
+    }
+    if (booking.trip?.status !== TripStatus.COMPLETED) {
+      return 'trip is not completed';
+    }
+    if (booking.payment?.status !== PaymentStatus.COMPLETED) {
+      return 'payment is not completed';
+    }
+
+    const unresolvedCharge = booking.postTripCharges.find((charge) =>
+      (
+        [
+          PostTripChargeStatus.PENDING_REVIEW,
+          PostTripChargeStatus.APPROVED,
+          PostTripChargeStatus.DISPUTED,
+        ] as PostTripChargeStatus[]
+      ).includes(charge.status),
+    );
+    if (unresolvedCharge) {
+      return `post-trip charge ${unresolvedCharge.id} is unresolved`;
+    }
+
+    if ((booking.deposit ?? 0) > 0) {
+      if (!booking.depositLedger) {
+        return 'deposit ledger has not been created';
+      }
+
+      if (
+        (
+          [
+            DepositLedgerStatus.HELD,
+            DepositLedgerStatus.PENDING_CHARGES,
+            DepositLedgerStatus.PARTIALLY_CAPTURED,
+            DepositLedgerStatus.RELEASE_PENDING,
+            DepositLedgerStatus.DISPUTED,
+          ] as DepositLedgerStatus[]
+        ).includes(booking.depositLedger.status)
+      ) {
+        return `deposit is ${booking.depositLedger.status}`;
+      }
+    }
+
+    const blockingIncident = await this.prisma.incidentReport.findFirst({
+      where: {
+        bookingId: booking.id,
+        status: {
+          in: [IncidentStatus.OPEN, IncidentStatus.UNDER_REVIEW],
+        },
+      },
+      select: { id: true },
+    });
+    if (blockingIncident) {
+      return `incident ${blockingIncident.id} is open`;
+    }
+
+    return null;
   }
 
   private sumCharges(charges: Array<{ amount: number }>): number {

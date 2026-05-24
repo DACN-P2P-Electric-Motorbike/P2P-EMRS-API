@@ -5,6 +5,7 @@ import {
   HandoverType,
   PaymentMethod,
   PaymentStatus,
+  PayoutStatus,
   PostTripChargeSource,
   PostTripChargeStatus,
   PostTripChargeType,
@@ -80,6 +81,29 @@ const makeCharge = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const makePayout = (overrides: Record<string, unknown> = {}) => ({
+  id: 'payout-uuid',
+  bookingId: BOOKING_ID,
+  ownerId: OWNER_ID,
+  paymentId: PAYMENT_ID,
+  status: PayoutStatus.PENDING,
+  grossRentalAmount: 100000,
+  platformFee: 15000,
+  ownerRentalAmount: 85000,
+  postTripChargeAmount: 0,
+  payoutAmount: 85000,
+  holdReason: null,
+  externalReference: null,
+  notes: null,
+  createdBy: ADMIN_ID,
+  processedBy: null,
+  processedAt: null,
+  completedAt: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...overrides,
+});
+
 const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   id: BOOKING_ID,
   renterId: RENTER_ID,
@@ -99,6 +123,7 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
     endBattery: 25,
   },
   depositLedger: makeDeposit(),
+  ownerPayout: null,
   postTripCharges: [],
   handovers: [
     {
@@ -143,6 +168,12 @@ const mockPrisma = () => ({
   },
   incidentReport: {
     findFirst: jest.fn(),
+  },
+  ownerPayout: {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    upsert: jest.fn(),
+    update: jest.fn(),
   },
   $transaction: jest.fn((operations: Promise<unknown>[]) =>
     Promise.all(operations),
@@ -201,6 +232,7 @@ describe('FinancialService', () => {
   it('lists active financial queue items for admins', async () => {
     prisma.depositLedger.findMany.mockResolvedValue([makeDeposit()]);
     prisma.postTripCharge.findMany.mockResolvedValue([makeCharge()]);
+    prisma.ownerPayout.findMany.mockResolvedValue([makePayout()]);
 
     const result = await service.getAdminFinancialQueue(25);
 
@@ -216,6 +248,7 @@ describe('FinancialService', () => {
     );
     expect(result.deposits).toHaveLength(1);
     expect(result.charges).toHaveLength(1);
+    expect(result.payouts).toHaveLength(1);
   });
 
   it('calculates late, excess-distance, and low-battery charges after trip completion', async () => {
@@ -598,5 +631,212 @@ describe('FinancialService', () => {
     await expect(service.releaseDeposit(BOOKING_ID, ADMIN_ID)).rejects.toThrow(
       'Cannot release deposit while incident reports are open or under review',
     );
+  });
+
+  it('releases clean deposits and prepares an owner payout', async () => {
+    const finalizedCharge = makeCharge({
+      status: PostTripChargeStatus.DEDUCTED_FROM_DEPOSIT,
+      amount: 40000,
+    });
+    const booking = makeBooking({
+      depositLedger: makeDeposit({
+        status: DepositLedgerStatus.PARTIALLY_CAPTURED,
+        capturedAmount: 40000,
+        releasedAmount: 460000,
+      }),
+      postTripCharges: [finalizedCharge],
+    });
+    const releasedDeposit = makeDeposit({
+      status: DepositLedgerStatus.RELEASED,
+      capturedAmount: 40000,
+      releasedAmount: 460000,
+      releasedAt: new Date(),
+    });
+    const payout = makePayout({
+      postTripChargeAmount: 40000,
+      payoutAmount: 125000,
+    });
+
+    prisma.booking.findUnique
+      .mockResolvedValueOnce(booking)
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: releasedDeposit,
+          postTripCharges: [finalizedCharge],
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: releasedDeposit,
+          ownerPayout: payout,
+          postTripCharges: [finalizedCharge],
+        }),
+      );
+    prisma.incidentReport.findFirst.mockResolvedValue(null);
+    prisma.depositLedger.update.mockResolvedValue(releasedDeposit);
+    prisma.ownerPayout.upsert.mockResolvedValue(payout);
+
+    const result = await service.releaseDeposit(BOOKING_ID, ADMIN_ID);
+
+    expect(prisma.depositLedger.update).toHaveBeenCalledWith({
+      where: { id: 'deposit-uuid' },
+      data: expect.objectContaining({
+        status: DepositLedgerStatus.RELEASED,
+        releasedAmount: 460000,
+      }),
+    });
+    expect(prisma.ownerPayout.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          bookingId: BOOKING_ID,
+          ownerId: OWNER_ID,
+          status: PayoutStatus.PENDING,
+          ownerRentalAmount: 85000,
+          postTripChargeAmount: 40000,
+          payoutAmount: 125000,
+        }),
+      }),
+    );
+    expect(result.ownerPayout?.status).toBe(PayoutStatus.PENDING);
+  });
+
+  it('creates a ready owner payout from completed financials', async () => {
+    const finalizedCharge = makeCharge({
+      status: PostTripChargeStatus.DEDUCTED_FROM_DEPOSIT,
+      amount: 40000,
+    });
+    const payout = makePayout({
+      postTripChargeAmount: 40000,
+      payoutAmount: 125000,
+    });
+
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        depositLedger: makeDeposit({ status: DepositLedgerStatus.RELEASED }),
+        postTripCharges: [finalizedCharge],
+      }),
+    );
+    prisma.incidentReport.findFirst.mockResolvedValue(null);
+    prisma.ownerPayout.upsert.mockResolvedValue(payout);
+
+    const result = await service.createOrRefreshOwnerPayout(
+      BOOKING_ID,
+      ADMIN_ID,
+    );
+
+    expect(prisma.ownerPayout.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: BOOKING_ID },
+        create: expect.objectContaining({
+          status: PayoutStatus.PENDING,
+          grossRentalAmount: 100000,
+          platformFee: 15000,
+          ownerRentalAmount: 85000,
+          postTripChargeAmount: 40000,
+          payoutAmount: 125000,
+          holdReason: null,
+        }),
+      }),
+    );
+    expect(result.payoutAmount).toBe(125000);
+  });
+
+  it('holds owner payouts while charges remain unresolved', async () => {
+    const heldPayout = makePayout({
+      status: PayoutStatus.ON_HOLD,
+      holdReason: 'post-trip charge charge-uuid is unresolved',
+    });
+
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        depositLedger: makeDeposit({
+          status: DepositLedgerStatus.PENDING_CHARGES,
+        }),
+        postTripCharges: [makeCharge()],
+      }),
+    );
+    prisma.ownerPayout.upsert.mockResolvedValue(heldPayout);
+
+    const result = await service.createOrRefreshOwnerPayout(
+      BOOKING_ID,
+      ADMIN_ID,
+    );
+
+    expect(prisma.ownerPayout.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          status: PayoutStatus.ON_HOLD,
+          holdReason: 'post-trip charge charge-uuid is unresolved',
+        }),
+      }),
+    );
+    expect(result.status).toBe(PayoutStatus.ON_HOLD);
+  });
+
+  it('blocks processing payouts while blockers remain', async () => {
+    const payout = makePayout({
+      status: PayoutStatus.ON_HOLD,
+      holdReason: 'post-trip charge charge-uuid is unresolved',
+    });
+
+    prisma.ownerPayout.findUnique.mockResolvedValue(payout);
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        ownerPayout: payout,
+        postTripCharges: [makeCharge()],
+      }),
+    );
+
+    await expect(
+      service.updateOwnerPayoutStatus('payout-uuid', ADMIN_ID, {
+        status: PayoutStatus.PROCESSING,
+      }),
+    ).rejects.toThrow('Cannot process payout while');
+  });
+
+  it('marks owner payouts completed with processing metadata', async () => {
+    const payout = makePayout({ status: PayoutStatus.PROCESSING });
+    const completedPayout = makePayout({
+      status: PayoutStatus.COMPLETED,
+      externalReference: 'BANK-TXN-1',
+      processedBy: ADMIN_ID,
+      processedAt: new Date(),
+      completedAt: new Date(),
+      notes: 'Paid by bank transfer',
+    });
+
+    prisma.ownerPayout.findUnique.mockResolvedValue(payout);
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        depositLedger: makeDeposit({ status: DepositLedgerStatus.RELEASED }),
+        ownerPayout: payout,
+      }),
+    );
+    prisma.incidentReport.findFirst.mockResolvedValue(null);
+    prisma.ownerPayout.update.mockResolvedValue(completedPayout);
+
+    const result = await service.updateOwnerPayoutStatus(
+      'payout-uuid',
+      ADMIN_ID,
+      {
+        status: PayoutStatus.COMPLETED,
+        externalReference: 'BANK-TXN-1',
+        notes: 'Paid by bank transfer',
+      },
+    );
+
+    expect(prisma.ownerPayout.update).toHaveBeenCalledWith({
+      where: { id: 'payout-uuid' },
+      data: expect.objectContaining({
+        status: PayoutStatus.COMPLETED,
+        externalReference: 'BANK-TXN-1',
+        notes: 'Paid by bank transfer',
+        processedBy: ADMIN_ID,
+        processedAt: expect.any(Date),
+        completedAt: expect.any(Date),
+        holdReason: null,
+      }),
+    });
+    expect(result.status).toBe(PayoutStatus.COMPLETED);
   });
 });

@@ -27,6 +27,7 @@ model User {
   otpCodes                OtpCode[]
   paymentsAsPayer         Payment[]           @relation("PaymentPayer")
   paymentsAsReceiver      Payment[]           @relation("PaymentReceiver")
+  ownerPayouts            OwnerPayout[]       @relation("OwnerPayoutOwner")
   reviews                 Review[]            @relation("ReviewReviewer")
   receivedReviews         Review[]            @relation("ReviewReviewee")
   trustScoreEvents        TrustScoreEvent[]
@@ -211,6 +212,7 @@ model Booking {
   depositLedger           DepositLedger?
   postTripCharges         PostTripCharge[]
   incidentReports         IncidentReport[]
+  ownerPayout             OwnerPayout?
 
   @@index([renterId])
   @@index([ownerId])
@@ -275,11 +277,42 @@ model Payment {
   payer           User           @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
   receiver        User           @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
   depositLedger   DepositLedger?
+  ownerPayout     OwnerPayout?
 
   @@index([payerId])
   @@index([receiverId])
   @@index([status])
   @@map("payments")
+}
+
+model OwnerPayout {
+  id                   String       @id @default(uuid())
+  bookingId            String       @unique @map("booking_id")
+  ownerId              String       @map("owner_id")
+  paymentId            String?      @unique @map("payment_id")
+  status               PayoutStatus @default(PENDING)
+  grossRentalAmount    Float        @map("gross_rental_amount")
+  platformFee          Float        @map("platform_fee")
+  ownerRentalAmount    Float        @map("owner_rental_amount")
+  postTripChargeAmount Float        @default(0) @map("post_trip_charge_amount")
+  payoutAmount         Float        @map("payout_amount")
+  holdReason           String?      @map("hold_reason")
+  externalReference    String?      @map("external_reference")
+  notes                String?
+  createdBy            String?      @map("created_by")
+  processedBy          String?      @map("processed_by")
+  processedAt          DateTime?    @map("processed_at")
+  completedAt          DateTime?    @map("completed_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+  booking              Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  owner                User         @relation("OwnerPayoutOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  payment              Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("owner_payouts")
 }
 
 model Review {
@@ -437,6 +470,15 @@ enum PaymentStatus {
   COMPLETED
   FAILED
   REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  ON_HOLD
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
 }
 
 enum PaymentMethod {
