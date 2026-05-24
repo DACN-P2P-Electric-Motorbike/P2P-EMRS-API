@@ -7,33 +7,40 @@ datasource db {
 }
 
 model User {
-  id                    String         @id @default(uuid())
-  email                 String         @unique
-  password              String
-  fullName              String         @map("full_name")
-  phone                 String         @unique
-  avatarUrl             String?        @map("avatar_url")
-  roles                 UserRole[]     @default([RENTER])
-  status                UserStatus     @default(ACTIVE)
-  trustScore            Float          @default(100.0) @map("trust_score")
-  idCardNum             String?        @unique @map("id_card_num")
-  address               String?
-  createdAt             DateTime       @default(now()) @map("created_at")
-  updatedAt             DateTime       @updatedAt @map("updated_at")
-  bookingsAsOwner       Booking[]      @relation("BookingOwner")
-  bookingsAsRenter      Booking[]      @relation("BookingRenter")
-  receivedNotifications Notification[] @relation("NotificationReceiver")
-  sentNotifications     Notification[] @relation("NotificationSender")
-  otpCodes              OtpCode[]
-  paymentsAsPayer       Payment[]      @relation("PaymentPayer")
-  paymentsAsReceiver    Payment[]      @relation("PaymentReceiver")
-  reviews               Review[]
-  trustScoreEvents      TrustScoreEvent[]
-  trustScoreWarnings    TrustScoreWarning[]
-  trips                 Trip[]
-  vehicles              Vehicle[]      @relation("VehicleOwner")
-  fcmTokens             FcmToken[]
-  privacyRequests       PrivacyRequest[]
+  id                      String              @id @default(uuid())
+  email                   String              @unique
+  password                String
+  fullName                String              @map("full_name")
+  phone                   String              @unique
+  avatarUrl               String?             @map("avatar_url")
+  roles                   UserRole[]          @default([RENTER])
+  status                  UserStatus          @default(ACTIVE)
+  trustScore              Float               @default(100.0) @map("trust_score")
+  idCardNum               String?             @unique @map("id_card_num")
+  address                 String?
+  createdAt               DateTime            @default(now()) @map("created_at")
+  updatedAt               DateTime            @updatedAt @map("updated_at")
+  bookingsAsOwner         Booking[]           @relation("BookingOwner")
+  bookingsAsRenter        Booking[]           @relation("BookingRenter")
+  receivedNotifications   Notification[]      @relation("NotificationReceiver")
+  sentNotifications       Notification[]      @relation("NotificationSender")
+  otpCodes                OtpCode[]
+  paymentsAsPayer         Payment[]           @relation("PaymentPayer")
+  paymentsAsReceiver      Payment[]           @relation("PaymentReceiver")
+  reviews                 Review[]            @relation("ReviewReviewer")
+  receivedReviews         Review[]            @relation("ReviewReviewee")
+  trustScoreEvents        TrustScoreEvent[]
+  trustScoreWarnings      TrustScoreWarning[]
+  trips                   Trip[]
+  vehicles                Vehicle[]           @relation("VehicleOwner")
+  fcmTokens               FcmToken[]
+  privacyRequests         PrivacyRequest[]
+  bookingLocks            BookingLock[]
+  handoversPerformed      VehicleHandover[]   @relation("HandoverPerformer")
+  kycVerifications        KycVerification[]   @relation("KycApplicant")
+  reviewedKycRecords      KycVerification[]   @relation("KycReviewer")
+  incidentReportsFiled    IncidentReport[]    @relation("IncidentReporter")
+  incidentReportsReviewed IncidentReport[]    @relation("IncidentReviewer")
 
   @@index([email])
   @@index([phone])
@@ -92,41 +99,58 @@ model OtpCode {
 }
 
 model Vehicle {
-  id              String           @id @default(uuid())
-  name            String?
-  type            VehicleType      @default(OTHER)
-  brand           VehicleBrand     @default(OTHER)
-  model           String
-  year            Int?
-  licensePlate    String           @unique @map("license_plate")
-  description     String?
-  images          String[]
-  features        VehicleFeature[]
-  batteryCapacity Float?           @map("battery_capacity")
-  batteryLevel    Int              @default(100) @map("battery_level")
-  maxSpeed        Float?           @map("max_speed")
-  range           Float?
-  pricePerHour    Decimal          @map("price_per_hour") @db.Decimal(10, 2)
-  pricePerDay     Decimal?         @map("price_per_day") @db.Decimal(10, 2)
-  deposit         Float?
-  status          VehicleStatus    @default(PENDING_APPROVAL)
-  isAvailable     Boolean          @default(true) @map("is_available")
-  latitude        Float?
-  longitude       Float?
-  address         String
-  licenseNumber   String?          @map("license_number")
-  licenseFront    String?          @map("license_front")
-  licenseBack     String?          @map("license_back")
-  ownerId         String           @map("owner_id")
-  totalTrips      Int              @default(0) @map("total_trips")
-  totalRating     Float            @default(5.0) @map("total_rating")
-  reviewCount     Int              @default(0) @map("review_count")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-  bookings        Booking[]
-  reviews         Review[]
-  trips           Trip[]
-  owner           User             @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  id                    String                      @id @default(uuid())
+  name                  String?
+  type                  VehicleType                 @default(OTHER)
+  brand                 VehicleBrand                @default(OTHER)
+  model                 String
+  year                  Int?
+  licensePlate          String                      @unique @map("license_plate")
+  description           String?
+  images                String[]
+  features              VehicleFeature[]
+  batteryCapacity       Float?                      @map("battery_capacity")
+  batteryLevel          Int                         @default(100) @map("battery_level")
+  maxSpeed              Float?                      @map("max_speed")
+  range                 Float?
+  pricePerHour          Decimal                     @map("price_per_hour") @db.Decimal(10, 2)
+  pricePerDay           Decimal?                    @map("price_per_day") @db.Decimal(10, 2)
+  deposit               Float?
+  status                VehicleStatus               @default(PENDING_APPROVAL)
+  isAvailable           Boolean                     @default(true) @map("is_available")
+  latitude              Float?
+  longitude             Float?
+  address               String
+  licenseNumber         String?                     @map("license_number")
+  licenseFront          String?                     @map("license_front")
+  licenseBack           String?                     @map("license_back")
+  ownerId               String                      @map("owner_id")
+  totalTrips            Int                         @default(0) @map("total_trips")
+  totalRating           Float                       @default(5.0) @map("total_rating")
+  reviewCount           Int                         @default(0) @map("review_count")
+  instantBook           Boolean                     @default(false) @map("instant_book")
+  dailyKmLimit          Int?                        @map("daily_km_limit")
+  excessKmPrice         Float?                      @map("excess_km_price")
+  weeklyDiscount        Float?                      @map("weekly_discount")
+  monthlyDiscount       Float?                      @map("monthly_discount")
+  allowSmoke            Boolean                     @default(false) @map("allow_smoke")
+  allowPets             Boolean                     @default(false) @map("allow_pets")
+  geoRestriction        String?                     @map("geo_restriction")
+  batteryReturnMin      Int?                        @map("battery_return_min")
+  firstRegistrationYear Int?                        @map("first_registration_year")
+  condition             VehicleCondition?
+  batteryType           BatteryType?                @map("battery_type")
+  batteryHealth         Int?                        @map("battery_health")
+  batteryCycleCount     Int?                        @map("battery_cycle_count")
+  batteryLastServicedAt DateTime?                   @map("battery_last_serviced_at")
+  createdAt             DateTime                    @default(now()) @map("created_at")
+  updatedAt             DateTime                    @updatedAt @map("updated_at")
+  bookings              Booking[]
+  reviews               Review[]
+  trips                 Trip[]
+  bookingLocks          BookingLock[]
+  availabilityWindows   VehicleAvailabilityWindow[]
+  owner                 User                        @relation("VehicleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@index([ownerId])
   @@index([status])
@@ -138,28 +162,55 @@ model Vehicle {
   @@map("vehicles")
 }
 
+model VehicleAvailabilityWindow {
+  id        String                 @id @default(uuid())
+  vehicleId String                 @map("vehicle_id")
+  type      AvailabilityWindowType
+  startTime DateTime               @map("start_time")
+  endTime   DateTime               @map("end_time")
+  note      String?
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([type])
+  @@index([startTime, endTime])
+  @@map("vehicle_availability_windows")
+}
+
 model Booking {
-  id                 String         @id @default(uuid())
-  renterId           String         @map("renter_id")
-  ownerId            String         @map("owner_id")
-  vehicleId          String         @map("vehicle_id")
-  status             BookingStatus  @default(PENDING)
-  startTime          DateTime       @map("start_time")
-  endTime            DateTime       @map("end_time")
-  totalPrice         Float          @map("total_price")
-  deposit            Float
-  notes              String?
-  cancellationReason String?        @map("cancellation_reason")
-  createdAt          DateTime       @default(now()) @map("created_at")
-  updatedAt          DateTime       @updatedAt @map("updated_at")
-  confirmedAt        DateTime?      @map("confirmed_at")
-  cancelledAt        DateTime?      @map("cancelled_at")
-  owner              User           @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  renter             User           @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle            Vehicle        @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  notifications      Notification[]
-  payment            Payment?
-  trip               Trip?
+  id                      String             @id @default(uuid())
+  renterId                String             @map("renter_id")
+  ownerId                 String             @map("owner_id")
+  vehicleId               String             @map("vehicle_id")
+  status                  BookingStatus      @default(PENDING)
+  startTime               DateTime           @map("start_time")
+  endTime                 DateTime           @map("end_time")
+  totalPrice              Float              @map("total_price")
+  deposit                 Float
+  protectionPlan          ProtectionPlanType @default(STANDARD) @map("protection_plan")
+  protectionFee           Float              @default(0) @map("protection_fee")
+  protectionDeductible    Float              @default(1500000) @map("protection_deductible")
+  protectionCoverageLimit Float              @default(15000000) @map("protection_coverage_limit")
+  notes                   String?
+  cancellationReason      String?            @map("cancellation_reason")
+  cancelledBy             String?            @map("cancelled_by")
+  createdAt               DateTime           @default(now()) @map("created_at")
+  updatedAt               DateTime           @updatedAt @map("updated_at")
+  confirmedAt             DateTime?          @map("confirmed_at")
+  cancelledAt             DateTime?          @map("cancelled_at")
+  owner                   User               @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  renter                  User               @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle                 Vehicle            @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  notifications           Notification[]
+  payment                 Payment?
+  trip                    Trip?
+  handovers               VehicleHandover[]
+  depositLedger           DepositLedger?
+  postTripCharges         PostTripCharge[]
+  incidentReports         IncidentReport[]
 
   @@index([renterId])
   @@index([ownerId])
@@ -170,31 +221,34 @@ model Booking {
 }
 
 model Trip {
-  id               String     @id @default(uuid())
-  bookingId        String     @unique @map("booking_id")
-  renterId         String     @map("renter_id")
-  vehicleId        String     @map("vehicle_id")
-  status           TripStatus @default(NOT_STARTED)
-  startLatitude    Float?     @map("start_latitude")
-  startLongitude   Float?     @map("start_longitude")
-  startAddress     String?    @map("start_address")
-  endLatitude      Float?     @map("end_latitude")
-  endLongitude     Float?     @map("end_longitude")
-  endAddress       String?    @map("end_address")
-  distanceTraveled Float?     @map("distance_traveled")
+  id               String            @id @default(uuid())
+  bookingId        String            @unique @map("booking_id")
+  renterId         String            @map("renter_id")
+  vehicleId        String            @map("vehicle_id")
+  status           TripStatus        @default(NOT_STARTED)
+  startLatitude    Float?            @map("start_latitude")
+  startLongitude   Float?            @map("start_longitude")
+  startAddress     String?           @map("start_address")
+  endLatitude      Float?            @map("end_latitude")
+  endLongitude     Float?            @map("end_longitude")
+  endAddress       String?           @map("end_address")
+  distanceTraveled Float?            @map("distance_traveled")
   duration         Int?
-  startBattery     Float?     @map("start_battery")
-  endBattery       Float?     @map("end_battery")
-  hasIssues        Boolean    @default(false) @map("has_issues")
-  issueDescription String?    @map("issue_description")
-  startedAt        DateTime?  @map("started_at")
-  completedAt      DateTime?  @map("completed_at")
-  createdAt        DateTime   @default(now()) @map("created_at")
-  updatedAt        DateTime   @updatedAt @map("updated_at")
-  booking          Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  renter           User       @relation(fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle          Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  review           Review?
+  startBattery     Float?            @map("start_battery")
+  endBattery       Float?            @map("end_battery")
+  hasIssues        Boolean           @default(false) @map("has_issues")
+  issueDescription String?           @map("issue_description")
+  startedAt        DateTime?         @map("started_at")
+  completedAt      DateTime?         @map("completed_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  renter           User              @relation(fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle          Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  reviews          Review[]
+  handovers        VehicleHandover[]
+  postTripCharges  PostTripCharge[]
+  incidentReports  IncidentReport[]
 
   @@index([renterId])
   @@index([vehicleId])
@@ -203,23 +257,24 @@ model Trip {
 }
 
 model Payment {
-  id              String        @id @default(uuid())
-  bookingId       String        @unique @map("booking_id")
-  payerId         String        @map("payer_id")
-  receiverId      String        @map("receiver_id")
+  id              String         @id @default(uuid())
+  bookingId       String         @unique @map("booking_id")
+  payerId         String         @map("payer_id")
+  receiverId      String         @map("receiver_id")
   amount          Float
-  platformFee     Float         @map("platform_fee")
-  ownerAmount     Float         @map("owner_amount")
+  platformFee     Float          @map("platform_fee")
+  ownerAmount     Float          @map("owner_amount")
   method          PaymentMethod
-  status          PaymentStatus @default(PENDING)
-  transactionId   String?       @map("transaction_id")
-  gatewayResponse Json?         @map("gateway_response")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-  paidAt          DateTime?     @map("paid_at")
-  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  payer           User          @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
-  receiver        User          @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  status          PaymentStatus  @default(PENDING)
+  transactionId   String?        @map("transaction_id")
+  gatewayResponse Json?          @map("gateway_response")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  paidAt          DateTime?      @map("paid_at")
+  booking         Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payer           User           @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
+  receiver        User           @relation("PaymentReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  depositLedger   DepositLedger?
 
   @@index([payerId])
   @@index([receiverId])
@@ -228,20 +283,31 @@ model Payment {
 }
 
 model Review {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  vehicleId String   @map("vehicle_id")
-  tripId    String?  @unique @map("trip_id")
-  rating    Int
-  comment   String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  trip      Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  id             String     @id @default(uuid())
+  userId         String     @map("user_id")
+  revieweeId     String?    @map("reviewee_id")
+  vehicleId      String     @map("vehicle_id")
+  tripId         String?    @map("trip_id")
+  reviewType     ReviewType @default(RENTER_TO_OWNER) @map("review_type")
+  rating         Int
+  comment        String?
+  visibleAt      DateTime?  @map("visible_at")
+  revealedAt     DateTime?  @map("revealed_at")
+  trustAppliedAt DateTime?  @map("trust_applied_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  user           User       @relation("ReviewReviewer", fields: [userId], references: [id], onDelete: Cascade)
+  reviewee       User?      @relation("ReviewReviewee", fields: [revieweeId], references: [id], onDelete: SetNull)
+  vehicle        Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  trip           Trip?      @relation(fields: [tripId], references: [id], onDelete: SetNull)
 
+  @@unique([tripId, userId], name: "reviews_trip_id_user_id_key")
   @@index([userId])
+  @@index([revieweeId])
   @@index([vehicleId])
+  @@index([reviewType])
+  @@index([visibleAt])
+  @@index([revealedAt])
   @@map("reviews")
 }
 
@@ -337,6 +403,25 @@ enum VehicleFeature {
   ANTI_THEFT
 }
 
+enum VehicleCondition {
+  NEW
+  LIKE_NEW
+  GOOD
+  FAIR
+  NEEDS_MAINTENANCE
+}
+
+enum BatteryType {
+  FIXED_NON_REMOVABLE
+  REMOVABLE
+  SWAPPABLE
+}
+
+enum AvailabilityWindowType {
+  AVAILABLE
+  BLOCKED
+}
+
 enum BookingStatus {
   PENDING
   CONFIRMED
@@ -359,6 +444,80 @@ enum PaymentMethod {
   MOMO
   CREDIT_CARD
   CASH
+}
+
+enum ProtectionPlanType {
+  BASIC
+  STANDARD
+  PREMIUM
+}
+
+enum ReviewType {
+  RENTER_TO_OWNER
+  OWNER_TO_RENTER
+}
+
+enum DepositLedgerStatus {
+  NOT_HELD
+  HELD
+  PENDING_CHARGES
+  PARTIALLY_CAPTURED
+  CAPTURED
+  RELEASE_PENDING
+  RELEASED
+  DISPUTED
+  REFUNDED
+}
+
+enum PostTripChargeType {
+  LATE_RETURN
+  EXCESS_DISTANCE
+  LOW_BATTERY
+  CLEANING
+  DAMAGE
+  ROADSIDE_ASSISTANCE
+  OTHER
+}
+
+enum PostTripChargeStatus {
+  PENDING_REVIEW
+  APPROVED
+  WAIVED
+  DISPUTED
+  DEDUCTED_FROM_DEPOSIT
+  PAID
+  CANCELLED
+}
+
+enum PostTripChargeSource {
+  SYSTEM
+  OWNER
+  ADMIN
+}
+
+enum IncidentCategory {
+  ACCIDENT
+  DAMAGE
+  THEFT
+  MECHANICAL_ISSUE
+  NO_SHOW
+  VEHICLE_MISMATCH
+  LATE_RETURN
+  OTHER
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
 }
 
 enum TripStatus {
@@ -391,9 +550,9 @@ model FcmToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, platform], name: "fcm_tokens_user_id_platform_key")
   @@index([userId], name: "fcm_tokens_user_id_idx")
   @@index([token], name: "fcm_tokens_token_idx")
-  @@unique([userId, platform], name: "fcm_tokens_user_id_platform_key")
   @@map("fcm_tokens")
 }
 
@@ -413,6 +572,194 @@ model PrivacyRequest {
   @@index([status], name: "privacy_requests_status_idx")
   @@index([dueAt], name: "privacy_requests_due_at_idx")
   @@map("privacy_requests")
+}
+
+model BookingLock {
+  id        String   @id @default(uuid())
+  vehicleId String   @map("vehicle_id")
+  userId    String   @map("user_id")
+  startTime DateTime @map("start_time")
+  endTime   DateTime @map("end_time")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("booking_locks")
+}
+
+model VehicleHandover {
+  id                String       @id @default(uuid())
+  bookingId         String       @map("booking_id")
+  tripId            String?      @map("trip_id")
+  type              HandoverType
+  performedBy       String       @map("performed_by")
+  odometerReading   Float?       @map("odometer_reading")
+  batteryLevel      Int?         @map("battery_level")
+  fuelLevel         Int?         @map("fuel_level")
+  latitude          Float?
+  longitude         Float?
+  notes             String?
+  confirmedByOwner  Boolean      @default(false) @map("confirmed_by_owner")
+  confirmedByRenter Boolean      @default(false) @map("confirmed_by_renter")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  booking   Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  trip      Trip?           @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  performer User            @relation("HandoverPerformer", fields: [performedBy], references: [id], onDelete: Cascade)
+  photos    HandoverPhoto[]
+
+  @@unique([bookingId, type], name: "vehicle_handovers_booking_id_type_key")
+  @@index([bookingId])
+  @@index([tripId])
+  @@index([performedBy])
+  @@index([type])
+  @@map("vehicle_handovers")
+}
+
+model HandoverPhoto {
+  id         String   @id @default(uuid())
+  handoverId String   @map("handover_id")
+  photoUrl   String   @map("photo_url")
+  photoType  String   @map("photo_type")
+  latitude   Float?
+  longitude  Float?
+  capturedAt DateTime @map("captured_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  handover VehicleHandover @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+
+  @@index([handoverId])
+  @@index([photoType])
+  @@map("handover_photos")
+}
+
+model DepositLedger {
+  id                  String              @id @default(uuid())
+  bookingId           String              @unique @map("booking_id")
+  paymentId           String?             @unique @map("payment_id")
+  status              DepositLedgerStatus @default(NOT_HELD)
+  heldAmount          Float               @default(0) @map("held_amount")
+  pendingChargeAmount Float               @default(0) @map("pending_charge_amount")
+  capturedAmount      Float               @default(0) @map("captured_amount")
+  releasedAmount      Float               @default(0) @map("released_amount")
+  refundedAmount      Float               @default(0) @map("refunded_amount")
+  notes               String?
+  heldAt              DateTime?           @map("held_at")
+  releaseDueAt        DateTime?           @map("release_due_at")
+  releasedAt          DateTime?           @map("released_at")
+  disputedAt          DateTime?           @map("disputed_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  booking Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([releaseDueAt])
+  @@map("deposit_ledgers")
+}
+
+model PostTripCharge {
+  id          String               @id @default(uuid())
+  bookingId   String               @map("booking_id")
+  tripId      String?              @map("trip_id")
+  type        PostTripChargeType
+  status      PostTripChargeStatus @default(PENDING_REVIEW)
+  source      PostTripChargeSource @default(SYSTEM)
+  amount      Float
+  quantity    Float?
+  unitPrice   Float?               @map("unit_price")
+  description String
+  evidence    Json?
+  reviewedBy  String?              @map("reviewed_by")
+  reviewedAt  DateTime?            @map("reviewed_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  booking         Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  trip            Trip?            @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  incidentReports IncidentReport[]
+
+  @@index([bookingId])
+  @@index([tripId])
+  @@index([type])
+  @@index([status])
+  @@index([source])
+  @@map("post_trip_charges")
+}
+
+model IncidentReport {
+  id               String           @id @default(uuid())
+  bookingId        String           @map("booking_id")
+  tripId           String?          @map("trip_id")
+  postTripChargeId String?          @map("post_trip_charge_id")
+  reporterId       String           @map("reporter_id")
+  category         IncidentCategory
+  severity         IncidentSeverity @default(MEDIUM)
+  status           IncidentStatus   @default(OPEN)
+  description      String
+  evidence         Json?
+  requiredEvidence Json?            @map("required_evidence")
+  adminNotes       String?          @map("admin_notes")
+  reviewedBy       String?          @map("reviewed_by")
+  reviewedAt       DateTime?        @map("reviewed_at")
+  resolvedAt       DateTime?        @map("resolved_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  booking        Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  trip           Trip?           @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  postTripCharge PostTripCharge? @relation(fields: [postTripChargeId], references: [id], onDelete: SetNull)
+  reporter       User            @relation("IncidentReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reviewer       User?           @relation("IncidentReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([tripId])
+  @@index([postTripChargeId])
+  @@index([reporterId])
+  @@index([category])
+  @@index([severity])
+  @@index([status])
+  @@index([createdAt])
+  @@map("incident_reports")
+}
+
+model KycVerification {
+  id              String    @id @default(uuid())
+  userId          String    @unique @map("user_id")
+  selfieUrl       String    @map("selfie_url")
+  idCardFrontUrl  String    @map("id_card_front_url")
+  idCardBackUrl   String    @map("id_card_back_url")
+  status          KycStatus @default(PENDING)
+  rejectionReason String?   @map("rejection_reason")
+  reviewedBy      String?   @map("reviewed_by")
+  reviewedAt      DateTime? @map("reviewed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user     User  @relation("KycApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("KycReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([reviewedBy])
+  @@map("kyc_verifications")
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum HandoverType {
+  CHECK_IN
+  CHECK_OUT
 }
 
 enum PrivacyRequestType {

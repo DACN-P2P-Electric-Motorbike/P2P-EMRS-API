@@ -1,5 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Booking, BookingStatus, PaymentStatus } from '@prisma/client';
+import {
+  Booking,
+  BookingStatus,
+  PaymentStatus,
+  ProtectionPlanType,
+} from '@prisma/client';
 import { Expose } from 'class-transformer';
 
 export class BookingEntity implements Booking {
@@ -39,6 +44,22 @@ export class BookingEntity implements Booking {
   @Expose()
   deposit: number;
 
+  @ApiProperty({ enum: ProtectionPlanType })
+  @Expose()
+  protectionPlan: ProtectionPlanType;
+
+  @ApiProperty()
+  @Expose()
+  protectionFee: number;
+
+  @ApiProperty()
+  @Expose()
+  protectionDeductible: number;
+
+  @ApiProperty()
+  @Expose()
+  protectionCoverageLimit: number;
+
   @ApiPropertyOptional()
   @Expose()
   notes: string | null;
@@ -46,6 +67,10 @@ export class BookingEntity implements Booking {
   @ApiPropertyOptional()
   @Expose()
   cancellationReason: string | null;
+
+  @ApiPropertyOptional({ description: 'Who cancelled: OWNER or RENTER' })
+  @Expose()
+  cancelledBy: string | null;
 
   @ApiProperty()
   @Expose()

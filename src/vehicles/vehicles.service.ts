@@ -8,9 +8,15 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
-import { CreateVehicleDto, UpdateVehicleDto } from './dto';
-import { VehicleEntity } from './entities/vehicle.entity';
 import {
+  CreateAvailabilityWindowDto,
+  CreateVehicleDto,
+  UpdateVehicleDto,
+} from './dto';
+import { VehicleEntity } from './entities/vehicle.entity';
+import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
+import {
+  AvailabilityWindowType,
   VehicleStatus,
   UserRole,
   BookingStatus,
@@ -18,6 +24,7 @@ import {
 } from '@prisma/client';
 import { VehicleSubmittedForApprovalEvent } from '../events/admin.events';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { KycService } from '../kyc/kyc.service';
 
 @Injectable()
 export class VehiclesService {
@@ -27,6 +34,7 @@ export class VehiclesService {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly trustScoreService: TrustScoreService,
+    private readonly kycService: KycService,
   ) {}
 
   /**
@@ -53,6 +61,7 @@ export class VehiclesService {
 
     if (!ownerRole.includes(UserRole.ADMIN)) {
       await this.trustScoreService.assertCanRegisterVehicle(ownerId);
+      await this.kycService.assertApproved(ownerId, 'vehicle');
     }
 
     // Check if license plate already exists
@@ -87,6 +96,23 @@ export class VehiclesService {
         licenseBack: dto.licenseBack,
         batteryLevel: dto.batteryLevel ?? 100,
         ownerId,
+        instantBook: dto.instantBook ?? false,
+        dailyKmLimit: dto.dailyKmLimit,
+        excessKmPrice: dto.excessKmPrice,
+        weeklyDiscount: dto.weeklyDiscount,
+        monthlyDiscount: dto.monthlyDiscount,
+        allowSmoke: dto.allowSmoke ?? false,
+        allowPets: dto.allowPets ?? false,
+        geoRestriction: dto.geoRestriction,
+        batteryReturnMin: dto.batteryReturnMin,
+        firstRegistrationYear: dto.firstRegistrationYear,
+        condition: dto.condition,
+        batteryType: dto.batteryType,
+        batteryHealth: dto.batteryHealth,
+        batteryCycleCount: dto.batteryCycleCount,
+        batteryLastServicedAt: dto.batteryLastServicedAt
+          ? new Date(dto.batteryLastServicedAt)
+          : undefined,
       },
     });
 
@@ -199,17 +225,36 @@ export class VehiclesService {
       'status',
       'batteryLevel',
       'pricePerHour',
+      'pricePerDay',
       'address',
       'latitude',
       'longitude',
       'description',
       'images',
       'isAvailable',
+      'instantBook',
+      'dailyKmLimit',
+      'excessKmPrice',
+      'weeklyDiscount',
+      'monthlyDiscount',
+      'allowSmoke',
+      'allowPets',
+      'geoRestriction',
+      'batteryReturnMin',
+      'firstRegistrationYear',
+      'condition',
+      'batteryType',
+      'batteryHealth',
+      'batteryCycleCount',
+      'batteryLastServicedAt',
     ];
 
     fieldsToMap.forEach((field) => {
       if (dto[field] !== undefined) {
-        updateData[field] = dto[field];
+        updateData[field] =
+          field === 'batteryLastServicedAt' && dto[field] !== null
+            ? new Date(dto[field] as string)
+            : dto[field];
       }
     });
 
@@ -353,6 +398,7 @@ export class VehiclesService {
     latitude?: number;
     longitude?: number;
     radiusKm?: number;
+    instantBook?: boolean;
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
@@ -375,10 +421,24 @@ export class VehiclesService {
       if (params.maxPrice) where.pricePerHour.lte = params.maxPrice;
     }
 
-    // Date-range availability filter: exclude vehicles with overlapping bookings
+    // Instant book filter
+    if (params?.instantBook !== undefined) {
+      where.instantBook = params.instantBook;
+    }
+
+    // Date-range availability filter: exclude vehicles with overlapping bookings,
+    // active checkout locks, blocked owner windows, or missing calendar coverage
+    // for vehicles that have opted into AVAILABLE windows.
     if (params?.startTime && params?.endTime) {
       const requestedStart = new Date(params.startTime);
       const requestedEnd = new Date(params.endTime);
+      if (
+        Number.isNaN(requestedStart.getTime()) ||
+        Number.isNaN(requestedEnd.getTime()) ||
+        requestedStart >= requestedEnd
+      ) {
+        throw new BadRequestException('Invalid availability time range');
+      }
 
       // Find vehicle IDs that have conflicting bookings in the requested window
       const conflictingBookings = await this.prisma.booking.findMany({
@@ -390,7 +450,6 @@ export class VehiclesService {
               BookingStatus.ONGOING,
             ],
           },
-          // Overlap condition: existing.startTime < requested.endTime AND existing.endTime > requested.startTime
           startTime: { lt: requestedEnd },
           endTime: { gt: requestedStart },
         },
@@ -398,27 +457,79 @@ export class VehiclesService {
         distinct: ['vehicleId'],
       });
 
-      const conflictingVehicleIds = conflictingBookings.map((b) => b.vehicleId);
+      // Also check for active booking locks
+      const conflictingLocks = await this.prisma.bookingLock.findMany({
+        where: {
+          expiresAt: { gt: new Date() },
+          startTime: { lt: requestedEnd },
+          endTime: { gt: requestedStart },
+        },
+        select: { vehicleId: true },
+        distinct: ['vehicleId'],
+      });
+
+      const blockedWindows =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: {
+            type: AvailabilityWindowType.BLOCKED,
+            startTime: { lt: requestedEnd },
+            endTime: { gt: requestedStart },
+          },
+          select: { vehicleId: true },
+          distinct: ['vehicleId'],
+        });
+
+      const vehiclesWithAvailableCalendar =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: { type: AvailabilityWindowType.AVAILABLE },
+          select: { vehicleId: true },
+          distinct: ['vehicleId'],
+        });
+
+      const calendarCoveredVehicles =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: {
+            type: AvailabilityWindowType.AVAILABLE,
+            startTime: { lte: requestedStart },
+            endTime: { gte: requestedEnd },
+          },
+          select: { vehicleId: true },
+          distinct: ['vehicleId'],
+        });
+
+      const calendarCoveredVehicleIds = new Set(
+        calendarCoveredVehicles.map((window) => window.vehicleId),
+      );
+      const calendarNotCoveredVehicleIds = vehiclesWithAvailableCalendar
+        .map((window) => window.vehicleId)
+        .filter((vehicleId) => !calendarCoveredVehicleIds.has(vehicleId));
+
+      const conflictingVehicleIds = [
+        ...new Set([
+          ...conflictingBookings.map((b) => b.vehicleId),
+          ...conflictingLocks.map((l) => l.vehicleId),
+          ...blockedWindows.map((window) => window.vehicleId),
+          ...calendarNotCoveredVehicleIds,
+        ]),
+      ];
 
       if (conflictingVehicleIds.length > 0) {
         where.id = { notIn: conflictingVehicleIds };
       }
     }
 
-    // When distance filtering is requested, fetch all matching vehicles first,
-    // then apply Haversine in-memory so the returned `total` reflects geo-filtered count.
+    // Fetch a larger pool for ranking, then paginate after scoring
     const useGeoFilter =
       params?.latitude !== undefined && params?.longitude !== undefined;
 
-    const dbLimit = useGeoFilter ? 1000 : (params?.limit ?? 20);
-    const dbOffset = useGeoFilter ? 0 : (params?.offset ?? 0);
+    const dbLimit = useGeoFilter ? 1000 : 200;
 
     const [rawVehicles, rawTotal] = await Promise.all([
       this.prisma.vehicle.findMany({
         where,
-        orderBy: [{ owner: { trustScore: 'desc' } }, { createdAt: 'desc' }],
+        orderBy: { createdAt: 'desc' },
         take: dbLimit,
-        skip: dbOffset,
+        skip: 0,
         include: {
           owner: {
             select: {
@@ -433,34 +544,241 @@ export class VehiclesService {
       this.prisma.vehicle.count({ where }),
     ]);
 
+    // --- Composite ranking ---
+    const scoredVehicles = rawVehicles.map((v) => {
+      let score = 0;
+
+      // 1. Proximity score (max 30 points, closer = higher)
+      if (useGeoFilter && v.latitude !== null && v.longitude !== null) {
+        const dist = this.haversineKm(
+          params!.latitude!,
+          params!.longitude!,
+          v.latitude,
+          v.longitude,
+        );
+        score += Math.max(0, 30 - (dist / (params!.radiusKm ?? 10)) * 30);
+      }
+
+      // 2. Owner trust score (max 20 points)
+      const ownerTrust = (v as any).owner?.trustScore ?? 50;
+      score += (ownerTrust / 150) * 20;
+
+      // 3. Listing quality — photos and description (max 15 points)
+      const photoScore = Math.min(v.images.length, 5) * 2; // up to 10
+      const descScore = v.description
+        ? Math.min(v.description.length / 100, 1) * 5
+        : 0; // up to 5
+      score += photoScore + descScore;
+
+      // 4. Popularity — totalTrips (max 15 points)
+      score += Math.min(v.totalTrips, 30) * 0.5;
+
+      // 5. Rating (max 10 points)
+      score += (v.totalRating / 5) * 10;
+
+      // 6. Instant book bonus (5 points)
+      if (v.instantBook) {
+        score += 5;
+      }
+
+      return { vehicle: v, score };
+    });
+
+    // 7. Price competitiveness bonus (max 5 points — lower = higher score)
+    if (scoredVehicles.length > 0) {
+      const prices = scoredVehicles.map((sv) =>
+        Number(sv.vehicle.pricePerHour),
+      );
+      const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+      for (const sv of scoredVehicles) {
+        const price = Number(sv.vehicle.pricePerHour);
+        if (avgPrice > 0) {
+          sv.score += Math.max(0, (1 - price / avgPrice) * 5);
+        }
+      }
+    }
+
+    // Sort by composite score descending
+    scoredVehicles.sort((a, b) => b.score - a.score);
+
     if (useGeoFilter) {
       const radius = params!.radiusKm ?? 10;
-      const filtered = rawVehicles.filter((v) => {
-        if (v.latitude === null || v.longitude === null) return false;
+      const geoFiltered = scoredVehicles.filter((sv) => {
+        if (sv.vehicle.latitude === null || sv.vehicle.longitude === null)
+          return false;
         return (
           this.haversineKm(
             params!.latitude!,
             params!.longitude!,
-            v.latitude,
-            v.longitude,
+            sv.vehicle.latitude,
+            sv.vehicle.longitude,
           ) <= radius
         );
       });
 
       const pageSize = params?.limit ?? 20;
       const pageOffset = params?.offset ?? 0;
-      const paged = filtered.slice(pageOffset, pageOffset + pageSize);
+      const paged = geoFiltered.slice(pageOffset, pageOffset + pageSize);
 
       return {
-        vehicles: paged.map((v) => VehicleEntity.fromPrisma(v)),
-        total: filtered.length,
+        vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
+        total: geoFiltered.length,
       };
     }
 
+    // Apply pagination to scored results
+    const pageSize = params?.limit ?? 20;
+    const pageOffset = params?.offset ?? 0;
+    const paged = scoredVehicles.slice(pageOffset, pageOffset + pageSize);
+
     return {
-      vehicles: rawVehicles.map((vehicle) => VehicleEntity.fromPrisma(vehicle)),
+      vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
       total: rawTotal,
     };
+  }
+
+  private assertValidAvailabilityRange(startTime: Date, endTime: Date): void {
+    if (
+      Number.isNaN(startTime.getTime()) ||
+      Number.isNaN(endTime.getTime()) ||
+      startTime >= endTime
+    ) {
+      throw new BadRequestException(
+        'Availability window end time must be after start time',
+      );
+    }
+  }
+
+  private async assertVehicleCalendarAccess(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+  ): Promise<void> {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { id: true, ownerId: true },
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Vehicle not found');
+    }
+
+    if (vehicle.ownerId !== userId && !userRole.includes(UserRole.ADMIN)) {
+      throw new ForbiddenException(
+        'You can only manage availability for your own vehicles',
+      );
+    }
+  }
+
+  async getAvailabilityWindows(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+    from?: string,
+    to?: string,
+  ): Promise<VehicleAvailabilityWindowEntity[]> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const where: {
+      vehicleId: string;
+      startTime?: { lt?: Date; gte?: Date };
+      endTime?: { gt?: Date; lte?: Date };
+    } = { vehicleId };
+
+    if (from || to) {
+      const fromDate = from ? new Date(from) : undefined;
+      const toDate = to ? new Date(to) : undefined;
+
+      if (
+        (fromDate && Number.isNaN(fromDate.getTime())) ||
+        (toDate && Number.isNaN(toDate.getTime())) ||
+        (fromDate && toDate && fromDate >= toDate)
+      ) {
+        throw new BadRequestException('Invalid availability query range');
+      }
+
+      if (fromDate && toDate) {
+        where.startTime = { lt: toDate };
+        where.endTime = { gt: fromDate };
+      } else if (fromDate) {
+        where.endTime = { gt: fromDate };
+      } else if (toDate) {
+        where.startTime = { lt: toDate };
+      }
+    }
+
+    const windows = await this.prisma.vehicleAvailabilityWindow.findMany({
+      where,
+      orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    return windows.map((window) =>
+      VehicleAvailabilityWindowEntity.fromPrisma(window),
+    );
+  }
+
+  async createAvailabilityWindow(
+    vehicleId: string,
+    userId: string,
+    userRole: UserRole[],
+    dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const startTime = new Date(dto.startTime);
+    const endTime = new Date(dto.endTime);
+    this.assertValidAvailabilityRange(startTime, endTime);
+
+    const overlappingWindow =
+      await this.prisma.vehicleAvailabilityWindow.findFirst({
+        where: {
+          vehicleId,
+          type: dto.type,
+          startTime: { lt: endTime },
+          endTime: { gt: startTime },
+        },
+        select: { id: true },
+      });
+
+    if (overlappingWindow) {
+      throw new BadRequestException(
+        'Availability window overlaps an existing window of the same type',
+      );
+    }
+
+    const window = await this.prisma.vehicleAvailabilityWindow.create({
+      data: {
+        vehicleId,
+        type: dto.type,
+        startTime,
+        endTime,
+        note: dto.note,
+      },
+    });
+
+    return VehicleAvailabilityWindowEntity.fromPrisma(window);
+  }
+
+  async deleteAvailabilityWindow(
+    vehicleId: string,
+    windowId: string,
+    userId: string,
+    userRole: UserRole[],
+  ): Promise<void> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const window = await this.prisma.vehicleAvailabilityWindow.findFirst({
+      where: { id: windowId, vehicleId },
+      select: { id: true },
+    });
+
+    if (!window) {
+      throw new NotFoundException('Availability window not found');
+    }
+
+    await this.prisma.vehicleAvailabilityWindow.delete({
+      where: { id: windowId },
+    });
   }
 
   /**

@@ -2,10 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsUUID,
   IsDateString,
+  IsEnum,
   IsOptional,
   IsString,
   IsNotEmpty,
 } from 'class-validator';
+import { ProtectionPlanType } from '@prisma/client';
 
 export class CreateBookingDto {
   @ApiProperty({
@@ -39,4 +41,14 @@ export class CreateBookingDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    enum: ProtectionPlanType,
+    description:
+      'Internal protection tier selected by the renter. Defaults to STANDARD.',
+    example: ProtectionPlanType.STANDARD,
+  })
+  @IsOptional()
+  @IsEnum(ProtectionPlanType)
+  protectionPlan?: ProtectionPlanType;
 }

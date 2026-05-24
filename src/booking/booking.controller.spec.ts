@@ -17,6 +17,7 @@ import { BookingStatus } from '@prisma/client';
 
 import { BookingsController } from './bookings.controller';
 import { BookingsService } from './bookings.service';
+import { BookingLockService } from './booking-lock.service';
 import { BookingEntity } from './entities/booking.entity';
 import {
   createMockBooking,
@@ -32,8 +33,14 @@ const mockBookingsService = {
   getUpcomingBookings: jest.fn(),
   getBookingHistory: jest.fn(),
   getBookingById: jest.fn(),
+  getCancellationRefundPreview: jest.fn(),
   cancelBooking: jest.fn(),
   getVehicleSchedule: jest.fn(),
+};
+
+const mockBookingLockService = {
+  createLock: jest.fn(),
+  releaseLock: jest.fn(),
 };
 
 // ─── Test Suite ───────────────────────────────────────────────────────────────
@@ -47,6 +54,10 @@ describe('BookingsController', () => {
         {
           provide: BookingsService,
           useValue: mockBookingsService,
+        },
+        {
+          provide: BookingLockService,
+          useValue: mockBookingLockService,
         },
       ],
     }).compile();
@@ -174,6 +185,45 @@ describe('BookingsController', () => {
     });
   });
 
+  describe('GET /:id/cancellation-preview', () => {
+    it('should return cancellation refund preview for the current user', async () => {
+      const preview = {
+        bookingId: BOOKING_ID,
+        cancelledBy: 'RENTER',
+        cancellable: true,
+        hoursUntilStart: 12,
+        policyCode: 'RENTER_STANDARD_PARTIAL_REFUND',
+        rentalRefundRate: 0.5,
+        trustPenalty: 5,
+        rentalAmount: 100000,
+        depositAmount: 500000,
+        paidAmount: 600000,
+        refundableRentalAmount: 50000,
+        refundableDepositAmount: 500000,
+        refundAmount: 550000,
+        forfeitedRentalAmount: 50000,
+        forfeitedDepositAmount: 0,
+        forfeitedAmount: 50000,
+        isPaid: true,
+        paymentStatus: 'COMPLETED',
+        refundType: 'partial',
+      };
+      mockBookingsService.getCancellationRefundPreview.mockResolvedValue(
+        preview,
+      );
+
+      const result = await controller.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(result).toEqual(preview);
+      expect(
+        mockBookingsService.getCancellationRefundPreview,
+      ).toHaveBeenCalledWith(BOOKING_ID, RENTER_ID);
+    });
+  });
+
   // ─── PATCH /:id/cancel — cancelBooking ──────────────────────────────────────
   describe('PATCH /:id/cancel (cancelBooking)', () => {
     it('should return the cancelled booking when renter cancels', async () => {
@@ -254,6 +304,44 @@ describe('BookingsController', () => {
       expect(result).toHaveLength(1);
       expect(mockBookingsService.getVehicleSchedule).toHaveBeenCalledWith(
         BOOKED_VEHICLE_ID,
+      );
+    });
+  });
+
+  describe('POST /lock', () => {
+    it('should create a booking lock for the current renter', async () => {
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      mockBookingLockService.createLock.mockResolvedValue({
+        id: 'lock-1',
+        expiresAt,
+      });
+      const dto = {
+        vehicleId: BOOKED_VEHICLE_ID,
+        startTime: new Date(Date.now() + 3600000).toISOString(),
+        endTime: new Date(Date.now() + 7200000).toISOString(),
+      };
+
+      const result = await controller.createBookingLock(RENTER_ID, dto);
+
+      expect(result).toEqual({ id: 'lock-1', expiresAt });
+      expect(mockBookingLockService.createLock).toHaveBeenCalledWith(
+        BOOKED_VEHICLE_ID,
+        RENTER_ID,
+        expect.any(Date),
+        expect.any(Date),
+      );
+    });
+  });
+
+  describe('DELETE /lock/:id', () => {
+    it('should release a booking lock owned by the current renter', async () => {
+      mockBookingLockService.releaseLock.mockResolvedValue(undefined);
+
+      await controller.releaseBookingLock('lock-1', RENTER_ID);
+
+      expect(mockBookingLockService.releaseLock).toHaveBeenCalledWith(
+        'lock-1',
+        RENTER_ID,
       );
     });
   });

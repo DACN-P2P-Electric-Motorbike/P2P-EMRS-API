@@ -30,9 +30,11 @@ import { VehiclesController } from '../../src/vehicles/vehicles.controller';
 import { VehiclesService } from '../../src/vehicles/vehicles.service';
 import { BookingsController } from '../../src/booking/bookings.controller';
 import { BookingsService } from '../../src/booking/bookings.service';
+import { BookingLockService } from '../../src/booking/booking-lock.service';
 import { PrismaService } from '../../src/database/prisma.service';
 import { JwtAuthGuard } from '../../src/auth/guards';
 import { TrustScoreService } from '../../src/trust-score/trust-score.service';
+import { KycService } from '../../src/kyc/kyc.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -75,16 +77,28 @@ const mockBooking = {
   create: jest.fn(),
   update: jest.fn(),
 };
+const mockBookingLock = {
+  findMany: jest.fn(),
+};
 const mockPayment = {
   findUnique: jest.fn().mockResolvedValue(null),
   update: jest.fn(),
 };
 const mockUser = { findUnique: jest.fn(), update: jest.fn() };
 const mockEventEmitter = { emit: jest.fn() };
+const mockBookingLockService = {
+  createLock: jest.fn(),
+  releaseLock: jest.fn(),
+  hasConflictingLock: jest.fn().mockResolvedValue(false),
+  releaseLocksByVehicleAndTime: jest.fn().mockResolvedValue(undefined),
+};
 const mockTrustScoreService = {
   assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
   assertCanRegisterVehicle: jest.fn().mockResolvedValue(undefined),
   recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
+};
+const mockKycService = {
+  assertApproved: jest.fn().mockResolvedValue(undefined),
 };
 
 function makeGuard(userId: string, roles: UserRole[]) {
@@ -124,6 +138,7 @@ async function buildFullApp(
         useValue: {
           vehicle: mockVehicle,
           booking: mockBooking,
+          bookingLock: mockBookingLock,
           user: mockUser,
           $transaction: jest.fn().mockImplementation(async (callback) =>
             callback({
@@ -136,6 +151,8 @@ async function buildFullApp(
       },
       { provide: EventEmitter2, useValue: mockEventEmitter },
       { provide: TrustScoreService, useValue: mockTrustScoreService },
+      { provide: BookingLockService, useValue: mockBookingLockService },
+      { provide: KycService, useValue: mockKycService },
     ],
   })
     .overrideGuard(JwtAuthGuard)

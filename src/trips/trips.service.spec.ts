@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BookingStatus,
+  HandoverType,
   PaymentMethod,
   PaymentStatus,
   TripStatus,
@@ -10,6 +11,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../database/prisma.service';
 import { TripsService } from './trips.service';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { IncidentsService } from '../incidents/incidents.service';
 
 const RENTER_ID = 'renter-uuid';
 const OWNER_ID = 'owner-uuid';
@@ -48,6 +50,14 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   trip: null,
   payment: makePayment(),
   vehicle: { batteryLevel: 100 },
+  handovers: [
+    {
+      id: 'handover-uuid',
+      confirmedByOwner: true,
+      confirmedByRenter: true,
+      type: HandoverType.CHECK_IN,
+    },
+  ],
   createdAt: new Date(),
   updatedAt: new Date(),
   ...overrides,
@@ -103,6 +113,9 @@ describe('TripsService', () => {
     recordViolation: jest.fn(),
     recordTransactionMilestone: jest.fn(),
   };
+  const incidentsService = {
+    createFromTripIssue: jest.fn(),
+  };
 
   beforeEach(async () => {
     prisma = mockPrisma();
@@ -114,6 +127,7 @@ describe('TripsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: eventEmitter },
         { provide: TrustScoreService, useValue: trustScoreService },
+        { provide: IncidentsService, useValue: incidentsService },
       ],
     }).compile();
 
@@ -168,6 +182,26 @@ describe('TripsService', () => {
           bookingId: BOOKING_ID,
         } as any),
       ).rejects.toThrow('Start location is required to start trip');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects starting before completed check-in handover sign-off', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          handovers: [
+            {
+              id: 'handover-uuid',
+              confirmedByOwner: true,
+              confirmedByRenter: false,
+              type: HandoverType.CHECK_IN,
+            },
+          ],
+        }),
+      );
+
+      await expect(service.startTrip(RENTER_ID, dto)).rejects.toThrow(
+        'Completed check-in handover is required before starting the trip',
+      );
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -232,6 +266,14 @@ describe('TripsService', () => {
           trip: true,
           payment: true,
           vehicle: { select: { batteryLevel: true } },
+          handovers: {
+            where: { type: HandoverType.CHECK_IN },
+            select: {
+              id: true,
+              confirmedByOwner: true,
+              confirmedByRenter: true,
+            },
+          },
         },
       });
       expect(prisma.tx.trip.create).toHaveBeenCalledWith(

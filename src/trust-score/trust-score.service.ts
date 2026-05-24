@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
   BookingStatus,
+  KycStatus,
   Prisma,
   TrustScoreEventType,
   UserStatus,
@@ -331,7 +332,15 @@ export class TrustScoreService {
   async recalculateUserTrustScore(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, trustScore: true, idCardNum: true },
+      select: {
+        id: true,
+        trustScore: true,
+        kycVerifications: {
+          where: { status: KycStatus.APPROVED },
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
     if (!user) return null;
 
@@ -372,7 +381,7 @@ export class TrustScoreService {
         ? (onTimeTrips / completedTrips.length) * 100
         : 100;
     const disputeRate = allTrips > 0 ? (disputedTrips / allTrips) * 100 : 0;
-    const kycScore = user.idCardNum ? 100 : 0;
+    const kycScore = user.kycVerifications.length > 0 ? 100 : 0;
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const recentCompletedTrips = completedTrips.filter(
       (trip) =>

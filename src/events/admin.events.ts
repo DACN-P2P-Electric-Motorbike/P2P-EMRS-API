@@ -13,6 +13,7 @@ export class TripIssueReportedEvent {
     public readonly renterId: string,
     public readonly vehicleId: string,
     public readonly issueDescription: string,
+    public readonly incidentReportId?: string,
   ) {}
 }
 

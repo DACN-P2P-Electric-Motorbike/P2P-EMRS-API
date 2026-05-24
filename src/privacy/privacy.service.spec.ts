@@ -39,6 +39,7 @@ describe('PrivacyService', () => {
     const result = await service.exportPersonalData(USER_ID);
     const call = prisma.user.findUnique.mock.calls[0][0];
     const tripSelect = call.select.trips.select;
+    const incidentSelect = call.select.incidentReportsFiled.select;
 
     expect(result.user).toBe(user);
     expect(result.generatedAt).toEqual(expect.any(String));
@@ -57,6 +58,14 @@ describe('PrivacyService', () => {
     expect(tripSelect).not.toHaveProperty('endLatitude');
     expect(tripSelect).not.toHaveProperty('endLongitude');
     expect(tripSelect).not.toHaveProperty('endAddress');
+    expect(incidentSelect).toMatchObject({
+      bookingId: true,
+      category: true,
+      severity: true,
+      status: true,
+      description: true,
+      evidence: true,
+    });
   });
 
   it('throws NotFoundException when exporting for a missing user', async () => {

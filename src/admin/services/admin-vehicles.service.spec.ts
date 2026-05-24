@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { VehicleStatus } from '@prisma/client';
+import { BatteryType, VehicleCondition, VehicleStatus } from '@prisma/client';
 import { AdminVehiclesService } from './admin-vehicles.service';
 import { AdminVehiclesRepository } from '../repositories/admin-vehicles.repository';
 
@@ -15,6 +15,12 @@ describe('AdminVehiclesService', () => {
     year: 2025,
     licensePlate: '59-A1',
     images: ['image.jpg'],
+    firstRegistrationYear: 2024,
+    condition: VehicleCondition.GOOD,
+    batteryType: BatteryType.REMOVABLE,
+    batteryHealth: 92,
+    batteryCycleCount: 180,
+    batteryLastServicedAt: new Date('2026-05-01T00:00:00.000Z'),
     status: VehicleStatus.PENDING_APPROVAL,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
     owner: {
@@ -55,6 +61,12 @@ describe('AdminVehiclesService', () => {
             year: 2025,
             plate_number: '59-A1',
             images: ['image.jpg'],
+            first_registration_year: 2024,
+            condition: VehicleCondition.GOOD,
+            battery_type: BatteryType.REMOVABLE,
+            battery_health: 92,
+            battery_cycle_count: 180,
+            battery_last_serviced_at: new Date('2026-05-01T00:00:00.000Z'),
           },
           status: VehicleStatus.PENDING_APPROVAL,
         },

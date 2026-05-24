@@ -4,8 +4,10 @@
  * @coverage target ≥80%
  */
 import {
+  BatteryType,
   Prisma,
   VehicleBrand,
+  VehicleCondition,
   VehicleFeature,
   VehicleStatus,
   VehicleType,
@@ -50,6 +52,21 @@ export type MockVehicle = {
   totalTrips: number;
   totalRating: number;
   reviewCount: number;
+  instantBook: boolean;
+  dailyKmLimit: number | null;
+  excessKmPrice: number | null;
+  weeklyDiscount: number | null;
+  monthlyDiscount: number | null;
+  allowSmoke: boolean;
+  allowPets: boolean;
+  geoRestriction: string | null;
+  batteryReturnMin: number | null;
+  firstRegistrationYear: number | null;
+  condition: VehicleCondition | null;
+  batteryType: BatteryType | null;
+  batteryHealth: number | null;
+  batteryCycleCount: number | null;
+  batteryLastServicedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -91,6 +108,21 @@ export function createMockVehicle(
     totalTrips: 0,
     totalRating: 5,
     reviewCount: 0,
+    instantBook: false,
+    dailyKmLimit: null,
+    excessKmPrice: null,
+    weeklyDiscount: null,
+    monthlyDiscount: null,
+    allowSmoke: false,
+    allowPets: false,
+    geoRestriction: null,
+    batteryReturnMin: null,
+    firstRegistrationYear: 2024,
+    condition: VehicleCondition.GOOD,
+    batteryType: BatteryType.REMOVABLE,
+    batteryHealth: 95,
+    batteryCycleCount: 120,
+    batteryLastServicedAt: new Date('2024-01-01T00:00:00Z'),
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
     ...overrides,

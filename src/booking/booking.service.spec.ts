@@ -19,14 +19,24 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BookingStatus, VehicleStatus, Prisma } from '@prisma/client';
+import {
+  BookingStatus,
+  DepositLedgerStatus,
+  PaymentStatus,
+  ProtectionPlanType,
+  VehicleStatus,
+  Prisma,
+} from '@prisma/client';
 
 import { BookingsService } from './bookings.service';
+import { BookingLockService } from './booking-lock.service';
 import { PrismaService } from '../database/prisma.service';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { KycService } from '../kyc/kyc.service';
 import {
   createMockBooking,
   RENTER_ID,
@@ -95,6 +105,13 @@ describe('BookingsService', () => {
     create: jest.fn(),
     update: jest.fn(),
   };
+  const mockPaymentDelegate = {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  };
+  const mockDepositLedgerDelegate = {
+    updateMany: jest.fn(),
+  };
   const mockUserDelegate = {
     findUnique: jest.fn(),
     update: jest.fn(),
@@ -103,6 +120,13 @@ describe('BookingsService', () => {
   const mockTrustScoreService = {
     assertCanCreateBooking: jest.fn().mockResolvedValue(undefined),
     recordViolation: jest.fn().mockResolvedValue({ warned: true, score: 100 }),
+  };
+  const mockBookingLockService = {
+    hasConflictingLock: jest.fn().mockResolvedValue(false),
+    releaseLocksByVehicleAndTime: jest.fn().mockResolvedValue(undefined),
+  };
+  const mockKycService = {
+    assertApproved: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {
@@ -114,16 +138,16 @@ describe('BookingsService', () => {
           useValue: {
             vehicle: mockVehicleDelegate,
             booking: mockBookingDelegate,
+            payment: mockPaymentDelegate,
+            depositLedger: mockDepositLedgerDelegate,
             user: mockUserDelegate,
             // Simulate Prisma interactive transaction by immediately invoking
             // the callback with a mock transactional client
             $transaction: jest.fn().mockImplementation(async (callback) =>
               callback({
                 booking: mockBookingDelegate,
-                payment: {
-                  findUnique: jest.fn().mockResolvedValue(null),
-                  update: jest.fn(),
-                },
+                payment: mockPaymentDelegate,
+                depositLedger: mockDepositLedgerDelegate,
                 user: mockUserDelegate,
               }),
             ),
@@ -137,12 +161,33 @@ describe('BookingsService', () => {
           provide: TrustScoreService,
           useValue: mockTrustScoreService,
         },
+        {
+          provide: BookingLockService,
+          useValue: mockBookingLockService,
+        },
+        {
+          provide: KycService,
+          useValue: mockKycService,
+        },
       ],
     }).compile();
 
     service = module.get<BookingsService>(BookingsService);
 
     jest.clearAllMocks();
+    mockTrustScoreService.assertCanCreateBooking.mockResolvedValue(undefined);
+    mockTrustScoreService.recordViolation.mockResolvedValue({
+      warned: true,
+      score: 100,
+    });
+    mockPaymentDelegate.findUnique.mockResolvedValue(null);
+    mockPaymentDelegate.update.mockResolvedValue({});
+    mockDepositLedgerDelegate.updateMany.mockResolvedValue({ count: 0 });
+    mockBookingLockService.hasConflictingLock.mockResolvedValue(false);
+    mockBookingLockService.releaseLocksByVehicleAndTime.mockResolvedValue(
+      undefined,
+    );
+    mockKycService.assertApproved.mockResolvedValue(undefined);
   });
 
   // ─── createBooking ──────────────────────────────────────────────────────────
@@ -167,6 +212,46 @@ describe('BookingsService', () => {
       // Assert
       expect(result.status).toBe(BookingStatus.PENDING);
       expect(result.renterId).toBe(RENTER_ID);
+      expect(mockBookingLockService.hasConflictingLock).toHaveBeenCalledWith(
+        dto.vehicleId,
+        expect.any(Date),
+        expect.any(Date),
+        RENTER_ID,
+      );
+      expect(
+        mockBookingLockService.releaseLocksByVehicleAndTime,
+      ).toHaveBeenCalledWith(dto.vehicleId, expect.any(Date), expect.any(Date));
+    });
+
+    it('should persist selected protection tier with calculated fee and deductible', async () => {
+      const vehicle = createAvailableVehicle();
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+        protectionPlan: ProtectionPlanType.PREMIUM,
+        protectionFee: 5000,
+        protectionDeductible: 500000,
+        protectionCoverageLimit: 30000000,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+
+      const dto = buildCreateBookingDto({
+        protectionPlan: ProtectionPlanType.PREMIUM,
+      });
+
+      await service.createBooking(RENTER_ID, dto as any);
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            protectionPlan: ProtectionPlanType.PREMIUM,
+            protectionFee: 5000,
+            protectionDeductible: 500000,
+            protectionCoverageLimit: 30000000,
+          }),
+        }),
+      );
     });
 
     it('should emit event "booking.created" via EventEmitter2 after booking is created', async () => {
@@ -208,6 +293,22 @@ describe('BookingsService', () => {
       ).rejects.toThrow('Vehicle is not available for booking');
     });
 
+    it('should require renter KYC approval before booking', async () => {
+      mockKycService.assertApproved.mockRejectedValueOnce(
+        new ForbiddenException('KYC verification is required'),
+      );
+
+      await expect(
+        service.createBooking(RENTER_ID, buildCreateBookingDto() as any),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(mockKycService.assertApproved).toHaveBeenCalledWith(
+        RENTER_ID,
+        'booking',
+      );
+      expect(mockVehicleDelegate.findUnique).not.toHaveBeenCalled();
+    });
+
     it('should throw ConflictException when vehicle is already booked for overlapping time', async () => {
       // Arrange — vehicle is available but time slot is conflicted
       const vehicle = createAvailableVehicle();
@@ -227,6 +328,22 @@ describe('BookingsService', () => {
       ).rejects.toThrow(
         'Vehicle is already booked for the selected time period',
       );
+    });
+
+    it('should throw ConflictException when another renter holds an active booking lock', async () => {
+      const vehicle = createAvailableVehicle();
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockService.hasConflictingLock.mockResolvedValue(true);
+
+      const dto = buildCreateBookingDto();
+
+      await expect(
+        service.createBooking(RENTER_ID, dto as any),
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        service.createBooking(RENTER_ID, dto as any),
+      ).rejects.toThrow('temporarily held by another user');
     });
 
     it('should throw BadRequestException("You cannot book your own vehicle") when renterId equals ownerId', async () => {
@@ -421,6 +538,35 @@ describe('BookingsService', () => {
   // ─── cancelBooking ──────────────────────────────────────────────────────────
 
   describe('cancelBooking', () => {
+    it('previews rental/deposit cancellation refund split for a paid booking', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+        }),
+        payment: {
+          amount: 600000,
+          status: PaymentStatus.COMPLETED,
+        },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.rentalRefundRate).toBe(0.5);
+      expect(preview.refundableRentalAmount).toBe(50000);
+      expect(preview.refundableDepositAmount).toBe(500000);
+      expect(preview.refundAmount).toBe(550000);
+      expect(preview.forfeitedRentalAmount).toBe(50000);
+      expect(preview.trustPenalty).toBe(5);
+      expect(preview.policyCode).toBe('RENTER_STANDARD_PARTIAL_REFUND');
+    });
+
     it('should set booking status to CANCELLED when called by the renter', async () => {
       // Arrange
       const booking = createMockBooking({
@@ -454,6 +600,75 @@ describe('BookingsService', () => {
         expect.objectContaining({
           where: { id: BOOKING_ID },
           data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
+        }),
+      );
+    });
+
+    it('records explicit refund breakdown and refunds deposit on paid cancellation', async () => {
+      const booking = createMockBooking({
+        status: BookingStatus.CONFIRMED,
+        renterId: RENTER_ID,
+        startTime: futureDate(12),
+        totalPrice: 100000,
+        deposit: 500000,
+      });
+      const cancelledBooking = createMockBooking({
+        status: BookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+      });
+      const payment = {
+        id: 'payment-id',
+        bookingId: BOOKING_ID,
+        amount: 600000,
+        status: PaymentStatus.COMPLETED,
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue({
+        ...booking,
+        payment,
+      });
+      mockBookingDelegate.update.mockResolvedValue(cancelledBooking);
+      mockPaymentDelegate.findUnique.mockResolvedValue(payment);
+
+      await service.cancelBooking(BOOKING_ID, RENTER_ID, {
+        reason: 'Schedule changed',
+      } as any);
+
+      expect(mockPaymentDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: payment.id },
+          data: expect.objectContaining({
+            status: PaymentStatus.REFUNDED,
+            gatewayResponse: expect.objectContaining({
+              refundType: 'partial',
+              refundRate: 0.5,
+              refundAmount: 550000,
+              cancellationRefundBreakdown: expect.objectContaining({
+                refundableRentalAmount: 50000,
+                refundableDepositAmount: 500000,
+                forfeitedRentalAmount: 50000,
+                forfeitedDepositAmount: 0,
+              }),
+            }),
+          }),
+        }),
+      );
+      expect(mockDepositLedgerDelegate.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { bookingId: BOOKING_ID },
+          data: expect.objectContaining({
+            status: DepositLedgerStatus.REFUNDED,
+            refundedAmount: 500000,
+          }),
+        }),
+      );
+      expect(mockTrustScoreService.recordViolation).toHaveBeenCalledWith(
+        RENTER_ID,
+        expect.any(String),
+        5,
+        'Renter cancelled a confirmed booking',
+        expect.objectContaining({
+          rentalRefundRate: 0.5,
+          refundAmount: 550000,
         }),
       );
     });
@@ -522,7 +737,7 @@ describe('BookingsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw BadRequestException when userId is not the renter of the booking', async () => {
+    it('should throw BadRequestException when userId is not involved in the booking', async () => {
       // Arrange — booking belongs to RENTER_ID, but THIRD_PARTY_ID tries to cancel
       const booking = createMockBooking({
         renterId: RENTER_ID,
@@ -538,7 +753,7 @@ describe('BookingsService', () => {
       ).rejects.toThrow(BadRequestException);
       await expect(
         service.cancelBooking(BOOKING_ID, THIRD_PARTY_ID, dto as any),
-      ).rejects.toThrow('You can only cancel your own bookings');
+      ).rejects.toThrow('You can only cancel bookings you are involved in');
     });
   });
 

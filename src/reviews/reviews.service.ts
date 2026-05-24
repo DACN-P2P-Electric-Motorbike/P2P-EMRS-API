@@ -4,11 +4,18 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { Review, ReviewType, TrustScoreEventType } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { ReviewEntity } from './entities/review.entity';
 import { CreateReviewDto } from './dto/create-review.dto';
-import { TrustScoreEventType } from '@prisma/client';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+
+const REVIEW_REVEAL_WINDOW_DAYS = 14;
+
+type ReviewForEffects = Review & {
+  vehicle?: { ownerId: string } | null;
+};
 
 @Injectable()
 export class ReviewsService {
@@ -20,7 +27,9 @@ export class ReviewsService {
   ) {}
 
   /**
-   * Create a review for a vehicle
+   * Create a blind trip-bound review. Renter reviews owner/vehicle; owner
+   * reviews renter. Reviews reveal only after both parties submit or after the
+   * 14-day reveal window expires.
    */
   async createReview(
     userId: string,
@@ -30,7 +39,6 @@ export class ReviewsService {
       `User ${userId} creating review for vehicle ${dto.vehicleId}`,
     );
 
-    // Check if vehicle exists
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { id: dto.vehicleId },
     });
@@ -39,53 +47,58 @@ export class ReviewsService {
       throw new NotFoundException('Vehicle not found');
     }
 
-    // Check if user has completed a trip with this vehicle. When a bookingId
-    // is supplied, bind the review to that exact completed trip.
     const completedTrip = await this.prisma.trip.findFirst({
       where: {
-        renterId: userId,
         vehicleId: dto.vehicleId,
         status: 'COMPLETED',
         ...(dto.bookingId ? { bookingId: dto.bookingId } : {}),
+        OR: [{ renterId: userId }, { booking: { ownerId: userId } }],
       },
+      include: {
+        booking: true,
+      },
+      orderBy: [{ completedAt: 'desc' }, { createdAt: 'desc' }],
     });
 
     if (!completedTrip) {
       throw new BadRequestException(
-        'You can only review vehicles you have rented',
+        'You can only review after completing a trip as renter or owner',
       );
     }
 
-    if (dto.bookingId) {
-      const existingReview = await this.prisma.review.findFirst({
-        where: { tripId: completedTrip.id },
-      });
+    const reviewType =
+      completedTrip.renterId === userId
+        ? ReviewType.RENTER_TO_OWNER
+        : ReviewType.OWNER_TO_RENTER;
+    const revieweeId =
+      reviewType === ReviewType.RENTER_TO_OWNER
+        ? completedTrip.booking.ownerId
+        : completedTrip.renterId;
 
-      if (existingReview) {
-        throw new BadRequestException('Bạn đã đánh giá chuyến đi này rồi');
-      }
-    } else {
-      const existingReview = await this.prisma.review.findFirst({
-        where: { userId, vehicleId: dto.vehicleId },
-      });
-      if (existingReview) {
-        throw new BadRequestException('Bạn đã đánh giá xe này rồi');
-      }
+    const existingReview = await this.prisma.review.findFirst({
+      where: { tripId: completedTrip.id, userId },
+    });
+
+    if (existingReview) {
+      throw new BadRequestException('Bạn đã đánh giá chuyến đi này rồi');
     }
 
-    // Create review
+    const revealBase =
+      completedTrip.completedAt ?? completedTrip.updatedAt ?? new Date();
+    const visibleAt = this.addDays(revealBase, REVIEW_REVEAL_WINDOW_DAYS);
+
     const review = await this.prisma.review.create({
       data: {
         userId,
+        revieweeId,
         vehicleId: dto.vehicleId,
-        tripId: dto.bookingId ? completedTrip.id : undefined,
+        tripId: completedTrip.id,
+        reviewType,
         rating: dto.rating,
         comment: dto.comment,
+        visibleAt,
       },
     });
-
-    // Update vehicle rating
-    await this.updateVehicleRating(dto.vehicleId);
 
     await this.trustScoreService.recordPositiveEvent(
       userId,
@@ -96,27 +109,132 @@ export class ReviewsService {
         reviewId: review.id,
         vehicleId: dto.vehicleId,
         tripId: completedTrip.id,
+        reviewType,
       },
     );
 
-    await this.adjustOwnerTrustFromRating(
-      vehicle.ownerId,
-      dto.rating,
-      review.id,
-      dto.vehicleId,
-    );
+    await this.revealTripReviewsIfComplete(completedTrip.id);
+
+    const updatedReview =
+      (await this.prisma.review.findFirst({
+        where: { id: review.id },
+      })) ?? review;
 
     this.logger.log(`Review ${review.id} created successfully`);
 
-    return ReviewEntity.fromPrisma(review);
+    return ReviewEntity.fromPrisma(updatedReview);
+  }
+
+  @Cron('0 */15 * * * *')
+  async revealEligibleReviews(): Promise<number> {
+    const now = new Date();
+    const dueReviews = await this.prisma.review.findMany({
+      where: {
+        revealedAt: null,
+        visibleAt: { lte: now },
+      },
+      include: {
+        vehicle: {
+          select: { ownerId: true },
+        },
+      },
+      take: 100,
+    });
+
+    if (dueReviews.length === 0) {
+      return 0;
+    }
+
+    const reviewIds = dueReviews.map((review) => review.id);
+    await this.prisma.review.updateMany({
+      where: { id: { in: reviewIds }, revealedAt: null },
+      data: { revealedAt: now },
+    });
+
+    await this.applyRevealedReviewEffects(
+      dueReviews.map((review) => ({ ...review, revealedAt: now })),
+    );
+
+    return dueReviews.length;
+  }
+
+  private async revealTripReviewsIfComplete(tripId: string): Promise<void> {
+    const tripReviews = await this.prisma.review.findMany({
+      where: { tripId },
+      include: {
+        vehicle: {
+          select: { ownerId: true },
+        },
+      },
+    });
+
+    const hasRenterReview = tripReviews.some(
+      (review) => review.reviewType === ReviewType.RENTER_TO_OWNER,
+    );
+    const hasOwnerReview = tripReviews.some(
+      (review) => review.reviewType === ReviewType.OWNER_TO_RENTER,
+    );
+
+    if (!hasRenterReview || !hasOwnerReview) {
+      return;
+    }
+
+    const now = new Date();
+    await this.prisma.review.updateMany({
+      where: { tripId, revealedAt: null },
+      data: { revealedAt: now },
+    });
+
+    await this.applyRevealedReviewEffects(
+      tripReviews.map((review) => ({
+        ...review,
+        revealedAt: review.revealedAt ?? now,
+      })),
+    );
+  }
+
+  private async applyRevealedReviewEffects(
+    reviews: ReviewForEffects[],
+  ): Promise<void> {
+    for (const review of reviews) {
+      if (review.trustAppliedAt) {
+        continue;
+      }
+
+      if (review.reviewType === ReviewType.RENTER_TO_OWNER) {
+        await this.updateVehicleRating(review.vehicleId);
+        await this.adjustUserTrustFromRating(
+          review.revieweeId ?? review.vehicle?.ownerId ?? null,
+          review.rating,
+          review.id,
+          review.vehicleId,
+        );
+      } else {
+        await this.adjustUserTrustFromRating(
+          review.revieweeId,
+          review.rating,
+          review.id,
+          review.vehicleId,
+        );
+      }
+
+      await this.prisma.review.update({
+        where: { id: review.id },
+        data: { trustAppliedAt: new Date() },
+      });
+    }
   }
 
   /**
-   * Update vehicle average rating
+   * Update vehicle average from revealed renter-to-owner reviews only.
    */
   private async updateVehicleRating(vehicleId: string): Promise<void> {
     const reviews = await this.prisma.review.findMany({
-      where: { vehicleId },
+      where: {
+        vehicleId,
+        reviewType: ReviewType.RENTER_TO_OWNER,
+        revealedAt: { not: null },
+      },
     });
 
     const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
@@ -132,27 +250,31 @@ export class ReviewsService {
   }
 
   /**
-   * Adjust owner trust score based on received rating:
-   * 1-2 stars => -3, 3 stars => 0, 4-5 stars => +1
+   * Adjust reviewed user's trust score based on revealed rating:
+   * 1-2 stars => -3, 3 stars => 0, 4-5 stars => +1.
    */
-  private async adjustOwnerTrustFromRating(
-    ownerId: string,
+  private async adjustUserTrustFromRating(
+    revieweeId: string | null,
     rating: number,
     reviewId: string,
     vehicleId: string,
   ): Promise<void> {
+    if (!revieweeId) {
+      return;
+    }
+
     if (rating <= 2) {
       await this.trustScoreService.recordViolation(
-        ownerId,
+        revieweeId,
         TrustScoreEventType.BAD_REVIEW_RECEIVED,
         3,
         'Received a low rating',
         { reviewId, vehicleId, rating },
       );
-      await this.applyConsecutiveLowRatingPenalty(ownerId);
+      await this.applyConsecutiveLowRatingPenalty(revieweeId);
     } else if (rating >= 4) {
       await this.trustScoreService.recordPositiveEvent(
-        ownerId,
+        revieweeId,
         TrustScoreEventType.GOOD_REVIEW_RECEIVED,
         1,
         'Received a good rating',
@@ -171,7 +293,11 @@ export class ReviewsService {
     if (vehicleIds.length === 0) return;
 
     const recentReviews = await this.prisma.review.findMany({
-      where: { vehicleId: { in: vehicleIds } },
+      where: {
+        vehicleId: { in: vehicleIds },
+        reviewType: ReviewType.RENTER_TO_OWNER,
+        revealedAt: { not: null },
+      },
       orderBy: { createdAt: 'desc' },
       take: 3,
     });
@@ -192,14 +318,19 @@ export class ReviewsService {
   }
 
   /**
-   * Get reviews for a vehicle
+   * Get revealed renter-to-owner reviews for a vehicle.
    */
   async getVehicleReviews(
     vehicleId: string,
     rating?: number,
   ): Promise<ReviewEntity[]> {
     const reviews = await this.prisma.review.findMany({
-      where: { vehicleId, ...(rating ? { rating } : {}) },
+      where: {
+        vehicleId,
+        reviewType: ReviewType.RENTER_TO_OWNER,
+        revealedAt: { not: null },
+        ...(rating ? { rating } : {}),
+      },
       include: {
         user: {
           select: {
@@ -215,7 +346,7 @@ export class ReviewsService {
   }
 
   /**
-   * Get reviews created by a user
+   * Get reviews created by a user, including unrevealed own submissions.
    */
   async getUserReviews(userId: string): Promise<ReviewEntity[]> {
     const reviews = await this.prisma.review.findMany({
@@ -238,18 +369,16 @@ export class ReviewsService {
   }
 
   /**
-   * Get trust score breakdown for a user
+   * Get trust score breakdown for a user.
    */
   async getTrustScoreBreakdown(userId: string, includeAudit = false) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    // Count reviews left by this user
     const reviewsGiven = await this.prisma.review.count({
       where: { userId },
     });
 
-    // Average rating received (as vehicle owner)
     const ownedVehicleIds = await this.prisma.vehicle.findMany({
       where: { ownerId: userId },
       select: { id: true },
@@ -260,7 +389,11 @@ export class ReviewsService {
     let totalReviewsReceived = 0;
     if (vehicleIds.length > 0) {
       const ratingAgg = await this.prisma.review.aggregate({
-        where: { vehicleId: { in: vehicleIds } },
+        where: {
+          vehicleId: { in: vehicleIds },
+          reviewType: ReviewType.RENTER_TO_OWNER,
+          revealedAt: { not: null },
+        },
         _avg: { rating: true },
         _count: { id: true },
       });
@@ -268,22 +401,18 @@ export class ReviewsService {
       totalReviewsReceived = ratingAgg._count.id;
     }
 
-    // Cancelled bookings (as renter)
     const cancelledBookings = await this.prisma.booking.count({
       where: { renterId: userId, status: 'CANCELLED' },
     });
 
-    // Rejected bookings (as owner)
     const rejectedBookings = await this.prisma.booking.count({
       where: { ownerId: userId, status: 'REJECTED' },
     });
 
-    // Completed trips
     const completedTrips = await this.prisma.trip.count({
       where: { renterId: userId, status: 'COMPLETED' },
     });
 
-    // Trips with issues reported
     const tripsWithIssues = await this.prisma.trip.count({
       where: { renterId: userId, hasIssues: true },
     });
@@ -304,7 +433,7 @@ export class ReviewsService {
         : {}),
       breakdown: {
         reviewsGiven,
-        reviewsGivenBonus: reviewsGiven, // +1 each
+        reviewsGivenBonus: reviewsGiven,
         avgRatingReceived,
         totalReviewsReceived,
         cancelledBookings,
@@ -316,5 +445,11 @@ export class ReviewsService {
         violationPenalty: tripsWithIssues * -3,
       },
     };
+  }
+
+  private addDays(date: Date, days: number): Date {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
   }
 }

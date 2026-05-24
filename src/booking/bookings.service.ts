@@ -12,15 +12,22 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import {
   BookingStatus,
+  DepositLedgerStatus,
   VehicleStatus,
   PaymentStatus,
+  Prisma,
+  ProtectionPlanType,
   TrustScoreEventType,
 } from '@prisma/client';
 import {
   BookingCreatedEvent,
   BookingCancelledEvent,
+  BookingApprovedEvent,
 } from '../events/booking.events';
 import { TrustScoreService } from '../trust-score/trust-score.service';
+import { BookingLockService } from './booking-lock.service';
+import { KycService } from '../kyc/kyc.service';
+import { CancellationRefundPreviewEntity } from './entities/cancellation-refund-preview.entity';
 
 @Injectable()
 export class BookingsService {
@@ -28,11 +35,37 @@ export class BookingsService {
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
   private readonly MIN_BOOKING_MINUTES = 30;
   private readonly MAX_BOOKING_DAYS = 30;
+  private readonly PROTECTION_PLANS: Record<
+    ProtectionPlanType,
+    {
+      feeRate: number;
+      deductible: number;
+      coverageLimit: number;
+    }
+  > = {
+    [ProtectionPlanType.BASIC]: {
+      feeRate: 0,
+      deductible: 3_000_000,
+      coverageLimit: 5_000_000,
+    },
+    [ProtectionPlanType.STANDARD]: {
+      feeRate: 0.05,
+      deductible: 1_500_000,
+      coverageLimit: 15_000_000,
+    },
+    [ProtectionPlanType.PREMIUM]: {
+      feeRate: 0.1,
+      deductible: 500_000,
+      coverageLimit: 30_000_000,
+    },
+  };
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly trustScoreService: TrustScoreService,
+    private readonly bookingLockService: BookingLockService,
+    private readonly kycService: KycService,
   ) {}
 
   /**
@@ -55,6 +88,24 @@ export class BookingsService {
 
     // Otherwise use hourly rate
     return Math.ceil(durationHours) * pricePerHour;
+  }
+
+  private calculateProtection(
+    plan: ProtectionPlanType,
+    rentalPrice: number,
+  ): {
+    protectionPlan: ProtectionPlanType;
+    protectionFee: number;
+    protectionDeductible: number;
+    protectionCoverageLimit: number;
+  } {
+    const config = this.PROTECTION_PLANS[plan];
+    return {
+      protectionPlan: plan,
+      protectionFee: this.roundMoney(rentalPrice * config.feeRate),
+      protectionDeductible: config.deductible,
+      protectionCoverageLimit: config.coverageLimit,
+    };
   }
 
   /**
@@ -138,6 +189,7 @@ export class BookingsService {
     }
 
     await this.trustScoreService.assertCanCreateBooking(userId);
+    await this.kycService.assertApproved(userId, 'booking');
 
     // Get vehicle details
     const vehicle = await this.prisma.vehicle.findUnique({
@@ -172,12 +224,29 @@ export class BookingsService {
       );
     }
 
+    const hasConflictingLock = await this.bookingLockService.hasConflictingLock(
+      dto.vehicleId,
+      startTime,
+      endTime,
+      userId,
+    );
+
+    if (hasConflictingLock) {
+      throw new ConflictException(
+        'This time slot is temporarily held by another user. Please try again in a few minutes.',
+      );
+    }
+
     // Calculate pricing
     const totalPrice = this.calculateTotalPrice(
       startTime,
       endTime,
       vehicle.pricePerHour.toNumber(),
       vehicle.pricePerDay?.toNumber() ?? vehicle.pricePerHour.toNumber() * 24,
+    );
+    const protection = this.calculateProtection(
+      dto.protectionPlan ?? ProtectionPlanType.STANDARD,
+      totalPrice,
     );
 
     // Create booking
@@ -190,6 +259,7 @@ export class BookingsService {
         endTime,
         totalPrice,
         deposit: vehicle.deposit ?? 0,
+        ...protection,
         notes: dto.notes,
         status: BookingStatus.PENDING,
       },
@@ -218,7 +288,48 @@ export class BookingsService {
       ),
     );
 
-    return BookingEntity.fromPrisma(booking);
+    // Instant book: auto-approve if vehicle has instant book enabled
+    let finalBooking = booking;
+    if (vehicle.instantBook) {
+      finalBooking = await this.prisma.booking.update({
+        where: { id: booking.id },
+        data: {
+          status: BookingStatus.CONFIRMED,
+          confirmedAt: new Date(),
+        },
+        include: {
+          vehicle: true,
+          renter: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      });
+
+      this.logger.log(`Booking ${booking.id} auto-approved (instant book)`);
+
+      // Emit approved event for notification
+      this.eventEmitter.emit(
+        'booking.approved',
+        new BookingApprovedEvent(
+          booking.id,
+          userId,
+          vehicle.ownerId,
+          dto.vehicleId,
+        ),
+      );
+    }
+
+    await this.bookingLockService.releaseLocksByVehicleAndTime(
+      dto.vehicleId,
+      startTime,
+      endTime,
+    );
+
+    return BookingEntity.fromPrisma(finalBooking);
   }
 
   /**
@@ -301,10 +412,43 @@ export class BookingsService {
   }
 
   /**
-   * Cancel booking (renter) with time-based cancellation policy:
-   *   - >24h before start: full refund, no trust penalty
-   *   - 1-24h before start: 50% refund, -5 trust
-   *   - <1h before start: no refund, -10 trust
+   * Preview cancellation policy and money movement before the user confirms.
+   */
+  async getCancellationRefundPreview(
+    bookingId: string,
+    userId: string,
+  ): Promise<CancellationRefundPreviewEntity> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { payment: true },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.renterId !== userId && booking.ownerId !== userId) {
+      throw new BadRequestException(
+        'You can only preview cancellation for bookings you are involved in',
+      );
+    }
+
+    return this.buildCancellationRefundPreview(
+      booking,
+      booking.payment ?? null,
+      userId,
+      new Date(),
+    );
+  }
+
+  /**
+   * Cancel booking (renter or owner) with time-based cancellation policy:
+   *   Renter:
+   *   - >24h before start: full rental refund, full deposit refund, no trust penalty
+   *   - 1-24h before start: 50% rental refund, full deposit refund, -5 trust
+   *   - <1h before start: no rental refund, full deposit refund, -10 trust
+   *   Owner:
+   *   - Always full rental/deposit refund to renter, -10 trust penalty to owner
    */
   async cancelBooking(
     bookingId: string,
@@ -313,15 +457,21 @@ export class BookingsService {
   ): Promise<BookingEntity> {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
+      include: { payment: true },
     });
 
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
 
-    // Only renter can cancel
-    if (booking.renterId !== userId) {
-      throw new BadRequestException('You can only cancel your own bookings');
+    // Determine caller role
+    const isRenter = booking.renterId === userId;
+    const isOwner = booking.ownerId === userId;
+
+    if (!isRenter && !isOwner) {
+      throw new BadRequestException(
+        'You can only cancel bookings you are involved in',
+      );
     }
 
     // Can only cancel pending or confirmed bookings
@@ -334,29 +484,16 @@ export class BookingsService {
       );
     }
 
-    // --- Cancellation policy ---
     const now = new Date();
-    const hoursUntilStart =
-      (booking.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-
-    let refundRate: number;
-    let trustPenalty = 0;
-
-    if (hoursUntilStart > 24) {
-      // Early cancellation: full refund, no penalty
-      refundRate = 1.0;
-    } else if (hoursUntilStart >= 1) {
-      // Medium: 50% refund, moderate penalty
-      refundRate = 0.5;
-      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 5 : 0;
-    } else {
-      // Late cancellation: no refund, heavy penalty
-      refundRate = 0;
-      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 10 : 0;
-    }
+    const preview = this.buildCancellationRefundPreview(
+      booking,
+      booking.payment ?? null,
+      userId,
+      now,
+    );
 
     this.logger.log(
-      `Cancellation policy: ${hoursUntilStart.toFixed(1)}h before start → refundRate=${refundRate}, trustPenalty=${trustPenalty}`,
+      `Cancellation by ${isOwner ? 'owner' : 'renter'}: ${preview.hoursUntilStart.toFixed(1)}h before start → rentalRefundRate=${preview.rentalRefundRate}, trustPenalty=${preview.trustPenalty}`,
     );
 
     // Cancel booking and handle refund atomically
@@ -366,6 +503,7 @@ export class BookingsService {
         data: {
           status: BookingStatus.CANCELLED,
           cancellationReason: dto.reason,
+          cancelledBy: isOwner ? 'OWNER' : 'RENTER',
           cancelledAt: new Date(),
         },
       });
@@ -378,72 +516,79 @@ export class BookingsService {
         existingPayment !== null &&
         existingPayment.status === PaymentStatus.COMPLETED
       ) {
-        if (refundRate >= 1.0) {
-          // Full refund
-          await tx.payment.update({
-            where: { id: existingPayment.id },
+        const paymentPreview = this.buildCancellationRefundPreview(
+          booking,
+          existingPayment,
+          userId,
+          now,
+        );
+        const refundMetadata = {
+          refundType: paymentPreview.refundType,
+          refundRate: paymentPreview.rentalRefundRate,
+          refundAmount: paymentPreview.refundAmount,
+          cancelledBy: isOwner ? 'OWNER' : 'RENTER',
+          cancelledAt: now.toISOString(),
+          cancellationRefundBreakdown: JSON.parse(
+            JSON.stringify(paymentPreview),
+          ),
+        };
+
+        await tx.payment.update({
+          where: { id: existingPayment.id },
+          data: {
+            ...(paymentPreview.refundAmount > 0
+              ? { status: PaymentStatus.REFUNDED }
+              : {}),
+            gatewayResponse: refundMetadata as Prisma.InputJsonValue,
+          },
+        });
+
+        if (paymentPreview.refundableDepositAmount > 0) {
+          await tx.depositLedger.updateMany({
+            where: { bookingId },
             data: {
-              status: PaymentStatus.REFUNDED,
-              gatewayResponse: {
-                refundType: 'full',
-                refundRate,
-                cancelledAt: new Date().toISOString(),
-              },
+              status: DepositLedgerStatus.REFUNDED,
+              pendingChargeAmount: 0,
+              capturedAmount: 0,
+              releasedAmount: 0,
+              refundedAmount: paymentPreview.refundableDepositAmount,
+              releasedAt: now,
+              notes: `Deposit refunded on booking cancellation by ${isOwner ? 'owner' : 'renter'}`,
             },
           });
-          this.logger.log(
-            `Payment ${existingPayment.id} fully refunded on cancellation`,
-          );
-        } else if (refundRate > 0) {
-          // Partial refund — mark as REFUNDED with partial amount in metadata
-          const refundAmount = existingPayment.amount * refundRate;
-          await tx.payment.update({
-            where: { id: existingPayment.id },
-            data: {
-              status: PaymentStatus.REFUNDED,
-              gatewayResponse: {
-                refundType: 'partial',
-                refundRate,
-                refundAmount,
-                cancelledAt: new Date().toISOString(),
-              },
-            },
-          });
-          this.logger.log(
-            `Payment ${existingPayment.id} partially refunded (${refundRate * 100}%: ${refundAmount} VND)`,
-          );
-        } else {
-          // No refund — update metadata only
-          await tx.payment.update({
-            where: { id: existingPayment.id },
-            data: {
-              gatewayResponse: {
-                refundType: 'none',
-                refundRate: 0,
-                reason: 'Late cancellation (<1h before start)',
-                cancelledAt: new Date().toISOString(),
-              },
-            },
-          });
-          this.logger.log(
-            `Payment ${existingPayment.id}: no refund (late cancellation)`,
-          );
         }
+
+        this.logger.log(
+          `Payment ${existingPayment.id} cancellation refund recorded (${paymentPreview.refundType}: ${paymentPreview.refundAmount} VND)`,
+        );
       }
 
       return cancelled;
     });
 
-    this.logger.log(`Booking ${bookingId} cancelled by renter ${userId}`);
+    this.logger.log(
+      `Booking ${bookingId} cancelled by ${isOwner ? 'owner' : 'renter'} ${userId}`,
+    );
 
     // Apply trust penalty based on cancellation window
-    if (trustPenalty > 0) {
+    if (preview.trustPenalty > 0) {
+      const eventType = isOwner
+        ? TrustScoreEventType.BOOKING_REJECTED_BY_OWNER
+        : TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER;
+      const reason = isOwner
+        ? 'Owner cancelled a booking'
+        : 'Renter cancelled a confirmed booking';
       await this.trustScoreService.recordViolation(
         userId,
-        TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER,
-        trustPenalty,
-        'Renter cancelled a confirmed booking',
-        { bookingId, hoursUntilStart, refundRate },
+        eventType,
+        preview.trustPenalty,
+        reason,
+        {
+          bookingId,
+          hoursUntilStart: preview.hoursUntilStart,
+          rentalRefundRate: preview.rentalRefundRate,
+          refundAmount: preview.refundAmount,
+        },
       );
     }
 
@@ -452,14 +597,134 @@ export class BookingsService {
       'booking.cancelled',
       new BookingCancelledEvent(
         bookingId,
-        userId,
+        booking.renterId,
         booking.ownerId,
         dto.reason,
-        'renter',
+        isOwner ? 'owner' : 'renter',
       ),
     );
 
     return BookingEntity.fromPrisma(updatedBooking);
+  }
+
+  private buildCancellationRefundPreview(
+    booking: {
+      id: string;
+      renterId: string;
+      ownerId: string;
+      status: BookingStatus;
+      startTime: Date;
+      totalPrice: number;
+      deposit: number;
+      protectionFee?: number | null;
+    },
+    payment: { amount: number; status: PaymentStatus } | null,
+    userId: string,
+    now: Date,
+  ): CancellationRefundPreviewEntity {
+    const isOwner = booking.ownerId === userId;
+    const hoursUntilStart =
+      (booking.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    const cancellable =
+      booking.status === BookingStatus.PENDING ||
+      booking.status === BookingStatus.CONFIRMED;
+
+    let rentalRefundRate = 0;
+    let trustPenalty = 0;
+    let policyCode = 'NOT_CANCELLABLE';
+
+    if (cancellable && isOwner) {
+      rentalRefundRate = 1;
+      trustPenalty = 10;
+      policyCode = 'OWNER_FULL_REFUND';
+    } else if (cancellable && hoursUntilStart > 24) {
+      rentalRefundRate = 1;
+      policyCode = 'RENTER_EARLY_FULL_REFUND';
+    } else if (cancellable && hoursUntilStart >= 1) {
+      rentalRefundRate = 0.5;
+      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 5 : 0;
+      policyCode = 'RENTER_STANDARD_PARTIAL_REFUND';
+    } else if (cancellable) {
+      rentalRefundRate = 0;
+      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 10 : 0;
+      policyCode = 'RENTER_LATE_DEPOSIT_ONLY';
+    }
+
+    const isPaid = payment?.status === PaymentStatus.COMPLETED;
+    const rentalAmount = this.roundMoney(booking.totalPrice);
+    const protectionAmount = this.roundMoney(booking.protectionFee ?? 0);
+    const depositAmount = this.roundMoney(booking.deposit);
+    const paidAmount = isPaid ? this.roundMoney(payment.amount) : 0;
+    const refundableDepositAmount = isPaid
+      ? Math.min(depositAmount, paidAmount)
+      : 0;
+    const refundableRentalAmount = isPaid
+      ? Math.min(rentalAmount, this.roundMoney(rentalAmount * rentalRefundRate))
+      : 0;
+    const refundableProtectionAmount = isPaid
+      ? Math.min(
+          protectionAmount,
+          this.roundMoney(protectionAmount * rentalRefundRate),
+        )
+      : 0;
+    const refundAmount = Math.min(
+      paidAmount,
+      this.roundMoney(
+        refundableDepositAmount +
+          refundableRentalAmount +
+          refundableProtectionAmount,
+      ),
+    );
+    const forfeitedRentalAmount = isPaid
+      ? Math.max(0, this.roundMoney(rentalAmount - refundableRentalAmount))
+      : 0;
+    const forfeitedProtectionAmount = isPaid
+      ? Math.max(
+          0,
+          this.roundMoney(protectionAmount - refundableProtectionAmount),
+        )
+      : 0;
+    const forfeitedDepositAmount = 0;
+    const forfeitedAmount = this.roundMoney(
+      forfeitedRentalAmount +
+        forfeitedProtectionAmount +
+        forfeitedDepositAmount,
+    );
+    const refundType =
+      refundAmount <= 0
+        ? 'none'
+        : refundAmount >= paidAmount
+          ? 'full'
+          : 'partial';
+
+    return new CancellationRefundPreviewEntity({
+      bookingId: booking.id,
+      cancelledBy: isOwner ? 'OWNER' : 'RENTER',
+      cancellable,
+      hoursUntilStart,
+      policyCode,
+      rentalRefundRate,
+      trustPenalty,
+      rentalAmount,
+      protectionAmount,
+      depositAmount,
+      paidAmount,
+      refundableRentalAmount,
+      refundableProtectionAmount,
+      refundableDepositAmount,
+      refundAmount,
+      forfeitedRentalAmount,
+      forfeitedProtectionAmount,
+      forfeitedDepositAmount,
+      forfeitedAmount,
+      isPaid,
+      paymentStatus: payment?.status ?? null,
+      refundType,
+    });
+  }
+
+  private roundMoney(value: number): number {
+    return Math.max(0, Math.round(value));
   }
 
   /**

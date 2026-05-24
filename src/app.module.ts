@@ -18,6 +18,10 @@ import { AdminModule } from './admin/admin.module';
 import { SecurityModule } from './security/security.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { TrustScoreModule } from './trust-score/trust-score.module';
+import { KycModule } from './kyc/kyc.module';
+import { HandoverModule } from './handover/handover.module';
+import { FinancialModule } from './financial/financial.module';
+import { IncidentsModule } from './incidents/incidents.module';
 
 @Module({
   imports: [
@@ -68,6 +72,18 @@ import { TrustScoreModule } from './trust-score/trust-score.module';
 
     // Privacy rights / data export requests
     PrivacyModule,
+
+    // Identity verification / KYC
+    KycModule,
+
+    // Vehicle handover / check-in / check-out
+    HandoverModule,
+
+    // Deposit ledger / post-trip charges
+    FinancialModule,
+
+    // Incident report / claim foundation
+    IncidentsModule,
 
     EventListenerModule,
 

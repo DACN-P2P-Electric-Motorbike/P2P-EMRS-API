@@ -93,6 +93,23 @@ export class PrivacyService {
             createdAt: true,
           },
         },
+        incidentReportsFiled: {
+          select: {
+            id: true,
+            bookingId: true,
+            tripId: true,
+            postTripChargeId: true,
+            category: true,
+            severity: true,
+            status: true,
+            description: true,
+            evidence: true,
+            adminNotes: true,
+            reviewedAt: true,
+            resolvedAt: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
