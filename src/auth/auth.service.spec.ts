@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
@@ -418,5 +419,113 @@ describe('AuthService — updateProfile', () => {
       ),
     ).rejects.toThrow(BadRequestException);
     expect(prisma.otpCode.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthService — becomeOwner', () => {
+  let service: AuthService;
+  let prisma: ReturnType<typeof mockPrisma>;
+  let vehiclesService: ReturnType<typeof mockVehiclesService>;
+
+  const vehicleDto = {
+    licensePlate: '51A-12345',
+    model: 'Feliz',
+    brand: 'VINFAST',
+    type: 'ELECTRIC_SCOOTER',
+    pricePerHour: 10000,
+    pricePerDay: 120000,
+    images: ['https://example.com/vehicle.jpg'],
+  } as any;
+
+  beforeEach(async () => {
+    prisma = mockPrisma();
+    vehiclesService = mockVehiclesService();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: JwtService, useValue: mockJwt() },
+        { provide: MailService, useValue: mockMail() },
+        { provide: VehiclesService, useValue: vehiclesService },
+        { provide: EventEmitter2, useValue: mockEventEmitter() },
+        { provide: CryptoService, useValue: mockCrypto() },
+        { provide: TrustScoreService, useValue: mockTrustScoreService() },
+      ],
+    }).compile();
+
+    service = module.get<AuthService>(AuthService);
+  });
+
+  it('does not persist OWNER when vehicle registration is rejected', async () => {
+    prisma.user.findUnique.mockResolvedValue(makePrismaUser());
+    vehiclesService.registerVehicle.mockRejectedValue(
+      new ForbiddenException('KYC verification is required before listing'),
+    );
+
+    await expect(
+      service.becomeOwner(USER_ID, [UserRole.RENTER], vehicleDto),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(vehiclesService.registerVehicle).toHaveBeenCalledWith(
+      USER_ID,
+      [UserRole.RENTER, UserRole.OWNER],
+      vehicleDto,
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('promotes the user only after vehicle registration succeeds', async () => {
+    const promotedUser = makePrismaUser({
+      roles: [UserRole.RENTER, UserRole.OWNER],
+    });
+    prisma.user.findUnique.mockResolvedValue(makePrismaUser());
+    vehiclesService.registerVehicle.mockResolvedValue({ id: 'vehicle-1' });
+    prisma.user.update.mockResolvedValue(promotedUser);
+
+    const result = await service.becomeOwner(
+      USER_ID,
+      [UserRole.RENTER],
+      vehicleDto,
+    );
+
+    expect(vehiclesService.registerVehicle).toHaveBeenCalledWith(
+      USER_ID,
+      [UserRole.RENTER, UserRole.OWNER],
+      vehicleDto,
+    );
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      data: { roles: [UserRole.RENTER, UserRole.OWNER] },
+    });
+    expect(
+      vehiclesService.registerVehicle.mock.invocationCallOrder[0],
+    ).toBeLessThan(prisma.user.update.mock.invocationCallOrder[0]);
+    expect(result.user.roles).toEqual([UserRole.RENTER, UserRole.OWNER]);
+    expect(result.accessToken).toBe('mock.jwt.token');
+    expect(result.vehicle).toEqual({ id: 'vehicle-1' });
+  });
+
+  it('returns an auth-shaped response for users that are already owners', async () => {
+    prisma.user.findUnique.mockResolvedValue(
+      makePrismaUser({ roles: [UserRole.RENTER, UserRole.OWNER] }),
+    );
+
+    const result = await service.becomeOwner(
+      USER_ID,
+      [UserRole.RENTER, UserRole.OWNER],
+      vehicleDto,
+    );
+
+    expect(vehiclesService.registerVehicle).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      user: {
+        id: USER_ID,
+        roles: [UserRole.RENTER, UserRole.OWNER],
+      },
+      accessToken: 'mock.jwt.token',
+      message: 'User has been OWNER',
+    });
   });
 });
