@@ -19,6 +19,12 @@ export enum ClaimCaseAssignmentFilter {
   UNASSIGNED = 'UNASSIGNED',
 }
 
+export enum ClaimCaseRiskLevel {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+}
+
 export type ClaimCaseSlaPolicy = {
   firstReviewHours: number;
   secondReviewHours: number;
@@ -78,6 +84,36 @@ export class ClaimCaseSlaEntity {
   }
 }
 
+export class ClaimCaseRiskIndicatorEntity {
+  @ApiProperty()
+  code: string;
+
+  @ApiProperty()
+  label: string;
+
+  @ApiProperty({ enum: ClaimCaseRiskLevel })
+  severity: ClaimCaseRiskLevel;
+
+  constructor(partial: Partial<ClaimCaseRiskIndicatorEntity>) {
+    Object.assign(this, partial);
+  }
+}
+
+export class ClaimCaseRiskEntity {
+  @ApiProperty({ enum: ClaimCaseRiskLevel })
+  level: ClaimCaseRiskLevel;
+
+  @ApiProperty()
+  score: number;
+
+  @ApiProperty({ type: [ClaimCaseRiskIndicatorEntity] })
+  indicators: ClaimCaseRiskIndicatorEntity[];
+
+  constructor(partial: Partial<ClaimCaseRiskEntity>) {
+    Object.assign(this, partial);
+  }
+}
+
 export class ClaimCaseQueueSummaryEntity {
   @ApiProperty({ type: ClaimCaseSlaPolicyEntity })
   policy: ClaimCaseSlaPolicyEntity;
@@ -117,6 +153,12 @@ export class ClaimCaseQueueSummaryEntity {
 
   @ApiProperty()
   completed: number;
+
+  @ApiProperty()
+  highRisk: number;
+
+  @ApiProperty()
+  mediumRisk: number;
 
   constructor(partial: Partial<ClaimCaseQueueSummaryEntity>) {
     Object.assign(this, partial);
@@ -238,6 +280,9 @@ export class ClaimCaseEntity implements ClaimCase {
   @ApiProperty({ type: ClaimCaseSlaEntity })
   sla: ClaimCaseSlaEntity;
 
+  @ApiPropertyOptional({ type: ClaimCaseRiskEntity })
+  risk?: ClaimCaseRiskEntity;
+
   constructor(partial: Partial<ClaimCaseEntity>) {
     Object.assign(this, partial);
   }
@@ -246,10 +291,179 @@ export class ClaimCaseEntity implements ClaimCase {
     claimCase: ClaimCaseLike,
     now = new Date(),
     policy?: Partial<ClaimCaseSlaPolicy>,
+    options: { includeRisk?: boolean } = {},
   ): ClaimCaseEntity {
+    const { booking, ...rest } = claimCase;
     return new ClaimCaseEntity({
-      ...claimCase,
+      ...rest,
+      booking: ClaimCaseEntity.toBookingSummary(booking),
       sla: ClaimCaseEntity.buildSla(claimCase, now, policy),
+      ...(options.includeRisk
+        ? { risk: ClaimCaseEntity.buildRisk(claimCase) }
+        : {}),
+    });
+  }
+
+  private static toBookingSummary(
+    booking?: ClaimCaseBookingSummary,
+  ): ClaimCaseBookingSummary | undefined {
+    if (!booking) return undefined;
+    return {
+      id: booking.id,
+      status: booking.status,
+      renterId: booking.renterId,
+      ownerId: booking.ownerId,
+      vehicleId: booking.vehicleId,
+      startTime: booking.startTime,
+      endTime: booking.endTime,
+      renter: ClaimCaseEntity.toUserSummary(booking.renter),
+      owner: ClaimCaseEntity.toUserSummary(booking.owner),
+      vehicle: booking.vehicle,
+    };
+  }
+
+  private static toUserSummary(
+    user?: ClaimCaseUserSummary | null,
+  ): ClaimCaseUserSummary | undefined {
+    if (!user) return undefined;
+    return {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+    };
+  }
+
+  private static buildRisk(claimCase: ClaimCaseLike): ClaimCaseRiskEntity {
+    const booking = claimCase.booking as
+      | (ClaimCaseBookingSummary & Record<string, any>)
+      | undefined;
+    const incidents = Array.isArray(booking?.incidentReports)
+      ? booking.incidentReports
+      : [];
+    const charges = Array.isArray(booking?.postTripCharges)
+      ? booking.postTripCharges
+      : [];
+    const indicators: ClaimCaseRiskIndicatorEntity[] = [];
+    let score = 0;
+
+    const addIndicator = (
+      code: string,
+      label: string,
+      severity: ClaimCaseRiskLevel,
+      points: number,
+    ) => {
+      indicators.push(
+        new ClaimCaseRiskIndicatorEntity({ code, label, severity }),
+      );
+      score += points;
+    };
+
+    if (incidents.some((incident) => incident.severity === 'CRITICAL')) {
+      addIndicator(
+        'CRITICAL_INCIDENT',
+        'Critical-severity incident in this claim',
+        ClaimCaseRiskLevel.HIGH,
+        40,
+      );
+    } else if (incidents.some((incident) => incident.severity === 'HIGH')) {
+      addIndicator(
+        'HIGH_SEVERITY_INCIDENT',
+        'High-severity incident in this claim',
+        ClaimCaseRiskLevel.MEDIUM,
+        25,
+      );
+    }
+
+    if (incidents.length >= 2) {
+      addIndicator(
+        'MULTIPLE_INCIDENTS',
+        `${incidents.length} incident reports are linked to this booking`,
+        ClaimCaseRiskLevel.MEDIUM,
+        20,
+      );
+    }
+
+    const heldDeposit = Number(booking?.depositLedger?.heldAmount) || 0;
+    const reviewChargeAmount = charges
+      .filter((charge) =>
+        ['PENDING_REVIEW', 'APPROVED', 'DISPUTED'].includes(
+          String(charge.status),
+        ),
+      )
+      .reduce((total, charge) => total + (Number(charge.amount) || 0), 0);
+    if (heldDeposit > 0 && reviewChargeAmount >= heldDeposit) {
+      addIndicator(
+        'CLAIM_AMOUNT_EXCEEDS_DEPOSIT',
+        'Open claim amount is at least the held deposit',
+        ClaimCaseRiskLevel.HIGH,
+        35,
+      );
+    } else if (heldDeposit > 0 && reviewChargeAmount >= heldDeposit * 0.5) {
+      addIndicator(
+        'CLAIM_AMOUNT_OVER_HALF_DEPOSIT',
+        'Open claim amount is at least 50% of the held deposit',
+        ClaimCaseRiskLevel.MEDIUM,
+        25,
+      );
+    }
+
+    if (
+      booking?.depositLedger?.status === 'DISPUTED' ||
+      charges.some((charge) => charge.status === 'DISPUTED')
+    ) {
+      addIndicator(
+        'UNRESOLVED_DISPUTE',
+        'Deposit or post-trip charge is currently disputed',
+        ClaimCaseRiskLevel.MEDIUM,
+        20,
+      );
+    }
+
+    const tripCompletedAt = ClaimCaseEntity.toDate(
+      booking?.trip?.completedAt,
+    );
+    const firstActivityAt = ClaimCaseEntity.earliestDate([
+      ...incidents.map((incident) => incident.createdAt),
+      ...charges.map((charge) => charge.createdAt),
+      claimCase.createdAt,
+    ]);
+    if (
+      tripCompletedAt &&
+      firstActivityAt &&
+      firstActivityAt.getTime() >= tripCompletedAt.getTime() &&
+      firstActivityAt.getTime() - tripCompletedAt.getTime() <=
+        ClaimCaseEntity.hoursToMs(2)
+    ) {
+      addIndicator(
+        'RAPID_POST_TRIP_CLAIM',
+        'Claim activity started within 2 hours after trip completion',
+        ClaimCaseRiskLevel.LOW,
+        10,
+      );
+    }
+
+    const lowTrustParties = [booking?.renter, booking?.owner].filter(
+      (user: any) =>
+        Number(user?.trustScore) > 0 && Number(user.trustScore) < 50,
+    );
+    if (lowTrustParties.length > 0) {
+      addIndicator(
+        'LOW_TRUST_PARTY',
+        'One booking party has trust score below 50',
+        ClaimCaseRiskLevel.MEDIUM,
+        15,
+      );
+    }
+
+    return new ClaimCaseRiskEntity({
+      level:
+        score >= 60
+          ? ClaimCaseRiskLevel.HIGH
+          : score >= 25
+            ? ClaimCaseRiskLevel.MEDIUM
+            : ClaimCaseRiskLevel.LOW,
+      score,
+      indicators,
     });
   }
 
@@ -368,6 +582,20 @@ export class ClaimCaseEntity implements ClaimCase {
 
   private static hoursToMinutes(hours: number): number {
     return hours * 60;
+  }
+
+  private static earliestDate(values: unknown[]): Date | null {
+    const dates = values
+      .map((value) => ClaimCaseEntity.toDate(value))
+      .filter((value): value is Date => !!value)
+      .sort((a, b) => a.getTime() - b.getTime());
+    return dates[0] ?? null;
+  }
+
+  private static toDate(value: unknown): Date | null {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(String(value));
+    return Number.isNaN(date.getTime()) ? null : date;
   }
 
   private static positiveNumber(

@@ -377,6 +377,7 @@ export class IncidentsService {
       claimCase,
       new Date(),
       this.getClaimCaseSlaPolicy(),
+      { includeRisk: true },
     );
   }
 
@@ -413,7 +414,11 @@ export class IncidentsService {
     const now = new Date();
     const policy = this.getClaimCaseSlaPolicy();
     return claimCases
-      .map((claimCase) => ClaimCaseEntity.fromPrisma(claimCase, now, policy))
+      .map((claimCase) =>
+        ClaimCaseEntity.fromPrisma(claimCase, now, policy, {
+          includeRisk: true,
+        }),
+      )
       .filter(
         (claimCase) =>
           (!input.slaStatus || claimCase.sla.status === input.slaStatus) &&
@@ -426,7 +431,9 @@ export class IncidentsService {
   async getAdminClaimCaseQueueSummary(
     adminId: string,
   ): Promise<ClaimCaseQueueSummaryEntity> {
-    const claimCases = await this.prisma.claimCase.findMany();
+    const claimCases = await this.prisma.claimCase.findMany({
+      include: this.claimCaseInclude(),
+    });
     const now = new Date();
     const policy = this.getClaimCaseSlaPolicy();
     const summary = new ClaimCaseQueueSummaryEntity({
@@ -443,10 +450,14 @@ export class IncidentsService {
       atRisk: 0,
       onTrack: 0,
       completed: 0,
+      highRisk: 0,
+      mediumRisk: 0,
     });
 
     for (const claimCase of claimCases) {
-      const entity = ClaimCaseEntity.fromPrisma(claimCase, now, policy);
+      const entity = ClaimCaseEntity.fromPrisma(claimCase, now, policy, {
+        includeRisk: true,
+      });
       const isFinal = FINAL_CLAIM_CASE_STATUSES.includes(entity.status as any);
 
       summary.total += 1;
@@ -478,6 +489,12 @@ export class IncidentsService {
         summary.onTrack += 1;
       } else if (entity.sla.status === ClaimCaseSlaStatus.COMPLETED) {
         summary.completed += 1;
+      }
+
+      if (entity.risk?.level === 'HIGH') {
+        summary.highRisk += 1;
+      } else if (entity.risk?.level === 'MEDIUM') {
+        summary.mediumRisk += 1;
       }
     }
 
@@ -556,6 +573,7 @@ export class IncidentsService {
       updated,
       new Date(),
       this.getClaimCaseSlaPolicy(),
+      { includeRisk: true },
     );
   }
 
@@ -604,6 +622,7 @@ export class IncidentsService {
         updated,
         new Date(),
         this.getClaimCaseSlaPolicy(),
+        { includeRisk: true },
       );
     }
 
@@ -648,6 +667,7 @@ export class IncidentsService {
       updated,
       new Date(),
       this.getClaimCaseSlaPolicy(),
+      { includeRisk: true },
     );
   }
 
@@ -1186,6 +1206,7 @@ export class IncidentsService {
           booking.claimCase as any,
           new Date(),
           this.getClaimCaseSlaPolicy(),
+          { includeRisk: includeEvidenceAnnotations },
         )
       : null;
     const evidenceAnnotations = includeEvidenceAnnotations
@@ -2049,6 +2070,7 @@ export class IncidentsService {
               id: true,
               fullName: true,
               email: true,
+              trustScore: true,
             },
           },
           owner: {
@@ -2056,6 +2078,7 @@ export class IncidentsService {
               id: true,
               fullName: true,
               email: true,
+              trustScore: true,
             },
           },
           vehicle: {
@@ -2065,6 +2088,35 @@ export class IncidentsService {
               model: true,
               licensePlate: true,
               images: true,
+            },
+          },
+          trip: {
+            select: {
+              id: true,
+              completedAt: true,
+            },
+          },
+          depositLedger: {
+            select: {
+              id: true,
+              status: true,
+              heldAmount: true,
+            },
+          },
+          postTripCharges: {
+            select: {
+              id: true,
+              status: true,
+              amount: true,
+              createdAt: true,
+            },
+          },
+          incidentReports: {
+            select: {
+              id: true,
+              severity: true,
+              status: true,
+              createdAt: true,
             },
           },
         },

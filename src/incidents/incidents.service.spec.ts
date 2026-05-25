@@ -19,6 +19,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import {
   ClaimCaseAssignmentFilter,
+  ClaimCaseRiskLevel,
   ClaimCaseSlaStage,
   ClaimCaseSlaStatus,
 } from './entities';
@@ -215,6 +216,69 @@ const makeClaimCase = (overrides: Record<string, unknown> = {}) => ({
   createdAt: new Date('2026-05-24T01:00:00.000Z'),
   updatedAt: new Date('2026-05-24T01:00:00.000Z'),
   assignee: null,
+  ...overrides,
+});
+
+const makeClaimCaseBookingForRisk = (
+  overrides: Record<string, unknown> = {},
+) => ({
+  id: BOOKING_ID,
+  status: BookingStatus.COMPLETED,
+  renterId: RENTER_ID,
+  ownerId: OWNER_ID,
+  vehicleId: VEHICLE_ID,
+  startTime: new Date('2026-05-23T01:00:00.000Z'),
+  endTime: new Date('2026-05-23T03:00:00.000Z'),
+  renter: {
+    id: RENTER_ID,
+    fullName: 'Renter One',
+    email: 'renter@example.com',
+    trustScore: 45,
+  },
+  owner: {
+    id: OWNER_ID,
+    fullName: 'Owner One',
+    email: 'owner@example.com',
+    trustScore: 100,
+  },
+  vehicle: {
+    id: VEHICLE_ID,
+    brand: 'VinFast',
+    model: 'Klara S',
+    licensePlate: '51A-12345',
+    images: [],
+  },
+  trip: {
+    id: TRIP_ID,
+    completedAt: new Date('2026-05-23T03:05:00.000Z'),
+  },
+  depositLedger: {
+    id: 'deposit-uuid',
+    status: DepositLedgerStatus.DISPUTED,
+    heldAmount: 200_000,
+  },
+  postTripCharges: [
+    {
+      id: CHARGE_ID,
+      status: PostTripChargeStatus.DISPUTED,
+      amount: 220_000,
+      createdAt: new Date('2026-05-23T03:40:00.000Z'),
+    },
+  ],
+  incidentReports: [
+    {
+      id: 'incident-critical',
+      severity: IncidentSeverity.CRITICAL,
+      status: IncidentStatus.OPEN,
+      createdAt: new Date('2026-05-23T03:30:00.000Z'),
+    },
+    {
+      id: 'incident-low',
+      severity: IncidentSeverity.LOW,
+      status: IncidentStatus.OPEN,
+      createdAt: new Date('2026-05-23T03:35:00.000Z'),
+    },
+  ],
   ...overrides,
 });
 
@@ -684,6 +748,58 @@ describe('IncidentsService', () => {
     }
   });
 
+  it('derives deterministic risk indicators for admin claim cases', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        id: 'high-risk-case',
+        booking: makeClaimCaseBookingForRisk(),
+      }),
+      makeClaimCase({
+        id: 'low-risk-case',
+        booking: makeClaimCaseBookingForRisk({
+          renter: {
+            id: RENTER_ID,
+            fullName: 'Renter One',
+            email: 'renter@example.com',
+            trustScore: 100,
+          },
+          depositLedger: {
+            id: 'deposit-uuid',
+            status: DepositLedgerStatus.HELD,
+            heldAmount: 500_000,
+          },
+          postTripCharges: [],
+          incidentReports: [],
+        }),
+      }),
+    ]);
+
+    const cases = await service.getAdminClaimCases({ limit: 100 });
+
+    expect(cases[0].risk).toMatchObject({
+      level: ClaimCaseRiskLevel.HIGH,
+      score: 140,
+      indicators: expect.arrayContaining([
+        expect.objectContaining({ code: 'CRITICAL_INCIDENT' }),
+        expect.objectContaining({ code: 'MULTIPLE_INCIDENTS' }),
+        expect.objectContaining({ code: 'CLAIM_AMOUNT_EXCEEDS_DEPOSIT' }),
+        expect.objectContaining({ code: 'UNRESOLVED_DISPUTE' }),
+        expect.objectContaining({ code: 'RAPID_POST_TRIP_CLAIM' }),
+        expect.objectContaining({ code: 'LOW_TRUST_PARTY' }),
+      ]),
+    });
+    expect(cases[0].booking?.renter).toEqual({
+      id: RENTER_ID,
+      fullName: 'Renter One',
+      email: 'renter@example.com',
+    });
+    expect(cases[1].risk).toMatchObject({
+      level: ClaimCaseRiskLevel.LOW,
+      score: 0,
+      indicators: [],
+    });
+  });
+
   it('uses configured claim-case SLA policy for derivation and summary metadata', async () => {
     const previousEnv = {
       firstReview: process.env.CLAIM_CASE_FIRST_REVIEW_SLA_HOURS,
@@ -970,6 +1086,8 @@ describe('IncidentsService', () => {
         atRisk: 1,
         onTrack: 1,
         completed: 1,
+        highRisk: 0,
+        mediumRisk: 0,
       });
     } finally {
       jest.useRealTimers();
