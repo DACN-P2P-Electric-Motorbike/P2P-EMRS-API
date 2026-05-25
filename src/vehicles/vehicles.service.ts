@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { DateTime, FixedOffsetZone, Zone } from 'luxon';
 import { PrismaService } from '../database/prisma.service';
 import {
   CreateAvailabilityWindowDto,
@@ -16,8 +17,15 @@ import {
 import { VehicleEntity } from './entities/vehicle.entity';
 import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
 import {
+  PublicVehicleAvailabilityRuleEntity,
+  PublicVehicleAvailabilitySummaryEntity,
+} from './entities/public-vehicle-availability-summary.entity';
+import {
+  AvailabilityWindowRecurrence,
   AvailabilityWindowType,
+  BatteryType,
   VehicleStatus,
+  VehicleCondition,
   UserRole,
   BookingStatus,
   UserStatus,
@@ -399,6 +407,9 @@ export class VehiclesService {
     longitude?: number;
     radiusKm?: number;
     instantBook?: boolean;
+    condition?: VehicleCondition | string;
+    batteryType?: BatteryType | string;
+    minBatteryHealth?: number;
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
@@ -424,6 +435,18 @@ export class VehiclesService {
     // Instant book filter
     if (params?.instantBook !== undefined) {
       where.instantBook = params.instantBook;
+    }
+
+    if (params?.condition) {
+      where.condition = params.condition;
+    }
+
+    if (params?.batteryType) {
+      where.batteryType = params.batteryType;
+    }
+
+    if (params?.minBatteryHealth !== undefined) {
+      where.batteryHealth = { gte: params.minBatteryHealth };
     }
 
     // Date-range availability filter: exclude vehicles with overlapping bookings,
@@ -472,43 +495,59 @@ export class VehiclesService {
         await this.prisma.vehicleAvailabilityWindow.findMany({
           where: {
             type: AvailabilityWindowType.BLOCKED,
-            startTime: { lt: requestedEnd },
-            endTime: { gt: requestedStart },
+            OR: [
+              {
+                recurrence: AvailabilityWindowRecurrence.ONCE,
+                startTime: { lt: requestedEnd },
+                endTime: { gt: requestedStart },
+              },
+              {
+                recurrence: AvailabilityWindowRecurrence.WEEKLY,
+                startTime: { lt: requestedEnd },
+                OR: [
+                  { recurrenceEndsAt: null },
+                  { recurrenceEndsAt: { gt: requestedStart } },
+                ],
+              },
+            ],
           },
-          select: { vehicleId: true },
-          distinct: ['vehicleId'],
         });
 
-      const vehiclesWithAvailableCalendar =
+      const availableWindows =
         await this.prisma.vehicleAvailabilityWindow.findMany({
           where: { type: AvailabilityWindowType.AVAILABLE },
-          select: { vehicleId: true },
-          distinct: ['vehicleId'],
         });
 
-      const calendarCoveredVehicles =
-        await this.prisma.vehicleAvailabilityWindow.findMany({
-          where: {
-            type: AvailabilityWindowType.AVAILABLE,
-            startTime: { lte: requestedStart },
-            endTime: { gte: requestedEnd },
-          },
-          select: { vehicleId: true },
-          distinct: ['vehicleId'],
-        });
-
-      const calendarCoveredVehicleIds = new Set(
-        calendarCoveredVehicles.map((window) => window.vehicleId),
+      const blockedVehicleIds = new Set(
+        blockedWindows
+          .filter((window) =>
+            this.availabilityWindowOverlaps(
+              window,
+              requestedStart,
+              requestedEnd,
+            ),
+          )
+          .map((window) => window.vehicleId),
       );
-      const calendarNotCoveredVehicleIds = vehiclesWithAvailableCalendar
-        .map((window) => window.vehicleId)
-        .filter((vehicleId) => !calendarCoveredVehicleIds.has(vehicleId));
+      const vehiclesWithAvailableCalendar = new Set(
+        availableWindows.map((window) => window.vehicleId),
+      );
+      const calendarCoveredVehicleIds = new Set(
+        availableWindows
+          .filter((window) =>
+            this.availabilityWindowCovers(window, requestedStart, requestedEnd),
+          )
+          .map((window) => window.vehicleId),
+      );
+      const calendarNotCoveredVehicleIds = [
+        ...vehiclesWithAvailableCalendar,
+      ].filter((vehicleId) => !calendarCoveredVehicleIds.has(vehicleId));
 
       const conflictingVehicleIds = [
         ...new Set([
           ...conflictingBookings.map((b) => b.vehicleId),
           ...conflictingLocks.map((l) => l.vehicleId),
-          ...blockedWindows.map((window) => window.vehicleId),
+          ...blockedVehicleIds,
           ...calendarNotCoveredVehicleIds,
         ]),
       ];
@@ -581,10 +620,17 @@ export class VehiclesService {
         score += 5;
       }
 
+      // 7. EV condition and battery lifecycle signal (max 10 points)
+      score += this.vehicleConditionScore(v.condition) * 5;
+      if (v.batteryHealth !== null) {
+        score += (Math.max(0, Math.min(v.batteryHealth, 100)) / 100) * 4;
+      }
+      score += this.batteryTypeScore(v.batteryType);
+
       return { vehicle: v, score };
     });
 
-    // 7. Price competitiveness bonus (max 5 points — lower = higher score)
+    // 8. Price competitiveness bonus (max 5 points — lower = higher score)
     if (scoredVehicles.length > 0) {
       const prices = scoredVehicles.map((sv) =>
         Number(sv.vehicle.pricePerHour),
@@ -637,6 +683,35 @@ export class VehiclesService {
     };
   }
 
+  private vehicleConditionScore(condition: VehicleCondition | null): number {
+    switch (condition) {
+      case VehicleCondition.NEW:
+        return 1;
+      case VehicleCondition.LIKE_NEW:
+        return 0.9;
+      case VehicleCondition.GOOD:
+        return 0.75;
+      case VehicleCondition.FAIR:
+        return 0.45;
+      case VehicleCondition.NEEDS_MAINTENANCE:
+      default:
+        return 0;
+    }
+  }
+
+  private batteryTypeScore(batteryType: BatteryType | null): number {
+    switch (batteryType) {
+      case BatteryType.SWAPPABLE:
+        return 1;
+      case BatteryType.REMOVABLE:
+        return 0.75;
+      case BatteryType.FIXED_NON_REMOVABLE:
+        return 0.4;
+      default:
+        return 0;
+    }
+  }
+
   private assertValidAvailabilityRange(startTime: Date, endTime: Date): void {
     if (
       Number.isNaN(startTime.getTime()) ||
@@ -679,15 +754,12 @@ export class VehiclesService {
   ): Promise<VehicleAvailabilityWindowEntity[]> {
     await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
 
-    const where: {
-      vehicleId: string;
-      startTime?: { lt?: Date; gte?: Date };
-      endTime?: { gt?: Date; lte?: Date };
-    } = { vehicleId };
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
 
     if (from || to) {
-      const fromDate = from ? new Date(from) : undefined;
-      const toDate = to ? new Date(to) : undefined;
+      fromDate = from ? new Date(from) : undefined;
+      toDate = to ? new Date(to) : undefined;
 
       if (
         (fromDate && Number.isNaN(fromDate.getTime())) ||
@@ -696,25 +768,82 @@ export class VehiclesService {
       ) {
         throw new BadRequestException('Invalid availability query range');
       }
-
-      if (fromDate && toDate) {
-        where.startTime = { lt: toDate };
-        where.endTime = { gt: fromDate };
-      } else if (fromDate) {
-        where.endTime = { gt: fromDate };
-      } else if (toDate) {
-        where.startTime = { lt: toDate };
-      }
     }
 
     const windows = await this.prisma.vehicleAvailabilityWindow.findMany({
-      where,
+      where: { vehicleId },
       orderBy: [{ startTime: 'asc' }, { createdAt: 'asc' }],
     });
 
-    return windows.map((window) =>
+    const filteredWindows =
+      fromDate && toDate
+        ? windows.filter((window) =>
+            this.availabilityWindowOverlaps(window, fromDate, toDate),
+          )
+        : windows.filter((window) => {
+            if (window.recurrence !== AvailabilityWindowRecurrence.WEEKLY) {
+              return (
+                (!fromDate || window.endTime > fromDate) &&
+                (!toDate || window.startTime < toDate)
+              );
+            }
+            return (
+              (!fromDate ||
+                window.recurrenceEndsAt === null ||
+                window.recurrenceEndsAt > fromDate) &&
+              (!toDate || window.startTime < toDate)
+            );
+          });
+
+    return filteredWindows.map((window) =>
       VehicleAvailabilityWindowEntity.fromPrisma(window),
     );
+  }
+
+  async getPublicAvailabilitySummary(
+    vehicleId: string,
+  ): Promise<PublicVehicleAvailabilitySummaryEntity> {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { id: true },
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Vehicle not found');
+    }
+
+    const now = new Date();
+    const windows = await this.prisma.vehicleAvailabilityWindow.findMany({
+      where: {
+        vehicleId,
+        OR: [
+          {
+            recurrence: AvailabilityWindowRecurrence.ONCE,
+            endTime: { gt: now },
+          },
+          {
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            startTime: { lt: now },
+            OR: [{ recurrenceEndsAt: null }, { recurrenceEndsAt: { gt: now } }],
+          },
+          {
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            startTime: { gte: now },
+          },
+        ],
+      },
+      orderBy: [{ type: 'asc' }, { startTime: 'asc' }],
+    });
+    const rules = windows.map((window) =>
+      PublicVehicleAvailabilityRuleEntity.fromPrisma(window),
+    );
+
+    return new PublicVehicleAvailabilitySummaryEntity({
+      hasAvailableCalendar: rules.some(
+        (rule) => rule.type === AvailabilityWindowType.AVAILABLE,
+      ),
+      rules,
+    });
   }
 
   async createAvailabilityWindow(
@@ -725,38 +854,394 @@ export class VehiclesService {
   ): Promise<VehicleAvailabilityWindowEntity> {
     await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
 
-    const startTime = new Date(dto.startTime);
-    const endTime = new Date(dto.endTime);
-    this.assertValidAvailabilityRange(startTime, endTime);
-
-    const overlappingWindow =
-      await this.prisma.vehicleAvailabilityWindow.findFirst({
-        where: {
-          vehicleId,
-          type: dto.type,
-          startTime: { lt: endTime },
-          endTime: { gt: startTime },
-        },
-        select: { id: true },
-      });
-
-    if (overlappingWindow) {
-      throw new BadRequestException(
-        'Availability window overlaps an existing window of the same type',
-      );
-    }
+    const data = this.normalizeAvailabilityWindowDto(dto);
+    await this.assertNoAvailabilityConflict(vehicleId, dto.type, data);
 
     const window = await this.prisma.vehicleAvailabilityWindow.create({
       data: {
         vehicleId,
         type: dto.type,
-        startTime,
-        endTime,
-        note: dto.note,
+        ...data,
       },
     });
 
     return VehicleAvailabilityWindowEntity.fromPrisma(window);
+  }
+
+  async updateAvailabilityWindow(
+    vehicleId: string,
+    windowId: string,
+    userId: string,
+    userRole: UserRole[],
+    dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const currentWindow = await this.prisma.vehicleAvailabilityWindow.findFirst(
+      {
+        where: { id: windowId, vehicleId },
+        select: { id: true },
+      },
+    );
+    if (!currentWindow) {
+      throw new NotFoundException('Availability window not found');
+    }
+
+    const data = this.normalizeAvailabilityWindowDto(dto);
+    await this.assertNoAvailabilityConflict(
+      vehicleId,
+      dto.type,
+      data,
+      windowId,
+    );
+
+    const window = await this.prisma.vehicleAvailabilityWindow.update({
+      where: { id: windowId },
+      data: {
+        type: dto.type,
+        ...data,
+      },
+    });
+
+    return VehicleAvailabilityWindowEntity.fromPrisma(window);
+  }
+
+  private normalizeAvailabilityWindowDto(dto: CreateAvailabilityWindowDto): {
+    recurrence: AvailabilityWindowRecurrence;
+    recurringWeekdays: number[];
+    timezoneOffsetMinutes: number | null;
+    timezoneName: string | null;
+    recurrenceEndsAt: Date | null;
+    startTime: Date;
+    endTime: Date;
+    note?: string;
+  } {
+    const startTime = new Date(dto.startTime);
+    const endTime = new Date(dto.endTime);
+    this.assertValidAvailabilityRange(startTime, endTime);
+    const recurrence = dto.recurrence ?? AvailabilityWindowRecurrence.ONCE;
+    const recurrenceEndsAt = dto.recurrenceEndsAt
+      ? new Date(dto.recurrenceEndsAt)
+      : null;
+    const timezoneName = dto.timezoneName?.trim() || null;
+
+    if (recurrence === AvailabilityWindowRecurrence.WEEKLY) {
+      if (
+        !dto.recurringWeekdays?.length ||
+        (!timezoneName && dto.timezoneOffsetMinutes === undefined) ||
+        endTime.getTime() - startTime.getTime() > 24 * 60 * 60 * 1000
+      ) {
+        throw new BadRequestException(
+          'Weekly availability requires weekdays, a timezone, and a window of 24 hours or less',
+        );
+      }
+      if (timezoneName && !DateTime.now().setZone(timezoneName).isValid) {
+        throw new BadRequestException('Invalid availability timezone name');
+      }
+      if (
+        dto.recurringWeekdays.some((weekday) => weekday < 1 || weekday > 7) ||
+        new Set(dto.recurringWeekdays).size !== dto.recurringWeekdays.length
+      ) {
+        throw new BadRequestException('Invalid weekly availability weekdays');
+      }
+      if (recurrenceEndsAt && recurrenceEndsAt <= startTime) {
+        throw new BadRequestException(
+          'Recurring availability end must be after its start time',
+        );
+      }
+    }
+
+    return {
+      recurrence,
+      recurringWeekdays:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? dto.recurringWeekdays!
+          : [],
+      timezoneOffsetMinutes:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? (dto.timezoneOffsetMinutes ??
+            DateTime.fromJSDate(startTime, { zone: 'utc' }).setZone(
+              timezoneName!,
+            ).offset)
+          : null,
+      timezoneName:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? timezoneName
+          : null,
+      recurrenceEndsAt:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? recurrenceEndsAt
+          : null,
+      startTime,
+      endTime,
+      note: dto.note,
+    };
+  }
+
+  private async assertNoAvailabilityConflict(
+    vehicleId: string,
+    type: AvailabilityWindowType,
+    data: {
+      recurrence: AvailabilityWindowRecurrence;
+      recurringWeekdays: number[];
+      timezoneOffsetMinutes: number | null;
+      timezoneName: string | null;
+      startTime: Date;
+      endTime: Date;
+    },
+    excludedWindowId?: string,
+  ): Promise<void> {
+    let hasOverlap = false;
+    if (data.recurrence === AvailabilityWindowRecurrence.ONCE) {
+      const overlappingWindow =
+        await this.prisma.vehicleAvailabilityWindow.findFirst({
+          where: {
+            vehicleId,
+            type,
+            recurrence: AvailabilityWindowRecurrence.ONCE,
+            ...(excludedWindowId ? { id: { not: excludedWindowId } } : {}),
+            startTime: { lt: data.endTime },
+            endTime: { gt: data.startTime },
+          },
+          select: { id: true },
+        });
+      hasOverlap = Boolean(overlappingWindow);
+    } else {
+      const existingRules =
+        await this.prisma.vehicleAvailabilityWindow.findMany({
+          where: {
+            vehicleId,
+            type,
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            ...(excludedWindowId ? { id: { not: excludedWindowId } } : {}),
+          },
+        });
+      hasOverlap = existingRules.some((rule) =>
+        this.weeklyRulesConflict(rule, {
+          startTime: data.startTime,
+          endTime: data.endTime,
+          recurringWeekdays: data.recurringWeekdays,
+          timezoneOffsetMinutes: data.timezoneOffsetMinutes!,
+          timezoneName: data.timezoneName,
+        }),
+      );
+    }
+
+    if (hasOverlap) {
+      throw new BadRequestException(
+        'Availability window overlaps an existing window of the same type',
+      );
+    }
+  }
+
+  private availabilityWindowOverlaps(
+    window: {
+      recurrence?: AvailabilityWindowRecurrence;
+      recurringWeekdays?: number[];
+      timezoneOffsetMinutes?: number | null;
+      timezoneName?: string | null;
+      recurrenceEndsAt?: Date | null;
+      startTime: Date;
+      endTime: Date;
+    },
+    rangeStart: Date,
+    rangeEnd: Date,
+  ): boolean {
+    if (window.recurrence !== AvailabilityWindowRecurrence.WEEKLY) {
+      return window.startTime < rangeEnd && window.endTime > rangeStart;
+    }
+    return this.weeklyOccurrences(window, rangeStart, rangeEnd).some(
+      ({ startTime, endTime }) => startTime < rangeEnd && endTime > rangeStart,
+    );
+  }
+
+  private availabilityWindowCovers(
+    window: {
+      recurrence?: AvailabilityWindowRecurrence;
+      recurringWeekdays?: number[];
+      timezoneOffsetMinutes?: number | null;
+      timezoneName?: string | null;
+      recurrenceEndsAt?: Date | null;
+      startTime: Date;
+      endTime: Date;
+    },
+    rangeStart: Date,
+    rangeEnd: Date,
+  ): boolean {
+    if (window.recurrence !== AvailabilityWindowRecurrence.WEEKLY) {
+      return window.startTime <= rangeStart && window.endTime >= rangeEnd;
+    }
+    return this.weeklyOccurrences(window, rangeStart, rangeEnd).some(
+      ({ startTime, endTime }) =>
+        startTime <= rangeStart && endTime >= rangeEnd,
+    );
+  }
+
+  private weeklyOccurrences(
+    window: {
+      recurringWeekdays?: number[];
+      timezoneOffsetMinutes?: number | null;
+      timezoneName?: string | null;
+      recurrenceEndsAt?: Date | null;
+      startTime: Date;
+      endTime: Date;
+    },
+    rangeStart: Date,
+    rangeEnd: Date,
+  ): Array<{ startTime: Date; endTime: Date }> {
+    const zone = this.availabilityTimezone(window);
+    const anchorStartLocal = DateTime.fromJSDate(window.startTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const anchorEndLocal = DateTime.fromJSDate(window.endTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const endDayOffset = this.wallDateDifference(
+      anchorStartLocal,
+      anchorEndLocal,
+    );
+    const scanStartLocal = DateTime.fromJSDate(rangeStart, {
+      zone: 'utc',
+    })
+      .setZone(zone)
+      .minus({ days: 1 })
+      .startOf('day');
+    const scanEndLocal = DateTime.fromJSDate(rangeEnd, {
+      zone: 'utc',
+    })
+      .setZone(zone)
+      .startOf('day');
+    const weekdays = new Set(window.recurringWeekdays ?? []);
+    const occurrences: Array<{ startTime: Date; endTime: Date }> = [];
+
+    for (
+      let cursor = scanStartLocal;
+      cursor <= scanEndLocal;
+      cursor = cursor.plus({ days: 1 })
+    ) {
+      if (!weekdays.has(cursor.weekday)) continue;
+
+      const occurrenceStartLocal = cursor.set({
+        hour: anchorStartLocal.hour,
+        minute: anchorStartLocal.minute,
+        second: anchorStartLocal.second,
+        millisecond: anchorStartLocal.millisecond,
+      });
+      const occurrenceEndLocal = cursor.plus({ days: endDayOffset }).set({
+        hour: anchorEndLocal.hour,
+        minute: anchorEndLocal.minute,
+        second: anchorEndLocal.second,
+        millisecond: anchorEndLocal.millisecond,
+      });
+      const occurrenceStart = occurrenceStartLocal.toUTC().toJSDate();
+      if (
+        occurrenceStart < window.startTime ||
+        (window.recurrenceEndsAt && occurrenceStart >= window.recurrenceEndsAt)
+      ) {
+        continue;
+      }
+      occurrences.push({
+        startTime: occurrenceStart,
+        endTime: occurrenceEndLocal.toUTC().toJSDate(),
+      });
+    }
+    return occurrences;
+  }
+
+  private weeklyRulesConflict(
+    existing: {
+      startTime: Date;
+      endTime: Date;
+      recurringWeekdays: number[];
+      timezoneOffsetMinutes: number | null;
+      timezoneName?: string | null;
+    },
+    candidate: {
+      startTime: Date;
+      endTime: Date;
+      recurringWeekdays: number[];
+      timezoneOffsetMinutes: number;
+      timezoneName: string | null;
+    },
+  ): boolean {
+    if (
+      existing.timezoneName || candidate.timezoneName
+        ? existing.timezoneName !== candidate.timezoneName
+        : existing.timezoneOffsetMinutes !== candidate.timezoneOffsetMinutes
+    ) {
+      return false;
+    }
+    if (
+      !existing.recurringWeekdays.some((weekday) =>
+        candidate.recurringWeekdays.includes(weekday),
+      )
+    ) {
+      return false;
+    }
+    const zone = this.availabilityTimezone(candidate);
+    const existingStart = DateTime.fromJSDate(existing.startTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const existingEnd = DateTime.fromJSDate(existing.endTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const candidateStart = DateTime.fromJSDate(candidate.startTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const candidateEnd = DateTime.fromJSDate(candidate.endTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const existingStartMinutes = existingStart.hour * 60 + existingStart.minute;
+    const candidateStartMinutes =
+      candidateStart.hour * 60 + candidateStart.minute;
+    const existingEndMinutes =
+      existingStartMinutes +
+      this.wallDurationMinutes(existingStart, existingEnd);
+    const candidateEndMinutes =
+      candidateStartMinutes +
+      this.wallDurationMinutes(candidateStart, candidateEnd);
+    return (
+      existingStartMinutes < candidateEndMinutes &&
+      existingEndMinutes > candidateStartMinutes
+    );
+  }
+
+  private availabilityTimezone(window: {
+    timezoneName?: string | null;
+    timezoneOffsetMinutes?: number | null;
+  }): string | Zone {
+    return (
+      window.timezoneName ??
+      FixedOffsetZone.instance(window.timezoneOffsetMinutes ?? 0)
+    );
+  }
+
+  private wallDateDifference(start: DateTime, end: DateTime): number {
+    return Math.round(
+      DateTime.utc(end.year, end.month, end.day).diff(
+        DateTime.utc(start.year, start.month, start.day),
+        'days',
+      ).days,
+    );
+  }
+
+  private wallDurationMinutes(start: DateTime, end: DateTime): number {
+    return DateTime.utc(
+      end.year,
+      end.month,
+      end.day,
+      end.hour,
+      end.minute,
+    ).diff(
+      DateTime.utc(
+        start.year,
+        start.month,
+        start.day,
+        start.hour,
+        start.minute,
+      ),
+      'minutes',
+    ).minutes;
   }
 
   async deleteAvailabilityWindow(

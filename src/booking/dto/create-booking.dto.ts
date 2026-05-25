@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsNotEmpty,
+  IsBoolean,
 } from 'class-validator';
 import { ProtectionPlanType } from '@prisma/client';
 
@@ -51,4 +52,22 @@ export class CreateBookingDto {
   @IsOptional()
   @IsEnum(ProtectionPlanType)
   protectionPlan?: ProtectionPlanType;
+
+  @ApiPropertyOptional({
+    description:
+      'Purchase prepaid charging credit for battery-return shortfall handling.',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  prepaidCharging?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Purchase fixed roadside-support credit for eligible post-trip roadside assistance charges.',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  roadsideSupport?: boolean;
 }

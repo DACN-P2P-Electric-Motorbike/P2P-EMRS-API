@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { ReviewEntity } from './entities/review.entity';
+import { BookingReviewStatusEntity } from './entities/booking-review-status.entity';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -89,6 +90,23 @@ export class ReviewsController {
     @Body() dto: CreateReviewDto,
   ): Promise<ReviewEntity> {
     return this.reviewsService.createReview(userId, dto);
+  }
+
+  @Get('bookings/:bookingId/status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get booking blind-review status',
+    description:
+      'Get review submission state for a booking participant. Counterpart content is returned only after reveal.',
+  })
+  @ApiParam({ name: 'bookingId', description: 'Booking ID' })
+  @ApiResponse({ status: 200, type: BookingReviewStatusEntity })
+  async getBookingReviewStatus(
+    @CurrentUser('id') userId: string,
+    @Param('bookingId') bookingId: string,
+  ): Promise<BookingReviewStatusEntity> {
+    return this.reviewsService.getBookingReviewStatus(userId, bookingId);
   }
 
   @Get('vehicle/:vehicleId')

@@ -34,7 +34,9 @@ const mockVehiclesService = {
   getAvailableVehicles: jest.fn(),
   getVehicleById: jest.fn(),
   getAvailabilityWindows: jest.fn(),
+  getPublicAvailabilitySummary: jest.fn(),
   createAvailabilityWindow: jest.fn(),
+  updateAvailabilityWindow: jest.fn(),
   deleteAvailabilityWindow: jest.fn(),
   updateVehicle: jest.fn(),
   toggleAvailability: jest.fn(),
@@ -202,6 +204,9 @@ describe('VehiclesController', () => {
         longitude: undefined,
         radiusKm: undefined,
         instantBook: undefined,
+        condition: undefined,
+        batteryType: undefined,
+        minBatteryHealth: undefined,
       });
       expect(result).toEqual(mockResponse);
     });
@@ -228,10 +233,68 @@ describe('VehiclesController', () => {
         expect.objectContaining({ instantBook: true }),
       );
     });
+
+    it('should forward EV metadata filters', async () => {
+      const mockResponse = { vehicles: [], total: 0 };
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue(mockResponse);
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'LIKE_NEW',
+        'SWAPPABLE',
+        '90',
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          condition: 'LIKE_NEW',
+          batteryType: 'SWAPPABLE',
+          minBatteryHealth: 90,
+        }),
+      );
+    });
   });
 
   // ─── availability calendar ─────────────────────────────────────────────────
   describe('availability calendar endpoints', () => {
+    it('should expose the renter availability summary without authentication context', async () => {
+      const summary = {
+        hasAvailableCalendar: true,
+        rules: [
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            recurrence: 'WEEKLY',
+            recurringWeekdays: [1, 3, 5],
+            timezoneOffsetMinutes: 420,
+            timezoneName: 'Asia/Ho_Chi_Minh',
+            recurrenceEndsAt: null,
+            startTime: new Date('2026-05-25T01:00:00.000Z'),
+            endTime: new Date('2026-05-25T11:00:00.000Z'),
+          },
+        ],
+      };
+      mockVehiclesService.getPublicAvailabilitySummary.mockResolvedValue(
+        summary,
+      );
+
+      const result = await controller.getPublicAvailabilitySummary(VEHICLE_ID);
+
+      expect(result).toEqual(summary);
+      expect(
+        mockVehiclesService.getPublicAvailabilitySummary,
+      ).toHaveBeenCalledWith(VEHICLE_ID);
+    });
+
     it('should delegate availability listing to service', async () => {
       const user = createMockUser();
       const windows = [
@@ -282,6 +345,35 @@ describe('VehiclesController', () => {
 
       expect(mockVehiclesService.createAvailabilityWindow).toHaveBeenCalledWith(
         VEHICLE_ID,
+        user.id,
+        user.roles,
+        dto,
+      );
+    });
+
+    it('should delegate availability updates to service', async () => {
+      const user = createMockUser();
+      const dto = {
+        type: AvailabilityWindowType.AVAILABLE,
+        startTime: '2026-05-25T09:00:00.000Z',
+        endTime: '2026-05-25T17:00:00.000Z',
+      };
+      mockVehiclesService.updateAvailabilityWindow.mockResolvedValue({
+        id: 'window-1',
+        vehicleId: VEHICLE_ID,
+        ...dto,
+      });
+
+      await controller.updateAvailabilityWindow(
+        VEHICLE_ID,
+        'window-1',
+        user,
+        dto,
+      );
+
+      expect(mockVehiclesService.updateAvailabilityWindow).toHaveBeenCalledWith(
+        VEHICLE_ID,
+        'window-1',
         user.id,
         user.roles,
         dto,

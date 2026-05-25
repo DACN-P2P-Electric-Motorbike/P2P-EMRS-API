@@ -31,6 +31,8 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   totalPrice: 100_000,
   deposit: 20_000,
   protectionFee: 0,
+  prepaidChargingFee: 0,
+  roadsideSupportFee: 0,
   payment: null,
   vehicle: { id: VEHICLE_ID, name: 'Test EV' },
   ...overrides,
@@ -386,6 +388,34 @@ describe('PaymentsService', () => {
 
       const callArg = prisma.payment.create.mock.calls[0][0].data;
       expect(callArg.amount).toBe(130_000);
+      expect(callArg.platformFee).toBe(15_000);
+      expect(callArg.ownerAmount).toBe(85_000);
+    });
+
+    it('should include prepaid charging fee without changing owner payout', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ prepaidChargingFee: 50_000 }),
+      );
+      prisma.payment.create.mockResolvedValue(makePayment({ amount: 170_000 }));
+
+      await service.createPayment(RENTER_ID, dto);
+
+      const callArg = prisma.payment.create.mock.calls[0][0].data;
+      expect(callArg.amount).toBe(170_000);
+      expect(callArg.platformFee).toBe(15_000);
+      expect(callArg.ownerAmount).toBe(85_000);
+    });
+
+    it('should include roadside support fee without changing owner payout', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeBooking({ roadsideSupportFee: 30_000 }),
+      );
+      prisma.payment.create.mockResolvedValue(makePayment({ amount: 150_000 }));
+
+      await service.createPayment(RENTER_ID, dto);
+
+      const callArg = prisma.payment.create.mock.calls[0][0].data;
+      expect(callArg.amount).toBe(150_000);
       expect(callArg.platformFee).toBe(15_000);
       expect(callArg.ownerAmount).toBe(85_000);
     });

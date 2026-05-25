@@ -28,6 +28,12 @@ import { TrustScoreService } from '../trust-score/trust-score.service';
 import { BookingLockService } from './booking-lock.service';
 import { KycService } from '../kyc/kyc.service';
 import { CancellationRefundPreviewEntity } from './entities/cancellation-refund-preview.entity';
+import {
+  BookingPolicyEntity,
+  BookingPrepaidChargingPolicyEntity,
+  BookingProtectionPlanPolicyEntity,
+  BookingRoadsideSupportPolicyEntity,
+} from './entities/booking-policy.entity';
 
 @Injectable()
 export class BookingsService {
@@ -35,6 +41,11 @@ export class BookingsService {
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
   private readonly MIN_BOOKING_MINUTES = 30;
   private readonly MAX_BOOKING_DAYS = 30;
+  private readonly DEFAULT_PROTECTION_PLAN = ProtectionPlanType.STANDARD;
+  private readonly PREPAID_CHARGING_FEE = 50_000;
+  private readonly PREPAID_CHARGING_CREDIT_PERCENT = 10;
+  private readonly ROADSIDE_SUPPORT_FEE = 30_000;
+  private readonly ROADSIDE_SUPPORT_CREDIT_AMOUNT = 200_000;
   private readonly PROTECTION_PLANS: Record<
     ProtectionPlanType,
     {
@@ -67,6 +78,37 @@ export class BookingsService {
     private readonly bookingLockService: BookingLockService,
     private readonly kycService: KycService,
   ) {}
+
+  getBookingPolicy(): BookingPolicyEntity {
+    const protectionPlanOrder = [
+      ProtectionPlanType.BASIC,
+      ProtectionPlanType.STANDARD,
+      ProtectionPlanType.PREMIUM,
+    ];
+
+    return new BookingPolicyEntity({
+      defaultProtectionPlan: this.DEFAULT_PROTECTION_PLAN,
+      protectionPlans: protectionPlanOrder.map((protectionPlan) => {
+        const config = this.PROTECTION_PLANS[protectionPlan];
+        return new BookingProtectionPlanPolicyEntity({
+          protectionPlan,
+          feeRate: config.feeRate,
+          deductible: config.deductible,
+          coverageLimit: config.coverageLimit,
+          isDefault: protectionPlan === this.DEFAULT_PROTECTION_PLAN,
+        });
+      }),
+      prepaidCharging: new BookingPrepaidChargingPolicyEntity({
+        fee: this.PREPAID_CHARGING_FEE,
+        creditPercent: this.PREPAID_CHARGING_CREDIT_PERCENT,
+        requiresBatteryReturnMinimum: true,
+      }),
+      roadsideSupport: new BookingRoadsideSupportPolicyEntity({
+        fee: this.ROADSIDE_SUPPORT_FEE,
+        creditAmount: this.ROADSIDE_SUPPORT_CREDIT_AMOUNT,
+      }),
+    });
+  }
 
   /**
    * Calculate total price based on vehicle pricing and duration
@@ -245,9 +287,16 @@ export class BookingsService {
       vehicle.pricePerDay?.toNumber() ?? vehicle.pricePerHour.toNumber() * 24,
     );
     const protection = this.calculateProtection(
-      dto.protectionPlan ?? ProtectionPlanType.STANDARD,
+      dto.protectionPlan ?? this.DEFAULT_PROTECTION_PLAN,
       totalPrice,
     );
+    const prepaidCharging = dto.prepaidCharging ?? false;
+    if (prepaidCharging && vehicle.batteryReturnMin == null) {
+      throw new BadRequestException(
+        'Prepaid charging is available only when the vehicle has a battery return minimum',
+      );
+    }
+    const roadsideSupport = dto.roadsideSupport ?? false;
 
     // Create booking
     const booking = await this.prisma.booking.create({
@@ -260,6 +309,16 @@ export class BookingsService {
         totalPrice,
         deposit: vehicle.deposit ?? 0,
         ...protection,
+        prepaidCharging,
+        prepaidChargingFee: prepaidCharging ? this.PREPAID_CHARGING_FEE : 0,
+        prepaidChargingCreditPercent: prepaidCharging
+          ? this.PREPAID_CHARGING_CREDIT_PERCENT
+          : 0,
+        roadsideSupport,
+        roadsideSupportFee: roadsideSupport ? this.ROADSIDE_SUPPORT_FEE : 0,
+        roadsideSupportCreditAmount: roadsideSupport
+          ? this.ROADSIDE_SUPPORT_CREDIT_AMOUNT
+          : 0,
         notes: dto.notes,
         status: BookingStatus.PENDING,
       },
@@ -617,6 +676,8 @@ export class BookingsService {
       totalPrice: number;
       deposit: number;
       protectionFee?: number | null;
+      prepaidChargingFee?: number | null;
+      roadsideSupportFee?: number | null;
     },
     payment: { amount: number; status: PaymentStatus } | null,
     userId: string,
@@ -653,6 +714,12 @@ export class BookingsService {
     const isPaid = payment?.status === PaymentStatus.COMPLETED;
     const rentalAmount = this.roundMoney(booking.totalPrice);
     const protectionAmount = this.roundMoney(booking.protectionFee ?? 0);
+    const prepaidChargingAmount = this.roundMoney(
+      booking.prepaidChargingFee ?? 0,
+    );
+    const roadsideSupportAmount = this.roundMoney(
+      booking.roadsideSupportFee ?? 0,
+    );
     const depositAmount = this.roundMoney(booking.deposit);
     const paidAmount = isPaid ? this.roundMoney(payment.amount) : 0;
     const refundableDepositAmount = isPaid
@@ -667,12 +734,26 @@ export class BookingsService {
           this.roundMoney(protectionAmount * rentalRefundRate),
         )
       : 0;
+    const refundablePrepaidChargingAmount = isPaid
+      ? Math.min(
+          prepaidChargingAmount,
+          this.roundMoney(prepaidChargingAmount * rentalRefundRate),
+        )
+      : 0;
+    const refundableRoadsideSupportAmount = isPaid
+      ? Math.min(
+          roadsideSupportAmount,
+          this.roundMoney(roadsideSupportAmount * rentalRefundRate),
+        )
+      : 0;
     const refundAmount = Math.min(
       paidAmount,
       this.roundMoney(
         refundableDepositAmount +
           refundableRentalAmount +
-          refundableProtectionAmount,
+          refundableProtectionAmount +
+          refundablePrepaidChargingAmount +
+          refundableRoadsideSupportAmount,
       ),
     );
     const forfeitedRentalAmount = isPaid
@@ -684,10 +765,28 @@ export class BookingsService {
           this.roundMoney(protectionAmount - refundableProtectionAmount),
         )
       : 0;
+    const forfeitedPrepaidChargingAmount = isPaid
+      ? Math.max(
+          0,
+          this.roundMoney(
+            prepaidChargingAmount - refundablePrepaidChargingAmount,
+          ),
+        )
+      : 0;
+    const forfeitedRoadsideSupportAmount = isPaid
+      ? Math.max(
+          0,
+          this.roundMoney(
+            roadsideSupportAmount - refundableRoadsideSupportAmount,
+          ),
+        )
+      : 0;
     const forfeitedDepositAmount = 0;
     const forfeitedAmount = this.roundMoney(
       forfeitedRentalAmount +
         forfeitedProtectionAmount +
+        forfeitedPrepaidChargingAmount +
+        forfeitedRoadsideSupportAmount +
         forfeitedDepositAmount,
     );
     const refundType =
@@ -707,14 +806,20 @@ export class BookingsService {
       trustPenalty,
       rentalAmount,
       protectionAmount,
+      prepaidChargingAmount,
+      roadsideSupportAmount,
       depositAmount,
       paidAmount,
       refundableRentalAmount,
       refundableProtectionAmount,
+      refundablePrepaidChargingAmount,
+      refundableRoadsideSupportAmount,
       refundableDepositAmount,
       refundAmount,
       forfeitedRentalAmount,
       forfeitedProtectionAmount,
+      forfeitedPrepaidChargingAmount,
+      forfeitedRoadsideSupportAmount,
       forfeitedDepositAmount,
       forfeitedAmount,
       isPaid,

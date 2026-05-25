@@ -60,6 +60,30 @@ export class BookingEntity implements Booking {
   @Expose()
   protectionCoverageLimit: number;
 
+  @ApiProperty()
+  @Expose()
+  prepaidCharging: boolean;
+
+  @ApiProperty()
+  @Expose()
+  prepaidChargingFee: number;
+
+  @ApiProperty()
+  @Expose()
+  prepaidChargingCreditPercent: number;
+
+  @ApiProperty()
+  @Expose()
+  roadsideSupport: boolean;
+
+  @ApiProperty()
+  @Expose()
+  roadsideSupportFee: number;
+
+  @ApiProperty()
+  @Expose()
+  roadsideSupportCreditAmount: number;
+
   @ApiPropertyOptional()
   @Expose()
   notes: string | null;

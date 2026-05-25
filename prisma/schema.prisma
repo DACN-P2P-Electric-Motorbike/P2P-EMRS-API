@@ -43,6 +43,7 @@ model User {
   incidentReportsFiled     IncidentReport[]     @relation("IncidentReporter")
   incidentReportsReviewed  IncidentReport[]     @relation("IncidentReviewer")
   claimCasesOpened         ClaimCase[]          @relation("ClaimCaseOpenedBy")
+  claimCasesAssigned       ClaimCase[]          @relation("ClaimCaseAssignee")
   claimCasesFirstReviewed  ClaimCase[]          @relation("ClaimCaseFirstReviewer")
   claimCasesSecondReviewed ClaimCase[]          @relation("ClaimCaseSecondReviewer")
   evidenceAnnotations      EvidenceAnnotation[] @relation("EvidenceAnnotationAuthor")
@@ -168,14 +169,19 @@ model Vehicle {
 }
 
 model VehicleAvailabilityWindow {
-  id        String                 @id @default(uuid())
-  vehicleId String                 @map("vehicle_id")
-  type      AvailabilityWindowType
-  startTime DateTime               @map("start_time")
-  endTime   DateTime               @map("end_time")
-  note      String?
-  createdAt DateTime               @default(now()) @map("created_at")
-  updatedAt DateTime               @updatedAt @map("updated_at")
+  id                    String                       @id @default(uuid())
+  vehicleId             String                       @map("vehicle_id")
+  type                  AvailabilityWindowType
+  recurrence            AvailabilityWindowRecurrence @default(ONCE)
+  recurringWeekdays     Int[]                        @default([]) @map("recurring_weekdays")
+  timezoneOffsetMinutes Int?                         @map("timezone_offset_minutes")
+  timezoneName          String?                      @map("timezone_name")
+  recurrenceEndsAt      DateTime?                    @map("recurrence_ends_at")
+  startTime             DateTime                     @map("start_time")
+  endTime               DateTime                     @map("end_time")
+  note                  String?
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
 
   vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
@@ -186,39 +192,45 @@ model VehicleAvailabilityWindow {
 }
 
 model Booking {
-  id                      String               @id @default(uuid())
-  renterId                String               @map("renter_id")
-  ownerId                 String               @map("owner_id")
-  vehicleId               String               @map("vehicle_id")
-  status                  BookingStatus        @default(PENDING)
-  startTime               DateTime             @map("start_time")
-  endTime                 DateTime             @map("end_time")
-  totalPrice              Float                @map("total_price")
-  deposit                 Float
-  protectionPlan          ProtectionPlanType   @default(STANDARD) @map("protection_plan")
-  protectionFee           Float                @default(0) @map("protection_fee")
-  protectionDeductible    Float                @default(1500000) @map("protection_deductible")
-  protectionCoverageLimit Float                @default(15000000) @map("protection_coverage_limit")
-  notes                   String?
-  cancellationReason      String?              @map("cancellation_reason")
-  cancelledBy             String?              @map("cancelled_by")
-  createdAt               DateTime             @default(now()) @map("created_at")
-  updatedAt               DateTime             @updatedAt @map("updated_at")
-  confirmedAt             DateTime?            @map("confirmed_at")
-  cancelledAt             DateTime?            @map("cancelled_at")
-  owner                   User                 @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  renter                  User                 @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle                 Vehicle              @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  notifications           Notification[]
-  payment                 Payment?
-  trip                    Trip?
-  handovers               VehicleHandover[]
-  depositLedger           DepositLedger?
-  postTripCharges         PostTripCharge[]
-  incidentReports         IncidentReport[]
-  ownerPayout             OwnerPayout?
-  claimCase               ClaimCase?
-  evidenceAnnotations     EvidenceAnnotation[]
+  id                           String               @id @default(uuid())
+  renterId                     String               @map("renter_id")
+  ownerId                      String               @map("owner_id")
+  vehicleId                    String               @map("vehicle_id")
+  status                       BookingStatus        @default(PENDING)
+  startTime                    DateTime             @map("start_time")
+  endTime                      DateTime             @map("end_time")
+  totalPrice                   Float                @map("total_price")
+  deposit                      Float
+  protectionPlan               ProtectionPlanType   @default(STANDARD) @map("protection_plan")
+  protectionFee                Float                @default(0) @map("protection_fee")
+  protectionDeductible         Float                @default(1500000) @map("protection_deductible")
+  protectionCoverageLimit      Float                @default(15000000) @map("protection_coverage_limit")
+  prepaidCharging              Boolean              @default(false) @map("prepaid_charging")
+  prepaidChargingFee           Float                @default(0) @map("prepaid_charging_fee")
+  prepaidChargingCreditPercent Int                  @default(0) @map("prepaid_charging_credit_percent")
+  roadsideSupport              Boolean              @default(false) @map("roadside_support")
+  roadsideSupportFee           Float                @default(0) @map("roadside_support_fee")
+  roadsideSupportCreditAmount  Float                @default(0) @map("roadside_support_credit_amount")
+  notes                        String?
+  cancellationReason           String?              @map("cancellation_reason")
+  cancelledBy                  String?              @map("cancelled_by")
+  createdAt                    DateTime             @default(now()) @map("created_at")
+  updatedAt                    DateTime             @updatedAt @map("updated_at")
+  confirmedAt                  DateTime?            @map("confirmed_at")
+  cancelledAt                  DateTime?            @map("cancelled_at")
+  owner                        User                 @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  renter                       User                 @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle                      Vehicle              @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  notifications                Notification[]
+  payment                      Payment?
+  trip                         Trip?
+  handovers                    VehicleHandover[]
+  depositLedger                DepositLedger?
+  postTripCharges              PostTripCharge[]
+  incidentReports              IncidentReport[]
+  ownerPayout                  OwnerPayout?
+  claimCase                    ClaimCase?
+  evidenceAnnotations          EvidenceAnnotation[]
 
   @@index([renterId])
   @@index([ownerId])
@@ -459,6 +471,11 @@ enum BatteryType {
 enum AvailabilityWindowType {
   AVAILABLE
   BLOCKED
+}
+
+enum AvailabilityWindowRecurrence {
+  ONCE
+  WEEKLY
 }
 
 enum BookingStatus {
@@ -818,6 +835,8 @@ model ClaimCase {
   outcome           ClaimCaseOutcome?
   summary           String?
   openedBy          String?           @map("opened_by")
+  assignedAdminId   String?           @map("assigned_admin_id")
+  assignedAt        DateTime?         @map("assigned_at")
   firstDecision     ClaimCaseOutcome? @map("first_decision")
   firstReviewedBy   String?           @map("first_reviewed_by")
   firstReviewNotes  String?           @map("first_review_notes")
@@ -833,6 +852,7 @@ model ClaimCase {
 
   booking             Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   opener              User?                @relation("ClaimCaseOpenedBy", fields: [openedBy], references: [id], onDelete: SetNull)
+  assignee            User?                @relation("ClaimCaseAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
   firstReviewer       User?                @relation("ClaimCaseFirstReviewer", fields: [firstReviewedBy], references: [id], onDelete: SetNull)
   secondReviewer      User?                @relation("ClaimCaseSecondReviewer", fields: [secondReviewedBy], references: [id], onDelete: SetNull)
   evidenceAnnotations EvidenceAnnotation[]
@@ -840,6 +860,8 @@ model ClaimCase {
   @@index([status])
   @@index([outcome])
   @@index([openedBy])
+  @@index([assignedAdminId])
+  @@index([assignedAt])
   @@index([firstReviewedBy])
   @@index([secondReviewedBy])
   @@index([createdAt])

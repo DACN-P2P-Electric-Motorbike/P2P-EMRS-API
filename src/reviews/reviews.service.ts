@@ -2,12 +2,14 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Review, ReviewType, TrustScoreEventType } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { ReviewEntity } from './entities/review.entity';
+import { BookingReviewStatusEntity } from './entities/booking-review-status.entity';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { TrustScoreService } from '../trust-score/trust-score.service';
 
@@ -366,6 +368,80 @@ export class ReviewsService {
     });
 
     return reviews.map((r) => ReviewEntity.fromPrisma(r));
+  }
+
+  /**
+   * Get the blind-review exchange visible to one booking participant.
+   * Counterpart text stays hidden until the persisted reveal has occurred.
+   */
+  async getBookingReviewStatus(
+    userId: string,
+    bookingId: string,
+  ): Promise<BookingReviewStatusEntity> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        renterId: true,
+        ownerId: true,
+        trip: { select: { id: true } },
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.renterId !== userId && booking.ownerId !== userId) {
+      throw new ForbiddenException(
+        'You can only view reviews for your own bookings',
+      );
+    }
+
+    if (!booking.trip) {
+      return new BookingReviewStatusEntity({
+        bookingId,
+        submitted: false,
+        counterpartSubmitted: false,
+        isRevealed: false,
+        ownReview: null,
+        receivedReview: null,
+        revealAt: null,
+      });
+    }
+
+    const reviews = await this.prisma.review.findMany({
+      where: { tripId: booking.trip.id },
+      include: {
+        user: { select: { fullName: true, avatarUrl: true } },
+      },
+    });
+    const own = reviews.find((review) => review.userId === userId);
+    const counterpart = reviews.find((review) => review.userId !== userId);
+    const isRevealed = reviews.some((review) => Boolean(review.revealedAt));
+    const ownReview = own
+      ? new ReviewEntity({
+          ...ReviewEntity.fromPrisma({ ...own, bookingId }),
+          isRevealed,
+        })
+      : null;
+    const receivedReview =
+      counterpart?.revealedAt != null
+        ? new ReviewEntity({
+            ...ReviewEntity.fromPrisma({ ...counterpart, bookingId }),
+            isRevealed: true,
+          })
+        : null;
+
+    return new BookingReviewStatusEntity({
+      bookingId,
+      submitted: ownReview !== null,
+      counterpartSubmitted: counterpart !== undefined,
+      isRevealed,
+      ownReview,
+      receivedReview,
+      revealAt: own?.visibleAt ?? counterpart?.visibleAt ?? null,
+    });
   }
 
   /**

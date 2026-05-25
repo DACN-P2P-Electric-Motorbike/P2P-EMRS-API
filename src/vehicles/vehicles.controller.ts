@@ -27,9 +27,11 @@ import {
 } from './dto';
 import { VehicleEntity } from './entities/vehicle.entity';
 import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
+import { PublicVehicleAvailabilitySummaryEntity } from './entities/public-vehicle-availability-summary.entity';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserEntity } from '../auth/entities/user.entity';
+import { BatteryType, VehicleCondition } from '@prisma/client';
 
 @ApiTags('Vehicles')
 @Controller('vehicles')
@@ -141,6 +143,23 @@ export class VehiclesController {
     description: 'Filter by instant book availability',
     type: Boolean,
   })
+  @ApiQuery({
+    name: 'condition',
+    required: false,
+    description: 'Filter by EV condition',
+    enum: VehicleCondition,
+  })
+  @ApiQuery({
+    name: 'batteryType',
+    required: false,
+    description: 'Filter by EV battery pack type',
+    enum: BatteryType,
+  })
+  @ApiQuery({
+    name: 'minBatteryHealth',
+    required: false,
+    description: 'Minimum EV battery health percentage',
+  })
   @ApiResponse({
     status: 200,
     description: 'List of available vehicles',
@@ -157,6 +176,9 @@ export class VehiclesController {
     @Query('longitude') longitude?: string,
     @Query('radiusKm') radiusKm?: string,
     @Query('instantBook') instantBook?: string,
+    @Query('condition') condition?: string,
+    @Query('batteryType') batteryType?: string,
+    @Query('minBatteryHealth') minBatteryHealth?: string,
   ): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     return this.vehiclesService.getAvailableVehicles({
       type,
@@ -171,6 +193,11 @@ export class VehiclesController {
       radiusKm: radiusKm ? Number.parseFloat(radiusKm) : undefined,
       instantBook:
         instantBook !== undefined ? instantBook === 'true' : undefined,
+      condition: condition || undefined,
+      batteryType: batteryType || undefined,
+      minBatteryHealth: minBatteryHealth
+        ? Number.parseInt(minBatteryHealth)
+        : undefined,
     });
   }
 
@@ -180,7 +207,7 @@ export class VehiclesController {
   @ApiOperation({
     summary: 'Get vehicle availability windows',
     description:
-      'Owner/admin only. Returns calendar windows for a vehicle. AVAILABLE windows define bookable periods; BLOCKED windows exclude periods.',
+      'Owner/admin only. Returns one-time windows and weekly rules for a vehicle. AVAILABLE entries define bookable periods; BLOCKED entries exclude periods.',
   })
   @ApiParam({ name: 'id', description: 'Vehicle ID' })
   @ApiQuery({
@@ -213,6 +240,25 @@ export class VehiclesController {
     );
   }
 
+  @Get(':id/availability-summary')
+  @ApiOperation({
+    summary: 'Get public vehicle availability summary',
+    description:
+      'Public read-only schedule summary for renters. Exposes active one-time and weekly rule timing without owner notes or management identifiers.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Public availability rule summary',
+    type: PublicVehicleAvailabilitySummaryEntity,
+  })
+  @ApiResponse({ status: 404, description: 'Vehicle not found' })
+  async getPublicAvailabilitySummary(
+    @Param('id') id: string,
+  ): Promise<PublicVehicleAvailabilitySummaryEntity> {
+    return this.vehiclesService.getPublicAvailabilitySummary(id);
+  }
+
   @Post(':id/availability')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -220,7 +266,7 @@ export class VehiclesController {
   @ApiOperation({
     summary: 'Create vehicle availability window',
     description:
-      'Owner/admin only. Adds an AVAILABLE or BLOCKED calendar window for a vehicle.',
+      'Owner/admin only. Adds an AVAILABLE or BLOCKED one-time window or weekly calendar rule for a vehicle.',
   })
   @ApiParam({ name: 'id', description: 'Vehicle ID' })
   @ApiResponse({
@@ -235,6 +281,36 @@ export class VehiclesController {
   ): Promise<VehicleAvailabilityWindowEntity> {
     return this.vehiclesService.createAvailabilityWindow(
       id,
+      user.id,
+      user.roles,
+      dto,
+    );
+  }
+
+  @Patch(':id/availability/:windowId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update vehicle availability window',
+    description:
+      'Owner/admin only. Updates an AVAILABLE or BLOCKED one-time window or weekly calendar rule for a vehicle.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiParam({ name: 'windowId', description: 'Availability window ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Availability window updated',
+    type: VehicleAvailabilityWindowEntity,
+  })
+  async updateAvailabilityWindow(
+    @Param('id') id: string,
+    @Param('windowId') windowId: string,
+    @CurrentUser() user: UserEntity,
+    @Body() dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    return this.vehiclesService.updateAvailabilityWindow(
+      id,
+      windowId,
       user.id,
       user.roles,
       dto,

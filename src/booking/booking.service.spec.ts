@@ -190,6 +190,50 @@ describe('BookingsService', () => {
     mockKycService.assertApproved.mockResolvedValue(undefined);
   });
 
+  describe('getBookingPolicy', () => {
+    it('should expose deterministic protection and add-on policy values', () => {
+      const policy = service.getBookingPolicy();
+
+      expect(policy.defaultProtectionPlan).toBe(ProtectionPlanType.STANDARD);
+      expect(policy.protectionPlans).toEqual([
+        expect.objectContaining({
+          protectionPlan: ProtectionPlanType.BASIC,
+          feeRate: 0,
+          deductible: 3000000,
+          coverageLimit: 5000000,
+          isDefault: false,
+        }),
+        expect.objectContaining({
+          protectionPlan: ProtectionPlanType.STANDARD,
+          feeRate: 0.05,
+          deductible: 1500000,
+          coverageLimit: 15000000,
+          isDefault: true,
+        }),
+        expect.objectContaining({
+          protectionPlan: ProtectionPlanType.PREMIUM,
+          feeRate: 0.1,
+          deductible: 500000,
+          coverageLimit: 30000000,
+          isDefault: false,
+        }),
+      ]);
+      expect(policy.prepaidCharging).toEqual(
+        expect.objectContaining({
+          fee: 50000,
+          creditPercent: 10,
+          requiresBatteryReturnMinimum: true,
+        }),
+      );
+      expect(policy.roadsideSupport).toEqual(
+        expect.objectContaining({
+          fee: 30000,
+          creditAmount: 200000,
+        }),
+      );
+    });
+  });
+
   // ─── createBooking ──────────────────────────────────────────────────────────
 
   describe('createBooking', () => {
@@ -251,6 +295,78 @@ describe('BookingsService', () => {
             protectionCoverageLimit: 30000000,
           }),
         }),
+      );
+    });
+
+    it('should persist bounded prepaid charging credit for eligible EV return rules', async () => {
+      const vehicle = createAvailableVehicle({ batteryReturnMin: 50 });
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+        prepaidCharging: true,
+        prepaidChargingFee: 50000,
+        prepaidChargingCreditPercent: 10,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+
+      await service.createBooking(
+        RENTER_ID,
+        buildCreateBookingDto({ prepaidCharging: true }) as any,
+      );
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            prepaidCharging: true,
+            prepaidChargingFee: 50000,
+            prepaidChargingCreditPercent: 10,
+          }),
+        }),
+      );
+    });
+
+    it('should persist roadside support add-on fee and credit', async () => {
+      const vehicle = createAvailableVehicle();
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+        roadsideSupport: true,
+        roadsideSupportFee: 30000,
+        roadsideSupportCreditAmount: 200000,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+
+      await service.createBooking(
+        RENTER_ID,
+        buildCreateBookingDto({ roadsideSupport: true }) as any,
+      );
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            roadsideSupport: true,
+            roadsideSupportFee: 30000,
+            roadsideSupportCreditAmount: 200000,
+          }),
+        }),
+      );
+    });
+
+    it('should reject prepaid charging when no battery return rule applies', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createAvailableVehicle({ batteryReturnMin: null }),
+      );
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.createBooking(
+          RENTER_ID,
+          buildCreateBookingDto({ prepaidCharging: true }) as any,
+        ),
+      ).rejects.toThrow(
+        'Prepaid charging is available only when the vehicle has a battery return minimum',
       );
     });
 
@@ -565,6 +681,66 @@ describe('BookingsService', () => {
       expect(preview.forfeitedRentalAmount).toBe(50000);
       expect(preview.trustPenalty).toBe(5);
       expect(preview.policyCode).toBe('RENTER_STANDARD_PARTIAL_REFUND');
+    });
+
+    it('applies cancellation refund policy to prepaid charging fees', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+          prepaidCharging: true,
+          prepaidChargingFee: 50000,
+          prepaidChargingCreditPercent: 10,
+        }),
+        payment: {
+          amount: 650000,
+          status: PaymentStatus.COMPLETED,
+        },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.prepaidChargingAmount).toBe(50000);
+      expect(preview.refundablePrepaidChargingAmount).toBe(25000);
+      expect(preview.forfeitedPrepaidChargingAmount).toBe(25000);
+      expect(preview.refundAmount).toBe(575000);
+      expect(preview.forfeitedAmount).toBe(75000);
+    });
+
+    it('applies cancellation refund policy to roadside support fees', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+          roadsideSupport: true,
+          roadsideSupportFee: 30000,
+          roadsideSupportCreditAmount: 200000,
+        }),
+        payment: {
+          amount: 630000,
+          status: PaymentStatus.COMPLETED,
+        },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.roadsideSupportAmount).toBe(30000);
+      expect(preview.refundableRoadsideSupportAmount).toBe(15000);
+      expect(preview.forfeitedRoadsideSupportAmount).toBe(15000);
+      expect(preview.refundAmount).toBe(565000);
+      expect(preview.forfeitedAmount).toBe(65000);
     });
 
     it('should set booking status to CANCELLED when called by the renter', async () => {

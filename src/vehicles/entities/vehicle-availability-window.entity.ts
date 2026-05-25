@@ -1,13 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  AvailabilityWindowRecurrence,
   AvailabilityWindowType,
   VehicleAvailabilityWindow,
 } from '@prisma/client';
 import { Expose } from 'class-transformer';
 
-export class VehicleAvailabilityWindowEntity
-  implements VehicleAvailabilityWindow
-{
+export class VehicleAvailabilityWindowEntity implements VehicleAvailabilityWindow {
   @ApiProperty({ description: 'Availability window unique identifier' })
   @Expose()
   id: string;
@@ -22,6 +21,37 @@ export class VehicleAvailabilityWindowEntity
   })
   @Expose()
   type: AvailabilityWindowType;
+
+  @ApiProperty({
+    description: 'Window recurrence mode',
+    enum: AvailabilityWindowRecurrence,
+  })
+  @Expose()
+  recurrence: AvailabilityWindowRecurrence;
+
+  @ApiProperty({
+    description: 'ISO weekdays for a weekly recurring rule',
+    type: [Number],
+  })
+  @Expose()
+  recurringWeekdays: number[];
+
+  @ApiPropertyOptional({
+    description: 'Fallback stored UTC offset in minutes for a weekly rule',
+  })
+  @Expose()
+  timezoneOffsetMinutes: number | null;
+
+  @ApiPropertyOptional({
+    description: 'IANA timezone name for a weekly rule',
+    example: 'Asia/Ho_Chi_Minh',
+  })
+  @Expose()
+  timezoneName: string | null;
+
+  @ApiPropertyOptional({ description: 'Final date for a weekly rule' })
+  @Expose()
+  recurrenceEndsAt: Date | null;
 
   @ApiProperty({ description: 'Window start time' })
   @Expose()

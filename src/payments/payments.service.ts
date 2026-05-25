@@ -200,11 +200,18 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('Can only pay for confirmed bookings');
     }
 
-    // Renter pays rental plus selected protection fee plus deposit.
+    // Renter pays rental plus selected add-on fees plus deposit.
     // Platform commission applies only to rental revenue; deposit is a
-    // held/refundable amount and protection is tracked on the booking.
+    // held/refundable amount and add-ons are tracked on the booking.
     const protectionFee = booking.protectionFee ?? 0;
-    const totalAmount = booking.totalPrice + protectionFee + booking.deposit;
+    const prepaidChargingFee = booking.prepaidChargingFee ?? 0;
+    const roadsideSupportFee = booking.roadsideSupportFee ?? 0;
+    const totalAmount =
+      booking.totalPrice +
+      protectionFee +
+      prepaidChargingFee +
+      roadsideSupportFee +
+      booking.deposit;
     const platformFee = booking.totalPrice * this.PLATFORM_FEE_RATE;
     const ownerAmount = booking.totalPrice - platformFee;
 
