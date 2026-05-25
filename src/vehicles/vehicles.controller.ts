@@ -261,6 +261,36 @@ export class VehiclesController {
     );
   }
 
+  @Patch(':id/availability/:windowId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update vehicle availability window',
+    description:
+      'Owner/admin only. Updates an AVAILABLE or BLOCKED one-time window or weekly calendar rule for a vehicle.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiParam({ name: 'windowId', description: 'Availability window ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Availability window updated',
+    type: VehicleAvailabilityWindowEntity,
+  })
+  async updateAvailabilityWindow(
+    @Param('id') id: string,
+    @Param('windowId') windowId: string,
+    @CurrentUser() user: UserEntity,
+    @Body() dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    return this.vehiclesService.updateAvailabilityWindow(
+      id,
+      windowId,
+      user.id,
+      user.roles,
+      dto,
+    );
+  }
+
   @Delete(':id/availability/:windowId')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

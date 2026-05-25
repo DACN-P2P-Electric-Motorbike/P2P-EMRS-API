@@ -36,6 +36,7 @@ const mockVehiclesService = {
   getAvailabilityWindows: jest.fn(),
   getPublicAvailabilitySummary: jest.fn(),
   createAvailabilityWindow: jest.fn(),
+  updateAvailabilityWindow: jest.fn(),
   deleteAvailabilityWindow: jest.fn(),
   updateVehicle: jest.fn(),
   toggleAvailability: jest.fn(),
@@ -310,6 +311,35 @@ describe('VehiclesController', () => {
 
       expect(mockVehiclesService.createAvailabilityWindow).toHaveBeenCalledWith(
         VEHICLE_ID,
+        user.id,
+        user.roles,
+        dto,
+      );
+    });
+
+    it('should delegate availability updates to service', async () => {
+      const user = createMockUser();
+      const dto = {
+        type: AvailabilityWindowType.AVAILABLE,
+        startTime: '2026-05-25T09:00:00.000Z',
+        endTime: '2026-05-25T17:00:00.000Z',
+      };
+      mockVehiclesService.updateAvailabilityWindow.mockResolvedValue({
+        id: 'window-1',
+        vehicleId: VEHICLE_ID,
+        ...dto,
+      });
+
+      await controller.updateAvailabilityWindow(
+        VEHICLE_ID,
+        'window-1',
+        user,
+        dto,
+      );
+
+      expect(mockVehiclesService.updateAvailabilityWindow).toHaveBeenCalledWith(
+        VEHICLE_ID,
+        'window-1',
         user.id,
         user.roles,
         dto,

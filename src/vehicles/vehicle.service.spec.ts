@@ -89,6 +89,7 @@ describe('VehiclesService', () => {
     findMany: jest.fn(),
     findFirst: jest.fn(),
     create: jest.fn(),
+    update: jest.fn(),
     delete: jest.fn(),
   };
   const mockUserDelegate = {
@@ -1352,6 +1353,82 @@ describe('VehiclesService', () => {
       expect(
         mockVehicleAvailabilityWindowDelegate.create,
       ).not.toHaveBeenCalled();
+    });
+
+    it('should update an owned weekly rule without conflicting with itself', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findFirst.mockResolvedValue({
+        id: 'weekly-window',
+      });
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([]);
+      const updatedWindow = {
+        ...availabilityWindow,
+        id: 'weekly-window',
+        recurrence: AvailabilityWindowRecurrence.WEEKLY,
+        recurringWeekdays: [2, 4],
+        timezoneOffsetMinutes: 420,
+        recurrenceEndsAt: new Date('2026-12-31T16:59:59.999Z'),
+      };
+      mockVehicleAvailabilityWindowDelegate.update.mockResolvedValue(
+        updatedWindow,
+      );
+
+      const result = await service.updateAvailabilityWindow(
+        VEHICLE_ID,
+        'weekly-window',
+        OWNER_ID,
+        [UserRole.OWNER],
+        {
+          type: AvailabilityWindowType.AVAILABLE,
+          recurrence: AvailabilityWindowRecurrence.WEEKLY,
+          recurringWeekdays: [2, 4],
+          timezoneOffsetMinutes: 420,
+          recurrenceEndsAt: '2026-12-31T16:59:59.999Z',
+          startTime: '2026-05-25T01:00:00.000Z',
+          endTime: '2026-05-25T11:00:00.000Z',
+        },
+      );
+
+      expect(result.id).toBe('weekly-window');
+      expect(
+        mockVehicleAvailabilityWindowDelegate.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { not: 'weekly-window' } }),
+        }),
+      );
+      expect(mockVehicleAvailabilityWindowDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'weekly-window' },
+          data: expect.objectContaining({
+            recurringWeekdays: [2, 4],
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+          }),
+        }),
+      );
+    });
+
+    it('should reject updates for missing availability windows', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.updateAvailabilityWindow(
+          VEHICLE_ID,
+          'missing-window',
+          OWNER_ID,
+          [UserRole.OWNER],
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            startTime: '2026-05-25T08:00:00.000Z',
+            endTime: '2026-05-25T18:00:00.000Z',
+          },
+        ),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should delete an owned availability window', async () => {

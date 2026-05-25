@@ -800,6 +800,67 @@ export class VehiclesService {
   ): Promise<VehicleAvailabilityWindowEntity> {
     await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
 
+    const data = this.normalizeAvailabilityWindowDto(dto);
+    await this.assertNoAvailabilityConflict(vehicleId, dto.type, data);
+
+    const window = await this.prisma.vehicleAvailabilityWindow.create({
+      data: {
+        vehicleId,
+        type: dto.type,
+        ...data,
+      },
+    });
+
+    return VehicleAvailabilityWindowEntity.fromPrisma(window);
+  }
+
+  async updateAvailabilityWindow(
+    vehicleId: string,
+    windowId: string,
+    userId: string,
+    userRole: UserRole[],
+    dto: CreateAvailabilityWindowDto,
+  ): Promise<VehicleAvailabilityWindowEntity> {
+    await this.assertVehicleCalendarAccess(vehicleId, userId, userRole);
+
+    const currentWindow = await this.prisma.vehicleAvailabilityWindow.findFirst(
+      {
+        where: { id: windowId, vehicleId },
+        select: { id: true },
+      },
+    );
+    if (!currentWindow) {
+      throw new NotFoundException('Availability window not found');
+    }
+
+    const data = this.normalizeAvailabilityWindowDto(dto);
+    await this.assertNoAvailabilityConflict(
+      vehicleId,
+      dto.type,
+      data,
+      windowId,
+    );
+
+    const window = await this.prisma.vehicleAvailabilityWindow.update({
+      where: { id: windowId },
+      data: {
+        type: dto.type,
+        ...data,
+      },
+    });
+
+    return VehicleAvailabilityWindowEntity.fromPrisma(window);
+  }
+
+  private normalizeAvailabilityWindowDto(dto: CreateAvailabilityWindowDto): {
+    recurrence: AvailabilityWindowRecurrence;
+    recurringWeekdays: number[];
+    timezoneOffsetMinutes: number | null;
+    recurrenceEndsAt: Date | null;
+    startTime: Date;
+    endTime: Date;
+    note?: string;
+  } {
     const startTime = new Date(dto.startTime);
     const endTime = new Date(dto.endTime);
     this.assertValidAvailabilityRange(startTime, endTime);
@@ -831,16 +892,49 @@ export class VehiclesService {
       }
     }
 
+    return {
+      recurrence,
+      recurringWeekdays:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? dto.recurringWeekdays!
+          : [],
+      timezoneOffsetMinutes:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? dto.timezoneOffsetMinutes!
+          : null,
+      recurrenceEndsAt:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? recurrenceEndsAt
+          : null,
+      startTime,
+      endTime,
+      note: dto.note,
+    };
+  }
+
+  private async assertNoAvailabilityConflict(
+    vehicleId: string,
+    type: AvailabilityWindowType,
+    data: {
+      recurrence: AvailabilityWindowRecurrence;
+      recurringWeekdays: number[];
+      timezoneOffsetMinutes: number | null;
+      startTime: Date;
+      endTime: Date;
+    },
+    excludedWindowId?: string,
+  ): Promise<void> {
     let hasOverlap = false;
-    if (recurrence === AvailabilityWindowRecurrence.ONCE) {
+    if (data.recurrence === AvailabilityWindowRecurrence.ONCE) {
       const overlappingWindow =
         await this.prisma.vehicleAvailabilityWindow.findFirst({
           where: {
             vehicleId,
-            type: dto.type,
+            type,
             recurrence: AvailabilityWindowRecurrence.ONCE,
-            startTime: { lt: endTime },
-            endTime: { gt: startTime },
+            ...(excludedWindowId ? { id: { not: excludedWindowId } } : {}),
+            startTime: { lt: data.endTime },
+            endTime: { gt: data.startTime },
           },
           select: { id: true },
         });
@@ -850,16 +944,17 @@ export class VehiclesService {
         await this.prisma.vehicleAvailabilityWindow.findMany({
           where: {
             vehicleId,
-            type: dto.type,
+            type,
             recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            ...(excludedWindowId ? { id: { not: excludedWindowId } } : {}),
           },
         });
       hasOverlap = existingRules.some((rule) =>
         this.weeklyRulesConflict(rule, {
-          startTime,
-          endTime,
-          recurringWeekdays: dto.recurringWeekdays!,
-          timezoneOffsetMinutes: dto.timezoneOffsetMinutes!,
+          startTime: data.startTime,
+          endTime: data.endTime,
+          recurringWeekdays: data.recurringWeekdays,
+          timezoneOffsetMinutes: data.timezoneOffsetMinutes!,
         }),
       );
     }
@@ -869,31 +964,6 @@ export class VehiclesService {
         'Availability window overlaps an existing window of the same type',
       );
     }
-
-    const window = await this.prisma.vehicleAvailabilityWindow.create({
-      data: {
-        vehicleId,
-        type: dto.type,
-        recurrence,
-        recurringWeekdays:
-          recurrence === AvailabilityWindowRecurrence.WEEKLY
-            ? dto.recurringWeekdays
-            : [],
-        timezoneOffsetMinutes:
-          recurrence === AvailabilityWindowRecurrence.WEEKLY
-            ? dto.timezoneOffsetMinutes
-            : null,
-        recurrenceEndsAt:
-          recurrence === AvailabilityWindowRecurrence.WEEKLY
-            ? recurrenceEndsAt
-            : null,
-        startTime,
-        endTime,
-        note: dto.note,
-      },
-    });
-
-    return VehicleAvailabilityWindowEntity.fromPrisma(window);
   }
 
   private availabilityWindowOverlaps(
