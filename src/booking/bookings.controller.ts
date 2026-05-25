@@ -25,6 +25,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { CreateBookingLockDto } from './dto/booking-lock.dto';
 import { CancellationRefundPreviewEntity } from './entities/cancellation-refund-preview.entity';
+import { BookingPolicyEntity } from './entities/booking-policy.entity';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { BookingStatus } from '@prisma/client';
@@ -119,6 +120,21 @@ export class BookingsController {
     @CurrentUser('id') userId: string,
   ): Promise<BookingEntity[]> {
     return this.bookingsService.getBookingHistory(userId);
+  }
+
+  @Get('policy')
+  @ApiOperation({
+    summary: 'Get booking add-on policy',
+    description:
+      'Returns deterministic platform policy for protection tiers, prepaid charging, and roadside support add-ons.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Current booking protection and add-on policy',
+    type: BookingPolicyEntity,
+  })
+  getBookingPolicy(): BookingPolicyEntity {
+    return this.bookingsService.getBookingPolicy();
   }
 
   @Get(':id/cancellation-preview')

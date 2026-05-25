@@ -28,6 +28,12 @@ import { TrustScoreService } from '../trust-score/trust-score.service';
 import { BookingLockService } from './booking-lock.service';
 import { KycService } from '../kyc/kyc.service';
 import { CancellationRefundPreviewEntity } from './entities/cancellation-refund-preview.entity';
+import {
+  BookingPolicyEntity,
+  BookingPrepaidChargingPolicyEntity,
+  BookingProtectionPlanPolicyEntity,
+  BookingRoadsideSupportPolicyEntity,
+} from './entities/booking-policy.entity';
 
 @Injectable()
 export class BookingsService {
@@ -35,6 +41,7 @@ export class BookingsService {
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
   private readonly MIN_BOOKING_MINUTES = 30;
   private readonly MAX_BOOKING_DAYS = 30;
+  private readonly DEFAULT_PROTECTION_PLAN = ProtectionPlanType.STANDARD;
   private readonly PREPAID_CHARGING_FEE = 50_000;
   private readonly PREPAID_CHARGING_CREDIT_PERCENT = 10;
   private readonly ROADSIDE_SUPPORT_FEE = 30_000;
@@ -71,6 +78,37 @@ export class BookingsService {
     private readonly bookingLockService: BookingLockService,
     private readonly kycService: KycService,
   ) {}
+
+  getBookingPolicy(): BookingPolicyEntity {
+    const protectionPlanOrder = [
+      ProtectionPlanType.BASIC,
+      ProtectionPlanType.STANDARD,
+      ProtectionPlanType.PREMIUM,
+    ];
+
+    return new BookingPolicyEntity({
+      defaultProtectionPlan: this.DEFAULT_PROTECTION_PLAN,
+      protectionPlans: protectionPlanOrder.map((protectionPlan) => {
+        const config = this.PROTECTION_PLANS[protectionPlan];
+        return new BookingProtectionPlanPolicyEntity({
+          protectionPlan,
+          feeRate: config.feeRate,
+          deductible: config.deductible,
+          coverageLimit: config.coverageLimit,
+          isDefault: protectionPlan === this.DEFAULT_PROTECTION_PLAN,
+        });
+      }),
+      prepaidCharging: new BookingPrepaidChargingPolicyEntity({
+        fee: this.PREPAID_CHARGING_FEE,
+        creditPercent: this.PREPAID_CHARGING_CREDIT_PERCENT,
+        requiresBatteryReturnMinimum: true,
+      }),
+      roadsideSupport: new BookingRoadsideSupportPolicyEntity({
+        fee: this.ROADSIDE_SUPPORT_FEE,
+        creditAmount: this.ROADSIDE_SUPPORT_CREDIT_AMOUNT,
+      }),
+    });
+  }
 
   /**
    * Calculate total price based on vehicle pricing and duration
@@ -249,7 +287,7 @@ export class BookingsService {
       vehicle.pricePerDay?.toNumber() ?? vehicle.pricePerHour.toNumber() * 24,
     );
     const protection = this.calculateProtection(
-      dto.protectionPlan ?? ProtectionPlanType.STANDARD,
+      dto.protectionPlan ?? this.DEFAULT_PROTECTION_PLAN,
       totalPrice,
     );
     const prepaidCharging = dto.prepaidCharging ?? false;

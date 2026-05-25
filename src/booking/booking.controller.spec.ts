@@ -13,7 +13,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, ProtectionPlanType } from '@prisma/client';
 
 import { BookingsController } from './bookings.controller';
 import { BookingsService } from './bookings.service';
@@ -32,6 +32,7 @@ const mockBookingsService = {
   getRenterBookings: jest.fn(),
   getUpcomingBookings: jest.fn(),
   getBookingHistory: jest.fn(),
+  getBookingPolicy: jest.fn(),
   getBookingById: jest.fn(),
   getCancellationRefundPreview: jest.fn(),
   cancelBooking: jest.fn(),
@@ -287,6 +288,38 @@ describe('BookingsController', () => {
       expect(mockBookingsService.getUpcomingBookings).toHaveBeenCalledWith(
         RENTER_ID,
       );
+    });
+  });
+
+  describe('GET /policy', () => {
+    it('should return booking protection and add-on policy', () => {
+      const policy = {
+        defaultProtectionPlan: ProtectionPlanType.STANDARD,
+        protectionPlans: [
+          {
+            protectionPlan: ProtectionPlanType.BASIC,
+            feeRate: 0,
+            deductible: 3000000,
+            coverageLimit: 5000000,
+            isDefault: false,
+          },
+        ],
+        prepaidCharging: {
+          fee: 50000,
+          creditPercent: 10,
+          requiresBatteryReturnMinimum: true,
+        },
+        roadsideSupport: {
+          fee: 30000,
+          creditAmount: 200000,
+        },
+      };
+      mockBookingsService.getBookingPolicy.mockReturnValue(policy);
+
+      const result = controller.getBookingPolicy();
+
+      expect(result).toEqual(policy);
+      expect(mockBookingsService.getBookingPolicy).toHaveBeenCalledTimes(1);
     });
   });
 

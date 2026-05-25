@@ -190,6 +190,50 @@ describe('BookingsService', () => {
     mockKycService.assertApproved.mockResolvedValue(undefined);
   });
 
+  describe('getBookingPolicy', () => {
+    it('should expose deterministic protection and add-on policy values', () => {
+      const policy = service.getBookingPolicy();
+
+      expect(policy.defaultProtectionPlan).toBe(ProtectionPlanType.STANDARD);
+      expect(policy.protectionPlans).toEqual([
+        expect.objectContaining({
+          protectionPlan: ProtectionPlanType.BASIC,
+          feeRate: 0,
+          deductible: 3000000,
+          coverageLimit: 5000000,
+          isDefault: false,
+        }),
+        expect.objectContaining({
+          protectionPlan: ProtectionPlanType.STANDARD,
+          feeRate: 0.05,
+          deductible: 1500000,
+          coverageLimit: 15000000,
+          isDefault: true,
+        }),
+        expect.objectContaining({
+          protectionPlan: ProtectionPlanType.PREMIUM,
+          feeRate: 0.1,
+          deductible: 500000,
+          coverageLimit: 30000000,
+          isDefault: false,
+        }),
+      ]);
+      expect(policy.prepaidCharging).toEqual(
+        expect.objectContaining({
+          fee: 50000,
+          creditPercent: 10,
+          requiresBatteryReturnMinimum: true,
+        }),
+      );
+      expect(policy.roadsideSupport).toEqual(
+        expect.objectContaining({
+          fee: 30000,
+          creditAmount: 200000,
+        }),
+      );
+    });
+  });
+
   // ─── createBooking ──────────────────────────────────────────────────────────
 
   describe('createBooking', () => {
