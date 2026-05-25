@@ -88,9 +88,6 @@ export class VehicleHandoverEntity {
   batteryLevel: number | null;
 
   @ApiPropertyOptional()
-  fuelLevel: number | null;
-
-  @ApiPropertyOptional()
   latitude: number | null;
 
   @ApiPropertyOptional()
@@ -122,8 +119,11 @@ export class VehicleHandoverEntity {
   }
 
   static fromPrisma(handover: HandoverLike): VehicleHandoverEntity {
+    const { fuelLevel: legacyFuelLevel, ...evHandover } = handover;
+    // Keep historical storage readable without exposing gasoline data in the EV API.
+    void legacyFuelLevel;
     return new VehicleHandoverEntity({
-      ...handover,
+      ...evHandover,
       isComplete: handover.confirmedByOwner && handover.confirmedByRenter,
       photos: (handover.photos ?? []).map(HandoverPhotoEntity.fromPrisma),
     });
@@ -131,14 +131,15 @@ export class VehicleHandoverEntity {
 }
 
 export class HandoverDifferencesEntity {
-  @ApiPropertyOptional({ description: 'Check-out odometer minus check-in odometer' })
+  @ApiPropertyOptional({
+    description: 'Check-out odometer minus check-in odometer',
+  })
   kmDriven?: number;
 
-  @ApiPropertyOptional({ description: 'Check-out battery minus check-in battery' })
+  @ApiPropertyOptional({
+    description: 'Check-out battery minus check-in battery',
+  })
   batteryDelta?: number;
-
-  @ApiPropertyOptional({ description: 'Check-out fuel minus check-in fuel' })
-  fuelDelta?: number;
 }
 
 export class HandoverSummaryEntity {

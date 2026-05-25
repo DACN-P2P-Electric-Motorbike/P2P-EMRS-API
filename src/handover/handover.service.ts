@@ -4,7 +4,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { BookingStatus, HandoverType, TripStatus, UserRole } from '@prisma/client';
+import {
+  BookingStatus,
+  HandoverType,
+  TripStatus,
+  UserRole,
+} from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { CreateHandoverDto } from './dto';
 import {
@@ -78,10 +83,7 @@ export class HandoverService {
       );
     }
 
-    const checkIn = this.findExistingHandover(
-      booking,
-      HandoverType.CHECK_IN,
-    );
+    const checkIn = this.findExistingHandover(booking, HandoverType.CHECK_IN);
     if (!this.isComplete(checkIn)) {
       throw new BadRequestException(
         'Completed check-in handover is required before check-out',
@@ -273,7 +275,6 @@ export class HandoverService {
     return {
       odometerReading: dto.odometerReading,
       batteryLevel: dto.batteryLevel,
-      fuelLevel: dto.fuelLevel,
       latitude: dto.latitude,
       longitude: dto.longitude,
       notes: dto.notes?.trim() || null,
@@ -303,7 +304,8 @@ export class HandoverService {
     roles: UserRole[],
   ): boolean {
     return (
-      roles.includes(UserRole.ADMIN) || this.isBookingParticipant(booking, userId)
+      roles.includes(UserRole.ADMIN) ||
+      this.isBookingParticipant(booking, userId)
     );
   }
 
@@ -332,7 +334,9 @@ export class HandoverService {
     bookingId: string,
     handovers: Array<Parameters<typeof VehicleHandoverEntity.fromPrisma>[0]>,
   ): HandoverSummaryEntity {
-    const checkIn = handovers.find((item) => item.type === HandoverType.CHECK_IN);
+    const checkIn = handovers.find(
+      (item) => item.type === HandoverType.CHECK_IN,
+    );
     const checkOut = handovers.find(
       (item) => item.type === HandoverType.CHECK_OUT,
     );
@@ -346,9 +350,7 @@ export class HandoverService {
   }
 
   private calculateDifferences(
-    checkIn:
-      | Parameters<typeof VehicleHandoverEntity.fromPrisma>[0]
-      | undefined,
+    checkIn: Parameters<typeof VehicleHandoverEntity.fromPrisma>[0] | undefined,
     checkOut:
       | Parameters<typeof VehicleHandoverEntity.fromPrisma>[0]
       | undefined,
@@ -356,16 +358,11 @@ export class HandoverService {
     const differences: HandoverDifferencesEntity = {};
 
     if (checkIn?.odometerReading != null && checkOut?.odometerReading != null) {
-      differences.kmDriven =
-        checkOut.odometerReading - checkIn.odometerReading;
+      differences.kmDriven = checkOut.odometerReading - checkIn.odometerReading;
     }
     if (checkIn?.batteryLevel != null && checkOut?.batteryLevel != null) {
       differences.batteryDelta = checkOut.batteryLevel - checkIn.batteryLevel;
     }
-    if (checkIn?.fuelLevel != null && checkOut?.fuelLevel != null) {
-      differences.fuelDelta = checkOut.fuelLevel - checkIn.fuelLevel;
-    }
-
     return differences;
   }
 }

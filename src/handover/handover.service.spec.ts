@@ -118,6 +118,10 @@ describe('HandoverService', () => {
     );
     expect(result.id).toBe(HANDOVER_ID);
     expect(result.isComplete).toBe(false);
+    expect(result).not.toHaveProperty('fuelLevel');
+    expect(
+      prisma.vehicleHandover.create.mock.calls[0][0].data,
+    ).not.toHaveProperty('fuelLevel');
   });
 
   it('rejects check-in from a user outside the booking', async () => {
@@ -205,12 +209,14 @@ describe('HandoverService', () => {
             type: HandoverType.CHECK_IN,
             odometerReading: 1200,
             batteryLevel: 90,
+            fuelLevel: 80,
           }),
           makeHandover({
             id: 'checkout-uuid',
             type: HandoverType.CHECK_OUT,
             odometerReading: 1260,
             batteryLevel: 52,
+            fuelLevel: 35,
           }),
         ],
       }),
@@ -222,6 +228,8 @@ describe('HandoverService', () => {
       kmDriven: 60,
       batteryDelta: -38,
     });
+    expect(result.checkIn).not.toHaveProperty('fuelLevel');
+    expect(result.checkOut).not.toHaveProperty('fuelLevel');
   });
 
   it('lists handover evidence for the admin review queue', async () => {

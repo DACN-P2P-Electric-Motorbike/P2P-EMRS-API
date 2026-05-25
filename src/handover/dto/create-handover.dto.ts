@@ -34,7 +34,10 @@ export class CreateHandoverDto {
   @Type(() => HandoverPhotoDto)
   photos: HandoverPhotoDto[];
 
-  @ApiPropertyOptional({ description: 'Odometer reading in km', example: 15200 })
+  @ApiPropertyOptional({
+    description: 'Odometer reading in km',
+    example: 15200,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -50,17 +53,9 @@ export class CreateHandoverDto {
   batteryLevel?: number;
 
   @ApiPropertyOptional({
-    description: 'Fuel level percentage for non-EV vehicles',
-    example: 80,
+    description: 'Handover GPS latitude',
+    example: 10.7769,
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  fuelLevel?: number;
-
-  @ApiPropertyOptional({ description: 'Handover GPS latitude', example: 10.7769 })
   @IsOptional()
   @Type(() => Number)
   @IsLatitude()
