@@ -1156,6 +1156,48 @@ describe('VehiclesService', () => {
       );
     });
 
+    it('should expose active public timing rules without owner-only fields', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue({ id: VEHICLE_ID });
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        availabilityWindow,
+        {
+          ...availabilityWindow,
+          id: 'weekly-block',
+          type: AvailabilityWindowType.BLOCKED,
+          recurrence: AvailabilityWindowRecurrence.WEEKLY,
+          recurringWeekdays: [6],
+          timezoneOffsetMinutes: 420,
+          note: 'Private owner reason',
+        },
+      ]);
+
+      const result = await service.getPublicAvailabilitySummary(VEHICLE_ID);
+
+      expect(result.hasAvailableCalendar).toBe(true);
+      expect(result.rules).toHaveLength(2);
+      expect(result.rules[1]).toMatchObject({
+        type: AvailabilityWindowType.BLOCKED,
+        recurringWeekdays: [6],
+      });
+      expect(result.rules[1]).not.toHaveProperty('id');
+      expect(result.rules[1]).not.toHaveProperty('note');
+      expect(
+        mockVehicleAvailabilityWindowDelegate.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ vehicleId: VEHICLE_ID }),
+        }),
+      );
+    });
+
+    it('should reject a public availability request for an unknown vehicle', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getPublicAvailabilitySummary(VEHICLE_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
     it('should reject availability access for a non-owner', async () => {
       mockVehicleDelegate.findUnique.mockResolvedValue(
         createMockVehicle({ ownerId: OTHER_OWNER_ID }),

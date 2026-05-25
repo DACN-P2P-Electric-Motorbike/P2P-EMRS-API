@@ -34,6 +34,7 @@ const mockVehiclesService = {
   getAvailableVehicles: jest.fn(),
   getVehicleById: jest.fn(),
   getAvailabilityWindows: jest.fn(),
+  getPublicAvailabilitySummary: jest.fn(),
   createAvailabilityWindow: jest.fn(),
   deleteAvailabilityWindow: jest.fn(),
   updateVehicle: jest.fn(),
@@ -232,6 +233,33 @@ describe('VehiclesController', () => {
 
   // ─── availability calendar ─────────────────────────────────────────────────
   describe('availability calendar endpoints', () => {
+    it('should expose the renter availability summary without authentication context', async () => {
+      const summary = {
+        hasAvailableCalendar: true,
+        rules: [
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            recurrence: 'WEEKLY',
+            recurringWeekdays: [1, 3, 5],
+            timezoneOffsetMinutes: 420,
+            recurrenceEndsAt: null,
+            startTime: new Date('2026-05-25T01:00:00.000Z'),
+            endTime: new Date('2026-05-25T11:00:00.000Z'),
+          },
+        ],
+      };
+      mockVehiclesService.getPublicAvailabilitySummary.mockResolvedValue(
+        summary,
+      );
+
+      const result = await controller.getPublicAvailabilitySummary(VEHICLE_ID);
+
+      expect(result).toEqual(summary);
+      expect(
+        mockVehiclesService.getPublicAvailabilitySummary,
+      ).toHaveBeenCalledWith(VEHICLE_ID);
+    });
+
     it('should delegate availability listing to service', async () => {
       const user = createMockUser();
       const windows = [

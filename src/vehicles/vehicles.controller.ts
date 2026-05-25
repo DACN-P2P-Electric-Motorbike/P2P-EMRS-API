@@ -27,6 +27,7 @@ import {
 } from './dto';
 import { VehicleEntity } from './entities/vehicle.entity';
 import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
+import { PublicVehicleAvailabilitySummaryEntity } from './entities/public-vehicle-availability-summary.entity';
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserEntity } from '../auth/entities/user.entity';
@@ -211,6 +212,25 @@ export class VehiclesController {
       from,
       to,
     );
+  }
+
+  @Get(':id/availability-summary')
+  @ApiOperation({
+    summary: 'Get public vehicle availability summary',
+    description:
+      'Public read-only schedule summary for renters. Exposes active one-time and weekly rule timing without owner notes or management identifiers.',
+  })
+  @ApiParam({ name: 'id', description: 'Vehicle ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Public availability rule summary',
+    type: PublicVehicleAvailabilitySummaryEntity,
+  })
+  @ApiResponse({ status: 404, description: 'Vehicle not found' })
+  async getPublicAvailabilitySummary(
+    @Param('id') id: string,
+  ): Promise<PublicVehicleAvailabilitySummaryEntity> {
+    return this.vehiclesService.getPublicAvailabilitySummary(id);
   }
 
   @Post(':id/availability')

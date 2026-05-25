@@ -16,6 +16,10 @@ import {
 import { VehicleEntity } from './entities/vehicle.entity';
 import { VehicleAvailabilityWindowEntity } from './entities/vehicle-availability-window.entity';
 import {
+  PublicVehicleAvailabilityRuleEntity,
+  PublicVehicleAvailabilitySummaryEntity,
+} from './entities/public-vehicle-availability-summary.entity';
+import {
   AvailabilityWindowRecurrence,
   AvailabilityWindowType,
   VehicleStatus,
@@ -740,6 +744,52 @@ export class VehiclesService {
     return filteredWindows.map((window) =>
       VehicleAvailabilityWindowEntity.fromPrisma(window),
     );
+  }
+
+  async getPublicAvailabilitySummary(
+    vehicleId: string,
+  ): Promise<PublicVehicleAvailabilitySummaryEntity> {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { id: true },
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Vehicle not found');
+    }
+
+    const now = new Date();
+    const windows = await this.prisma.vehicleAvailabilityWindow.findMany({
+      where: {
+        vehicleId,
+        OR: [
+          {
+            recurrence: AvailabilityWindowRecurrence.ONCE,
+            endTime: { gt: now },
+          },
+          {
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            startTime: { lt: now },
+            OR: [{ recurrenceEndsAt: null }, { recurrenceEndsAt: { gt: now } }],
+          },
+          {
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            startTime: { gte: now },
+          },
+        ],
+      },
+      orderBy: [{ type: 'asc' }, { startTime: 'asc' }],
+    });
+    const rules = windows.map((window) =>
+      PublicVehicleAvailabilityRuleEntity.fromPrisma(window),
+    );
+
+    return new PublicVehicleAvailabilitySummaryEntity({
+      hasAvailableCalendar: rules.some(
+        (rule) => rule.type === AvailabilityWindowType.AVAILABLE,
+      ),
+      rules,
+    });
   }
 
   async createAvailabilityWindow(
