@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  AvailabilityWindowRecurrence,
   AvailabilityWindowType,
   BatteryType,
   VehicleStatus,
@@ -501,15 +502,38 @@ describe('VehiclesService', () => {
     it('should exclude blocked calendar windows and uncovered available calendars', async () => {
       const startTime = '2026-05-25T08:00:00.000Z';
       const endTime = '2026-05-25T10:00:00.000Z';
+      const oneOffWindow = {
+        id: 'window-1',
+        type: AvailabilityWindowType.AVAILABLE,
+        recurrence: AvailabilityWindowRecurrence.ONCE,
+        recurringWeekdays: [],
+        timezoneOffsetMinutes: null,
+        recurrenceEndsAt: null,
+        startTime: new Date('2026-05-25T08:00:00.000Z'),
+        endTime: new Date('2026-05-25T18:00:00.000Z'),
+        note: null,
+        createdAt: new Date('2026-05-22T00:00:00.000Z'),
+        updatedAt: new Date('2026-05-22T00:00:00.000Z'),
+      };
       mockBookingDelegate.findMany.mockResolvedValue([]);
       mockBookingLockDelegate.findMany.mockResolvedValue([]);
       mockVehicleAvailabilityWindowDelegate.findMany
-        .mockResolvedValueOnce([{ vehicleId: 'blocked-vehicle' }])
         .mockResolvedValueOnce([
-          { vehicleId: 'calendar-covered' },
-          { vehicleId: 'calendar-missing' },
+          {
+            ...oneOffWindow,
+            vehicleId: 'blocked-vehicle',
+            type: AvailabilityWindowType.BLOCKED,
+          },
         ])
-        .mockResolvedValueOnce([{ vehicleId: 'calendar-covered' }]);
+        .mockResolvedValueOnce([
+          { ...oneOffWindow, vehicleId: 'calendar-covered' },
+          {
+            ...oneOffWindow,
+            vehicleId: 'calendar-missing',
+            startTime: new Date('2026-05-26T08:00:00.000Z'),
+            endTime: new Date('2026-05-26T18:00:00.000Z'),
+          },
+        ]);
       mockVehicleDelegate.findMany.mockResolvedValue([]);
       mockVehicleDelegate.count.mockResolvedValue(0);
 
@@ -517,11 +541,57 @@ describe('VehiclesService', () => {
 
       expect(
         mockVehicleAvailabilityWindowDelegate.findMany,
-      ).toHaveBeenCalledTimes(3);
+      ).toHaveBeenCalledTimes(2);
       expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             id: { notIn: ['blocked-vehicle', 'calendar-missing'] },
+          }),
+        }),
+      );
+    });
+
+    it('should apply weekly blocked and available rules to a later occurrence', async () => {
+      const startTime = '2026-06-01T02:00:00.000Z';
+      const endTime = '2026-06-01T04:00:00.000Z';
+      const weeklyWindow = {
+        id: 'weekly-window',
+        type: AvailabilityWindowType.AVAILABLE,
+        recurrence: AvailabilityWindowRecurrence.WEEKLY,
+        recurringWeekdays: [1],
+        timezoneOffsetMinutes: 420,
+        recurrenceEndsAt: null,
+        startTime: new Date('2026-05-25T01:00:00.000Z'),
+        endTime: new Date('2026-05-25T11:00:00.000Z'),
+        note: null,
+        createdAt: new Date('2026-05-25T00:00:00.000Z'),
+        updatedAt: new Date('2026-05-25T00:00:00.000Z'),
+      };
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([
+          {
+            ...weeklyWindow,
+            vehicleId: 'weekly-blocked',
+            type: AvailabilityWindowType.BLOCKED,
+          },
+        ])
+        .mockResolvedValueOnce([
+          { ...weeklyWindow, vehicleId: 'weekly-covered' },
+          {
+            ...weeklyWindow,
+            vehicleId: 'wrong-weekday',
+            recurringWeekdays: [2],
+          },
+        ]);
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['weekly-blocked', 'wrong-weekday'] },
           }),
         }),
       );
@@ -1051,6 +1121,10 @@ describe('VehiclesService', () => {
       id: 'window-1',
       vehicleId: VEHICLE_ID,
       type: AvailabilityWindowType.AVAILABLE,
+      recurrence: AvailabilityWindowRecurrence.ONCE,
+      recurringWeekdays: [],
+      timezoneOffsetMinutes: null,
+      recurrenceEndsAt: null,
       startTime: new Date('2026-05-25T08:00:00.000Z'),
       endTime: new Date('2026-05-25T18:00:00.000Z'),
       note: 'Day rentals',
@@ -1118,11 +1192,79 @@ describe('VehiclesService', () => {
           data: expect.objectContaining({
             vehicleId: VEHICLE_ID,
             type: AvailabilityWindowType.AVAILABLE,
+            recurrence: AvailabilityWindowRecurrence.ONCE,
+            recurringWeekdays: [],
             startTime: new Date('2026-05-25T08:00:00.000Z'),
             endTime: new Date('2026-05-25T18:00:00.000Z'),
           }),
         }),
       );
+    });
+
+    it('should create a weekly recurring availability rule', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      const weeklyWindow = {
+        ...availabilityWindow,
+        id: 'weekly-window',
+        recurrence: AvailabilityWindowRecurrence.WEEKLY,
+        recurringWeekdays: [1, 3, 5],
+        timezoneOffsetMinutes: 420,
+        recurrenceEndsAt: new Date('2026-12-31T16:59:59.999Z'),
+      };
+      mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
+        weeklyWindow,
+      );
+
+      const result = await service.createAvailabilityWindow(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        {
+          type: AvailabilityWindowType.AVAILABLE,
+          recurrence: AvailabilityWindowRecurrence.WEEKLY,
+          recurringWeekdays: [1, 3, 5],
+          timezoneOffsetMinutes: 420,
+          recurrenceEndsAt: '2026-12-31T16:59:59.999Z',
+          startTime: '2026-05-25T01:00:00.000Z',
+          endTime: '2026-05-25T11:00:00.000Z',
+        },
+      );
+
+      expect(result.id).toBe('weekly-window');
+      expect(mockVehicleAvailabilityWindowDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            recurringWeekdays: [1, 3, 5],
+            timezoneOffsetMinutes: 420,
+            recurrenceEndsAt: new Date('2026-12-31T16:59:59.999Z'),
+          }),
+        }),
+      );
+    });
+
+    it('should reject weekly rules without selected weekdays', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            recurringWeekdays: [],
+            timezoneOffsetMinutes: 420,
+            startTime: '2026-05-25T01:00:00.000Z',
+            endTime: '2026-05-25T11:00:00.000Z',
+          },
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should reject availability windows with end before start', async () => {

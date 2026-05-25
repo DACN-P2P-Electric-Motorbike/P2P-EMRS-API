@@ -1,21 +1,74 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
   IsDateString,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
+  ValidateIf,
 } from 'class-validator';
-import { AvailabilityWindowType } from '@prisma/client';
+import {
+  AvailabilityWindowRecurrence,
+  AvailabilityWindowType,
+} from '@prisma/client';
 
 export class CreateAvailabilityWindowDto {
   @ApiProperty({
-    description: 'Window type. AVAILABLE defines bookable time; BLOCKED excludes time.',
+    description:
+      'Window type. AVAILABLE defines bookable time; BLOCKED excludes time.',
     enum: AvailabilityWindowType,
     example: AvailabilityWindowType.AVAILABLE,
   })
   @IsEnum(AvailabilityWindowType)
   type: AvailabilityWindowType;
+
+  @ApiPropertyOptional({
+    description: 'Whether this is a single window or a weekly rule.',
+    enum: AvailabilityWindowRecurrence,
+    default: AvailabilityWindowRecurrence.ONCE,
+  })
+  @IsOptional()
+  @IsEnum(AvailabilityWindowRecurrence)
+  recurrence?: AvailabilityWindowRecurrence;
+
+  @ApiPropertyOptional({
+    description: 'ISO weekdays for a WEEKLY rule, where Monday=1 and Sunday=7.',
+    type: [Number],
+    example: [1, 3, 5],
+  })
+  @ValidateIf((dto) => dto.recurrence === AvailabilityWindowRecurrence.WEEKLY)
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(7, { each: true })
+  recurringWeekdays?: number[];
+
+  @ApiPropertyOptional({
+    description:
+      'UTC offset in minutes used to interpret a weekly rule local schedule.',
+    example: 420,
+  })
+  @ValidateIf((dto) => dto.recurrence === AvailabilityWindowRecurrence.WEEKLY)
+  @IsInt()
+  @Min(-720)
+  @Max(840)
+  timezoneOffsetMinutes?: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional final date for a weekly rule (ISO 8601).',
+    example: '2026-12-31T16:59:59.999Z',
+  })
+  @IsOptional()
+  @IsDateString()
+  recurrenceEndsAt?: string;
 
   @ApiProperty({
     description: 'Window start time (ISO 8601)',

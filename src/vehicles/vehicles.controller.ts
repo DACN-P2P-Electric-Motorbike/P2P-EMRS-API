@@ -180,7 +180,7 @@ export class VehiclesController {
   @ApiOperation({
     summary: 'Get vehicle availability windows',
     description:
-      'Owner/admin only. Returns calendar windows for a vehicle. AVAILABLE windows define bookable periods; BLOCKED windows exclude periods.',
+      'Owner/admin only. Returns one-time windows and weekly rules for a vehicle. AVAILABLE entries define bookable periods; BLOCKED entries exclude periods.',
   })
   @ApiParam({ name: 'id', description: 'Vehicle ID' })
   @ApiQuery({
@@ -220,7 +220,7 @@ export class VehiclesController {
   @ApiOperation({
     summary: 'Create vehicle availability window',
     description:
-      'Owner/admin only. Adds an AVAILABLE or BLOCKED calendar window for a vehicle.',
+      'Owner/admin only. Adds an AVAILABLE or BLOCKED one-time window or weekly calendar rule for a vehicle.',
   })
   @ApiParam({ name: 'id', description: 'Vehicle ID' })
   @ApiResponse({
