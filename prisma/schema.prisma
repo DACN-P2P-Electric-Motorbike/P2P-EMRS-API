@@ -175,6 +175,7 @@ model VehicleAvailabilityWindow {
   recurrence            AvailabilityWindowRecurrence @default(ONCE)
   recurringWeekdays     Int[]                        @default([]) @map("recurring_weekdays")
   timezoneOffsetMinutes Int?                         @map("timezone_offset_minutes")
+  timezoneName          String?                      @map("timezone_name")
   recurrenceEndsAt      DateTime?                    @map("recurrence_ends_at")
   startTime             DateTime                     @map("start_time")
   endTime               DateTime                     @map("end_time")

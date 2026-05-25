@@ -37,10 +37,17 @@ export class VehicleAvailabilityWindowEntity implements VehicleAvailabilityWindo
   recurringWeekdays: number[];
 
   @ApiPropertyOptional({
-    description: 'Stored UTC offset in minutes for a weekly rule',
+    description: 'Fallback stored UTC offset in minutes for a weekly rule',
   })
   @Expose()
   timezoneOffsetMinutes: number | null;
+
+  @ApiPropertyOptional({
+    description: 'IANA timezone name for a weekly rule',
+    example: 'Asia/Ho_Chi_Minh',
+  })
+  @Expose()
+  timezoneName: string | null;
 
   @ApiPropertyOptional({ description: 'Final date for a weekly rule' })
   @Expose()

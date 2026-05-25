@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { DateTime, FixedOffsetZone, Zone } from 'luxon';
 import { PrismaService } from '../database/prisma.service';
 import {
   CreateAvailabilityWindowDto,
@@ -909,6 +910,7 @@ export class VehiclesService {
     recurrence: AvailabilityWindowRecurrence;
     recurringWeekdays: number[];
     timezoneOffsetMinutes: number | null;
+    timezoneName: string | null;
     recurrenceEndsAt: Date | null;
     startTime: Date;
     endTime: Date;
@@ -921,16 +923,20 @@ export class VehiclesService {
     const recurrenceEndsAt = dto.recurrenceEndsAt
       ? new Date(dto.recurrenceEndsAt)
       : null;
+    const timezoneName = dto.timezoneName?.trim() || null;
 
     if (recurrence === AvailabilityWindowRecurrence.WEEKLY) {
       if (
         !dto.recurringWeekdays?.length ||
-        dto.timezoneOffsetMinutes === undefined ||
+        (!timezoneName && dto.timezoneOffsetMinutes === undefined) ||
         endTime.getTime() - startTime.getTime() > 24 * 60 * 60 * 1000
       ) {
         throw new BadRequestException(
-          'Weekly availability requires weekdays, timezone offset, and a window of 24 hours or less',
+          'Weekly availability requires weekdays, a timezone, and a window of 24 hours or less',
         );
+      }
+      if (timezoneName && !DateTime.now().setZone(timezoneName).isValid) {
+        throw new BadRequestException('Invalid availability timezone name');
       }
       if (
         dto.recurringWeekdays.some((weekday) => weekday < 1 || weekday > 7) ||
@@ -953,7 +959,14 @@ export class VehiclesService {
           : [],
       timezoneOffsetMinutes:
         recurrence === AvailabilityWindowRecurrence.WEEKLY
-          ? dto.timezoneOffsetMinutes!
+          ? (dto.timezoneOffsetMinutes ??
+            DateTime.fromJSDate(startTime, { zone: 'utc' }).setZone(
+              timezoneName!,
+            ).offset)
+          : null,
+      timezoneName:
+        recurrence === AvailabilityWindowRecurrence.WEEKLY
+          ? timezoneName
           : null,
       recurrenceEndsAt:
         recurrence === AvailabilityWindowRecurrence.WEEKLY
@@ -972,6 +985,7 @@ export class VehiclesService {
       recurrence: AvailabilityWindowRecurrence;
       recurringWeekdays: number[];
       timezoneOffsetMinutes: number | null;
+      timezoneName: string | null;
       startTime: Date;
       endTime: Date;
     },
@@ -1008,6 +1022,7 @@ export class VehiclesService {
           endTime: data.endTime,
           recurringWeekdays: data.recurringWeekdays,
           timezoneOffsetMinutes: data.timezoneOffsetMinutes!,
+          timezoneName: data.timezoneName,
         }),
       );
     }
@@ -1024,6 +1039,7 @@ export class VehiclesService {
       recurrence?: AvailabilityWindowRecurrence;
       recurringWeekdays?: number[];
       timezoneOffsetMinutes?: number | null;
+      timezoneName?: string | null;
       recurrenceEndsAt?: Date | null;
       startTime: Date;
       endTime: Date;
@@ -1044,6 +1060,7 @@ export class VehiclesService {
       recurrence?: AvailabilityWindowRecurrence;
       recurringWeekdays?: number[];
       timezoneOffsetMinutes?: number | null;
+      timezoneName?: string | null;
       recurrenceEndsAt?: Date | null;
       startTime: Date;
       endTime: Date;
@@ -1064,6 +1081,7 @@ export class VehiclesService {
     window: {
       recurringWeekdays?: number[];
       timezoneOffsetMinutes?: number | null;
+      timezoneName?: string | null;
       recurrenceEndsAt?: Date | null;
       startTime: Date;
       endTime: Date;
@@ -1071,41 +1089,51 @@ export class VehiclesService {
     rangeStart: Date,
     rangeEnd: Date,
   ): Array<{ startTime: Date; endTime: Date }> {
-    const offsetMs = (window.timezoneOffsetMinutes ?? 0) * 60 * 1000;
-    const durationMs = window.endTime.getTime() - window.startTime.getTime();
-    const anchorLocal = new Date(window.startTime.getTime() + offsetMs);
-    const scanStartLocal = new Date(
-      rangeStart.getTime() + offsetMs - durationMs,
+    const zone = this.availabilityTimezone(window);
+    const anchorStartLocal = DateTime.fromJSDate(window.startTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const anchorEndLocal = DateTime.fromJSDate(window.endTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const endDayOffset = this.wallDateDifference(
+      anchorStartLocal,
+      anchorEndLocal,
     );
-    const scanEndLocal = new Date(rangeEnd.getTime() + offsetMs);
+    const scanStartLocal = DateTime.fromJSDate(rangeStart, {
+      zone: 'utc',
+    })
+      .setZone(zone)
+      .minus({ days: 1 })
+      .startOf('day');
+    const scanEndLocal = DateTime.fromJSDate(rangeEnd, {
+      zone: 'utc',
+    })
+      .setZone(zone)
+      .startOf('day');
     const weekdays = new Set(window.recurringWeekdays ?? []);
     const occurrences: Array<{ startTime: Date; endTime: Date }> = [];
 
-    let cursor = Date.UTC(
-      scanStartLocal.getUTCFullYear(),
-      scanStartLocal.getUTCMonth(),
-      scanStartLocal.getUTCDate(),
-    );
-    const finalDate = Date.UTC(
-      scanEndLocal.getUTCFullYear(),
-      scanEndLocal.getUTCMonth(),
-      scanEndLocal.getUTCDate(),
-    );
-    for (; cursor <= finalDate; cursor += 24 * 60 * 60 * 1000) {
-      const day = new Date(cursor).getUTCDay() || 7;
-      if (!weekdays.has(day)) continue;
+    for (
+      let cursor = scanStartLocal;
+      cursor <= scanEndLocal;
+      cursor = cursor.plus({ days: 1 })
+    ) {
+      if (!weekdays.has(cursor.weekday)) continue;
 
-      const occurrenceStart = new Date(
-        Date.UTC(
-          new Date(cursor).getUTCFullYear(),
-          new Date(cursor).getUTCMonth(),
-          new Date(cursor).getUTCDate(),
-          anchorLocal.getUTCHours(),
-          anchorLocal.getUTCMinutes(),
-          anchorLocal.getUTCSeconds(),
-          anchorLocal.getUTCMilliseconds(),
-        ) - offsetMs,
-      );
+      const occurrenceStartLocal = cursor.set({
+        hour: anchorStartLocal.hour,
+        minute: anchorStartLocal.minute,
+        second: anchorStartLocal.second,
+        millisecond: anchorStartLocal.millisecond,
+      });
+      const occurrenceEndLocal = cursor.plus({ days: endDayOffset }).set({
+        hour: anchorEndLocal.hour,
+        minute: anchorEndLocal.minute,
+        second: anchorEndLocal.second,
+        millisecond: anchorEndLocal.millisecond,
+      });
+      const occurrenceStart = occurrenceStartLocal.toUTC().toJSDate();
       if (
         occurrenceStart < window.startTime ||
         (window.recurrenceEndsAt && occurrenceStart >= window.recurrenceEndsAt)
@@ -1114,7 +1142,7 @@ export class VehiclesService {
       }
       occurrences.push({
         startTime: occurrenceStart,
-        endTime: new Date(occurrenceStart.getTime() + durationMs),
+        endTime: occurrenceEndLocal.toUTC().toJSDate(),
       });
     }
     return occurrences;
@@ -1126,15 +1154,21 @@ export class VehiclesService {
       endTime: Date;
       recurringWeekdays: number[];
       timezoneOffsetMinutes: number | null;
+      timezoneName?: string | null;
     },
     candidate: {
       startTime: Date;
       endTime: Date;
       recurringWeekdays: number[];
       timezoneOffsetMinutes: number;
+      timezoneName: string | null;
     },
   ): boolean {
-    if (existing.timezoneOffsetMinutes !== candidate.timezoneOffsetMinutes) {
+    if (
+      existing.timezoneName || candidate.timezoneName
+        ? existing.timezoneName !== candidate.timezoneName
+        : existing.timezoneOffsetMinutes !== candidate.timezoneOffsetMinutes
+    ) {
       return false;
     }
     if (
@@ -1144,23 +1178,70 @@ export class VehiclesService {
     ) {
       return false;
     }
-    const offsetMs = candidate.timezoneOffsetMinutes * 60 * 1000;
-    const existingStart = new Date(existing.startTime.getTime() + offsetMs);
-    const candidateStart = new Date(candidate.startTime.getTime() + offsetMs);
-    const existingStartMinutes =
-      existingStart.getUTCHours() * 60 + existingStart.getUTCMinutes();
+    const zone = this.availabilityTimezone(candidate);
+    const existingStart = DateTime.fromJSDate(existing.startTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const existingEnd = DateTime.fromJSDate(existing.endTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const candidateStart = DateTime.fromJSDate(candidate.startTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const candidateEnd = DateTime.fromJSDate(candidate.endTime, {
+      zone: 'utc',
+    }).setZone(zone);
+    const existingStartMinutes = existingStart.hour * 60 + existingStart.minute;
     const candidateStartMinutes =
-      candidateStart.getUTCHours() * 60 + candidateStart.getUTCMinutes();
+      candidateStart.hour * 60 + candidateStart.minute;
     const existingEndMinutes =
       existingStartMinutes +
-      (existing.endTime.getTime() - existing.startTime.getTime()) / 60000;
+      this.wallDurationMinutes(existingStart, existingEnd);
     const candidateEndMinutes =
       candidateStartMinutes +
-      (candidate.endTime.getTime() - candidate.startTime.getTime()) / 60000;
+      this.wallDurationMinutes(candidateStart, candidateEnd);
     return (
       existingStartMinutes < candidateEndMinutes &&
       existingEndMinutes > candidateStartMinutes
     );
+  }
+
+  private availabilityTimezone(window: {
+    timezoneName?: string | null;
+    timezoneOffsetMinutes?: number | null;
+  }): string | Zone {
+    return (
+      window.timezoneName ??
+      FixedOffsetZone.instance(window.timezoneOffsetMinutes ?? 0)
+    );
+  }
+
+  private wallDateDifference(start: DateTime, end: DateTime): number {
+    return Math.round(
+      DateTime.utc(end.year, end.month, end.day).diff(
+        DateTime.utc(start.year, start.month, start.day),
+        'days',
+      ).days,
+    );
+  }
+
+  private wallDurationMinutes(start: DateTime, end: DateTime): number {
+    return DateTime.utc(
+      end.year,
+      end.month,
+      end.day,
+      end.hour,
+      end.minute,
+    ).diff(
+      DateTime.utc(
+        start.year,
+        start.month,
+        start.day,
+        start.hour,
+        start.minute,
+      ),
+      'minutes',
+    ).minutes;
   }
 
   async deleteAvailabilityWindow(

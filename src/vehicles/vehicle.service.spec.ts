@@ -559,6 +559,7 @@ describe('VehiclesService', () => {
         recurrence: AvailabilityWindowRecurrence.ONCE,
         recurringWeekdays: [],
         timezoneOffsetMinutes: null,
+        timezoneName: null,
         recurrenceEndsAt: null,
         startTime: new Date('2026-05-25T08:00:00.000Z'),
         endTime: new Date('2026-05-25T18:00:00.000Z'),
@@ -611,6 +612,7 @@ describe('VehiclesService', () => {
         recurrence: AvailabilityWindowRecurrence.WEEKLY,
         recurringWeekdays: [1],
         timezoneOffsetMinutes: 420,
+        timezoneName: null,
         recurrenceEndsAt: null,
         startTime: new Date('2026-05-25T01:00:00.000Z'),
         endTime: new Date('2026-05-25T11:00:00.000Z'),
@@ -643,6 +645,47 @@ describe('VehiclesService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             id: { notIn: ['weekly-blocked', 'wrong-weekday'] },
+          }),
+        }),
+      );
+    });
+
+    it('should evaluate named-timezone weekly rules across a DST change', async () => {
+      const startTime = '2026-03-09T13:30:00.000Z';
+      const endTime = '2026-03-09T14:30:00.000Z';
+      const dstRule = {
+        id: 'dst-rule',
+        type: AvailabilityWindowType.AVAILABLE,
+        recurrence: AvailabilityWindowRecurrence.WEEKLY,
+        recurringWeekdays: [1],
+        timezoneOffsetMinutes: -300,
+        timezoneName: 'America/New_York',
+        recurrenceEndsAt: null,
+        startTime: new Date('2026-03-02T14:00:00.000Z'),
+        endTime: new Date('2026-03-02T16:00:00.000Z'),
+        note: null,
+        createdAt: new Date('2026-03-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+      };
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { ...dstRule, vehicleId: 'dst-covered' },
+          {
+            ...dstRule,
+            vehicleId: 'legacy-fixed-offset',
+            timezoneName: null,
+          },
+        ]);
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['legacy-fixed-offset'] },
           }),
         }),
       );
@@ -1175,6 +1218,7 @@ describe('VehiclesService', () => {
       recurrence: AvailabilityWindowRecurrence.ONCE,
       recurringWeekdays: [],
       timezoneOffsetMinutes: null,
+      timezoneName: null,
       recurrenceEndsAt: null,
       startTime: new Date('2026-05-25T08:00:00.000Z'),
       endTime: new Date('2026-05-25T18:00:00.000Z'),
@@ -1218,6 +1262,7 @@ describe('VehiclesService', () => {
           recurrence: AvailabilityWindowRecurrence.WEEKLY,
           recurringWeekdays: [6],
           timezoneOffsetMinutes: 420,
+          timezoneName: 'Asia/Ho_Chi_Minh',
           note: 'Private owner reason',
         },
       ]);
@@ -1304,6 +1349,7 @@ describe('VehiclesService', () => {
         recurrence: AvailabilityWindowRecurrence.WEEKLY,
         recurringWeekdays: [1, 3, 5],
         timezoneOffsetMinutes: 420,
+        timezoneName: 'Asia/Ho_Chi_Minh',
         recurrenceEndsAt: new Date('2026-12-31T16:59:59.999Z'),
       };
       mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
@@ -1319,6 +1365,7 @@ describe('VehiclesService', () => {
           recurrence: AvailabilityWindowRecurrence.WEEKLY,
           recurringWeekdays: [1, 3, 5],
           timezoneOffsetMinutes: 420,
+          timezoneName: 'Asia/Ho_Chi_Minh',
           recurrenceEndsAt: '2026-12-31T16:59:59.999Z',
           startTime: '2026-05-25T01:00:00.000Z',
           endTime: '2026-05-25T11:00:00.000Z',
@@ -1332,10 +1379,33 @@ describe('VehiclesService', () => {
             recurrence: AvailabilityWindowRecurrence.WEEKLY,
             recurringWeekdays: [1, 3, 5],
             timezoneOffsetMinutes: 420,
+            timezoneName: 'Asia/Ho_Chi_Minh',
             recurrenceEndsAt: new Date('2026-12-31T16:59:59.999Z'),
           }),
         }),
       );
+    });
+
+    it('should reject a weekly rule with an invalid timezone name', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          {
+            type: AvailabilityWindowType.AVAILABLE,
+            recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            recurringWeekdays: [1],
+            timezoneName: 'Mars/Olympus_Mons',
+            startTime: '2026-05-25T01:00:00.000Z',
+            endTime: '2026-05-25T11:00:00.000Z',
+          },
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should reject weekly rules without selected weekdays', async () => {
@@ -1419,6 +1489,7 @@ describe('VehiclesService', () => {
         recurrence: AvailabilityWindowRecurrence.WEEKLY,
         recurringWeekdays: [2, 4],
         timezoneOffsetMinutes: 420,
+        timezoneName: 'Asia/Ho_Chi_Minh',
         recurrenceEndsAt: new Date('2026-12-31T16:59:59.999Z'),
       };
       mockVehicleAvailabilityWindowDelegate.update.mockResolvedValue(
@@ -1435,6 +1506,7 @@ describe('VehiclesService', () => {
           recurrence: AvailabilityWindowRecurrence.WEEKLY,
           recurringWeekdays: [2, 4],
           timezoneOffsetMinutes: 420,
+          timezoneName: 'Asia/Ho_Chi_Minh',
           recurrenceEndsAt: '2026-12-31T16:59:59.999Z',
           startTime: '2026-05-25T01:00:00.000Z',
           endTime: '2026-05-25T11:00:00.000Z',
@@ -1455,6 +1527,7 @@ describe('VehiclesService', () => {
           data: expect.objectContaining({
             recurringWeekdays: [2, 4],
             recurrence: AvailabilityWindowRecurrence.WEEKLY,
+            timezoneName: 'Asia/Ho_Chi_Minh',
           }),
         }),
       );

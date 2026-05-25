@@ -19,6 +19,9 @@ export class PublicVehicleAvailabilityRuleEntity {
   timezoneOffsetMinutes: number | null;
 
   @ApiPropertyOptional()
+  timezoneName: string | null;
+
+  @ApiPropertyOptional()
   recurrenceEndsAt: Date | null;
 
   @ApiProperty()
@@ -39,6 +42,7 @@ export class PublicVehicleAvailabilityRuleEntity {
       recurrence: window.recurrence,
       recurringWeekdays: window.recurringWeekdays,
       timezoneOffsetMinutes: window.timezoneOffsetMinutes,
+      timezoneName: window.timezoneName,
       recurrenceEndsAt: window.recurrenceEndsAt,
       startTime: window.startTime,
       endTime: window.endTime,

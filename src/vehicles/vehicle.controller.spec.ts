@@ -276,6 +276,7 @@ describe('VehiclesController', () => {
             recurrence: 'WEEKLY',
             recurringWeekdays: [1, 3, 5],
             timezoneOffsetMinutes: 420,
+            timezoneName: 'Asia/Ho_Chi_Minh',
             recurrenceEndsAt: null,
             startTime: new Date('2026-05-25T01:00:00.000Z'),
             endTime: new Date('2026-05-25T11:00:00.000Z'),

@@ -53,14 +53,24 @@ export class CreateAvailabilityWindowDto {
 
   @ApiPropertyOptional({
     description:
-      'UTC offset in minutes used to interpret a weekly rule local schedule.',
+      'Fallback UTC offset in minutes used for legacy weekly rule local schedules.',
     example: 420,
   })
-  @ValidateIf((dto) => dto.recurrence === AvailabilityWindowRecurrence.WEEKLY)
+  @IsOptional()
   @IsInt()
   @Min(-720)
   @Max(840)
   timezoneOffsetMinutes?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'IANA timezone used to interpret weekly local schedule times across offset changes.',
+    example: 'Asia/Ho_Chi_Minh',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  timezoneName?: string;
 
   @ApiPropertyOptional({
     description: 'Optional final date for a weekly rule (ISO 8601).',
