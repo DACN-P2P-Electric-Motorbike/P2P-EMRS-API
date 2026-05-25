@@ -43,6 +43,10 @@ export class CancellationRefundPreviewEntity {
 
   @ApiProperty()
   @Expose()
+  prepaidChargingAmount: number;
+
+  @ApiProperty()
+  @Expose()
   depositAmount: number;
 
   @ApiProperty()
@@ -59,6 +63,10 @@ export class CancellationRefundPreviewEntity {
 
   @ApiProperty()
   @Expose()
+  refundablePrepaidChargingAmount: number;
+
+  @ApiProperty()
+  @Expose()
   refundableDepositAmount: number;
 
   @ApiProperty()
@@ -72,6 +80,10 @@ export class CancellationRefundPreviewEntity {
   @ApiProperty()
   @Expose()
   forfeitedProtectionAmount: number;
+
+  @ApiProperty()
+  @Expose()
+  forfeitedPrepaidChargingAmount: number;
 
   @ApiProperty()
   @Expose()

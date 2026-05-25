@@ -115,6 +115,9 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   endTime: new Date('2026-05-23T05:00:00.000Z'),
   totalPrice: 100000,
   deposit: 500000,
+  prepaidCharging: false,
+  prepaidChargingFee: 0,
+  prepaidChargingCreditPercent: 0,
   payment: makePayment(),
   trip: {
     id: TRIP_ID,
@@ -340,6 +343,64 @@ describe('FinancialService', () => {
       }),
     );
     expect(result.totalPendingCharges).toBe(195000);
+  });
+
+  it('bills only battery shortfall beyond prepaid charging credit', () => {
+    const charges = (service as any).computeSystemCharges(
+      makeBooking({
+        prepaidCharging: true,
+        prepaidChargingFee: 50000,
+        prepaidChargingCreditPercent: 10,
+      }),
+    );
+    const lowBatteryCharge = charges.find(
+      (charge: any) => charge.type === PostTripChargeType.LOW_BATTERY,
+    );
+
+    expect(lowBatteryCharge).toEqual(
+      expect.objectContaining({
+        amount: 75000,
+        quantity: 15,
+        unitPrice: 5000,
+        evidence: expect.objectContaining({
+          shortByPercent: 25,
+          prepaidCreditPercent: 10,
+          billableShortfallPercent: 15,
+        }),
+      }),
+    );
+  });
+
+  it('suppresses low-battery charge when prepaid credit covers the shortfall', () => {
+    const booking = makeBooking({
+      prepaidCharging: true,
+      prepaidChargingFee: 50000,
+      prepaidChargingCreditPercent: 10,
+      handovers: [
+        {
+          id: 'check-in',
+          type: HandoverType.CHECK_IN,
+          odometerReading: 1000,
+          batteryLevel: 90,
+          createdAt: new Date('2026-05-23T00:50:00.000Z'),
+        },
+        {
+          id: 'check-out',
+          type: HandoverType.CHECK_OUT,
+          odometerReading: 1080,
+          batteryLevel: 45,
+          createdAt: new Date('2026-05-23T06:10:00.000Z'),
+        },
+      ],
+    });
+
+    const charges = (service as any).computeSystemCharges(booking);
+
+    expect(
+      charges.some(
+        (charge: any) => charge.type === PostTripChargeType.LOW_BATTERY,
+      ),
+    ).toBe(false);
   });
 
   it('rejects post-trip recalculation before trip completion', async () => {

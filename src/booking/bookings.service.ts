@@ -35,6 +35,8 @@ export class BookingsService {
   private readonly PLATFORM_FEE_RATE = 0.15; // 15% platform fee
   private readonly MIN_BOOKING_MINUTES = 30;
   private readonly MAX_BOOKING_DAYS = 30;
+  private readonly PREPAID_CHARGING_FEE = 50_000;
+  private readonly PREPAID_CHARGING_CREDIT_PERCENT = 10;
   private readonly PROTECTION_PLANS: Record<
     ProtectionPlanType,
     {
@@ -248,6 +250,12 @@ export class BookingsService {
       dto.protectionPlan ?? ProtectionPlanType.STANDARD,
       totalPrice,
     );
+    const prepaidCharging = dto.prepaidCharging ?? false;
+    if (prepaidCharging && vehicle.batteryReturnMin == null) {
+      throw new BadRequestException(
+        'Prepaid charging is available only when the vehicle has a battery return minimum',
+      );
+    }
 
     // Create booking
     const booking = await this.prisma.booking.create({
@@ -260,6 +268,11 @@ export class BookingsService {
         totalPrice,
         deposit: vehicle.deposit ?? 0,
         ...protection,
+        prepaidCharging,
+        prepaidChargingFee: prepaidCharging ? this.PREPAID_CHARGING_FEE : 0,
+        prepaidChargingCreditPercent: prepaidCharging
+          ? this.PREPAID_CHARGING_CREDIT_PERCENT
+          : 0,
         notes: dto.notes,
         status: BookingStatus.PENDING,
       },
@@ -617,6 +630,7 @@ export class BookingsService {
       totalPrice: number;
       deposit: number;
       protectionFee?: number | null;
+      prepaidChargingFee?: number | null;
     },
     payment: { amount: number; status: PaymentStatus } | null,
     userId: string,
@@ -653,6 +667,9 @@ export class BookingsService {
     const isPaid = payment?.status === PaymentStatus.COMPLETED;
     const rentalAmount = this.roundMoney(booking.totalPrice);
     const protectionAmount = this.roundMoney(booking.protectionFee ?? 0);
+    const prepaidChargingAmount = this.roundMoney(
+      booking.prepaidChargingFee ?? 0,
+    );
     const depositAmount = this.roundMoney(booking.deposit);
     const paidAmount = isPaid ? this.roundMoney(payment.amount) : 0;
     const refundableDepositAmount = isPaid
@@ -667,12 +684,19 @@ export class BookingsService {
           this.roundMoney(protectionAmount * rentalRefundRate),
         )
       : 0;
+    const refundablePrepaidChargingAmount = isPaid
+      ? Math.min(
+          prepaidChargingAmount,
+          this.roundMoney(prepaidChargingAmount * rentalRefundRate),
+        )
+      : 0;
     const refundAmount = Math.min(
       paidAmount,
       this.roundMoney(
         refundableDepositAmount +
           refundableRentalAmount +
-          refundableProtectionAmount,
+          refundableProtectionAmount +
+          refundablePrepaidChargingAmount,
       ),
     );
     const forfeitedRentalAmount = isPaid
@@ -684,10 +708,19 @@ export class BookingsService {
           this.roundMoney(protectionAmount - refundableProtectionAmount),
         )
       : 0;
+    const forfeitedPrepaidChargingAmount = isPaid
+      ? Math.max(
+          0,
+          this.roundMoney(
+            prepaidChargingAmount - refundablePrepaidChargingAmount,
+          ),
+        )
+      : 0;
     const forfeitedDepositAmount = 0;
     const forfeitedAmount = this.roundMoney(
       forfeitedRentalAmount +
         forfeitedProtectionAmount +
+        forfeitedPrepaidChargingAmount +
         forfeitedDepositAmount,
     );
     const refundType =
@@ -707,14 +740,17 @@ export class BookingsService {
       trustPenalty,
       rentalAmount,
       protectionAmount,
+      prepaidChargingAmount,
       depositAmount,
       paidAmount,
       refundableRentalAmount,
       refundableProtectionAmount,
+      refundablePrepaidChargingAmount,
       refundableDepositAmount,
       refundAmount,
       forfeitedRentalAmount,
       forfeitedProtectionAmount,
+      forfeitedPrepaidChargingAmount,
       forfeitedDepositAmount,
       forfeitedAmount,
       isPaid,

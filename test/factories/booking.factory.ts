@@ -37,6 +37,9 @@ export type MockBooking = {
   protectionFee: number;
   protectionDeductible: number;
   protectionCoverageLimit: number;
+  prepaidCharging: boolean;
+  prepaidChargingFee: number;
+  prepaidChargingCreditPercent: number;
   notes: string | null;
   cancellationReason: string | null;
   cancelledBy: string | null;
@@ -76,6 +79,9 @@ export function createMockBooking(
     protectionFee: 0,
     protectionDeductible: 1500000,
     protectionCoverageLimit: 15000000,
+    prepaidCharging: false,
+    prepaidChargingFee: 0,
+    prepaidChargingCreditPercent: 0,
     notes: null,
     cancellationReason: null,
     cancelledBy: null,

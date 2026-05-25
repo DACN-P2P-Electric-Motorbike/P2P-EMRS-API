@@ -254,6 +254,50 @@ describe('BookingsService', () => {
       );
     });
 
+    it('should persist bounded prepaid charging credit for eligible EV return rules', async () => {
+      const vehicle = createAvailableVehicle({ batteryReturnMin: 50 });
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+        prepaidCharging: true,
+        prepaidChargingFee: 50000,
+        prepaidChargingCreditPercent: 10,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+
+      await service.createBooking(
+        RENTER_ID,
+        buildCreateBookingDto({ prepaidCharging: true }) as any,
+      );
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            prepaidCharging: true,
+            prepaidChargingFee: 50000,
+            prepaidChargingCreditPercent: 10,
+          }),
+        }),
+      );
+    });
+
+    it('should reject prepaid charging when no battery return rule applies', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createAvailableVehicle({ batteryReturnMin: null }),
+      );
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.createBooking(
+          RENTER_ID,
+          buildCreateBookingDto({ prepaidCharging: true }) as any,
+        ),
+      ).rejects.toThrow(
+        'Prepaid charging is available only when the vehicle has a battery return minimum',
+      );
+    });
+
     it('should emit event "booking.created" via EventEmitter2 after booking is created', async () => {
       // Arrange
       const vehicle = createAvailableVehicle();
@@ -565,6 +609,36 @@ describe('BookingsService', () => {
       expect(preview.forfeitedRentalAmount).toBe(50000);
       expect(preview.trustPenalty).toBe(5);
       expect(preview.policyCode).toBe('RENTER_STANDARD_PARTIAL_REFUND');
+    });
+
+    it('applies cancellation refund policy to prepaid charging fees', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+          prepaidCharging: true,
+          prepaidChargingFee: 50000,
+          prepaidChargingCreditPercent: 10,
+        }),
+        payment: {
+          amount: 650000,
+          status: PaymentStatus.COMPLETED,
+        },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.prepaidChargingAmount).toBe(50000);
+      expect(preview.refundablePrepaidChargingAmount).toBe(25000);
+      expect(preview.forfeitedPrepaidChargingAmount).toBe(25000);
+      expect(preview.refundAmount).toBe(575000);
+      expect(preview.forfeitedAmount).toBe(75000);
     });
 
     it('should set booking status to CANCELLED when called by the renter', async () => {

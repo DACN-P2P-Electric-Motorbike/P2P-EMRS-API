@@ -1223,18 +1223,34 @@ export class FinancialService {
       returnBattery < booking.vehicle.batteryReturnMin
     ) {
       const shortByPercent = booking.vehicle.batteryReturnMin - returnBattery;
+      const prepaidCreditPercent = booking.prepaidCharging
+        ? Math.max(0, booking.prepaidChargingCreditPercent ?? 0)
+        : 0;
+      const billableShortfallPercent = Math.max(
+        0,
+        shortByPercent - prepaidCreditPercent,
+      );
       const unitPrice = this.lowBatteryFeePerPercent();
-      charges.push({
-        type: PostTripChargeType.LOW_BATTERY,
-        amount: this.roundMoney(shortByPercent * unitPrice),
-        quantity: shortByPercent,
-        unitPrice,
-        description: `Returned battery ${shortByPercent}% below minimum`,
-        evidence: {
-          returnBattery,
-          batteryReturnMin: booking.vehicle.batteryReturnMin,
-        },
-      });
+      if (billableShortfallPercent > 0) {
+        charges.push({
+          type: PostTripChargeType.LOW_BATTERY,
+          amount: this.roundMoney(billableShortfallPercent * unitPrice),
+          quantity: billableShortfallPercent,
+          unitPrice,
+          description:
+            prepaidCreditPercent > 0
+              ? `Returned battery ${billableShortfallPercent}% beyond prepaid charging credit`
+              : `Returned battery ${billableShortfallPercent}% below minimum`,
+          evidence: {
+            returnBattery,
+            batteryReturnMin: booking.vehicle.batteryReturnMin,
+            shortByPercent,
+            prepaidCharging: booking.prepaidCharging,
+            prepaidCreditPercent,
+            billableShortfallPercent,
+          },
+        });
+      }
     }
 
     return charges.filter((charge) => charge.amount > 0);

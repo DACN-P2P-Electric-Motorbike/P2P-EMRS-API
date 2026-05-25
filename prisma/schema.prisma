@@ -192,39 +192,42 @@ model VehicleAvailabilityWindow {
 }
 
 model Booking {
-  id                      String               @id @default(uuid())
-  renterId                String               @map("renter_id")
-  ownerId                 String               @map("owner_id")
-  vehicleId               String               @map("vehicle_id")
-  status                  BookingStatus        @default(PENDING)
-  startTime               DateTime             @map("start_time")
-  endTime                 DateTime             @map("end_time")
-  totalPrice              Float                @map("total_price")
-  deposit                 Float
-  protectionPlan          ProtectionPlanType   @default(STANDARD) @map("protection_plan")
-  protectionFee           Float                @default(0) @map("protection_fee")
-  protectionDeductible    Float                @default(1500000) @map("protection_deductible")
-  protectionCoverageLimit Float                @default(15000000) @map("protection_coverage_limit")
-  notes                   String?
-  cancellationReason      String?              @map("cancellation_reason")
-  cancelledBy             String?              @map("cancelled_by")
-  createdAt               DateTime             @default(now()) @map("created_at")
-  updatedAt               DateTime             @updatedAt @map("updated_at")
-  confirmedAt             DateTime?            @map("confirmed_at")
-  cancelledAt             DateTime?            @map("cancelled_at")
-  owner                   User                 @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  renter                  User                 @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle                 Vehicle              @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  notifications           Notification[]
-  payment                 Payment?
-  trip                    Trip?
-  handovers               VehicleHandover[]
-  depositLedger           DepositLedger?
-  postTripCharges         PostTripCharge[]
-  incidentReports         IncidentReport[]
-  ownerPayout             OwnerPayout?
-  claimCase               ClaimCase?
-  evidenceAnnotations     EvidenceAnnotation[]
+  id                           String               @id @default(uuid())
+  renterId                     String               @map("renter_id")
+  ownerId                      String               @map("owner_id")
+  vehicleId                    String               @map("vehicle_id")
+  status                       BookingStatus        @default(PENDING)
+  startTime                    DateTime             @map("start_time")
+  endTime                      DateTime             @map("end_time")
+  totalPrice                   Float                @map("total_price")
+  deposit                      Float
+  protectionPlan               ProtectionPlanType   @default(STANDARD) @map("protection_plan")
+  protectionFee                Float                @default(0) @map("protection_fee")
+  protectionDeductible         Float                @default(1500000) @map("protection_deductible")
+  protectionCoverageLimit      Float                @default(15000000) @map("protection_coverage_limit")
+  prepaidCharging              Boolean              @default(false) @map("prepaid_charging")
+  prepaidChargingFee           Float                @default(0) @map("prepaid_charging_fee")
+  prepaidChargingCreditPercent Int                  @default(0) @map("prepaid_charging_credit_percent")
+  notes                        String?
+  cancellationReason           String?              @map("cancellation_reason")
+  cancelledBy                  String?              @map("cancelled_by")
+  createdAt                    DateTime             @default(now()) @map("created_at")
+  updatedAt                    DateTime             @updatedAt @map("updated_at")
+  confirmedAt                  DateTime?            @map("confirmed_at")
+  cancelledAt                  DateTime?            @map("cancelled_at")
+  owner                        User                 @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  renter                       User                 @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle                      Vehicle              @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  notifications                Notification[]
+  payment                      Payment?
+  trip                         Trip?
+  handovers                    VehicleHandover[]
+  depositLedger                DepositLedger?
+  postTripCharges              PostTripCharge[]
+  incidentReports              IncidentReport[]
+  ownerPayout                  OwnerPayout?
+  claimCase                    ClaimCase?
+  evidenceAnnotations          EvidenceAnnotation[]
 
   @@index([renterId])
   @@index([ownerId])
