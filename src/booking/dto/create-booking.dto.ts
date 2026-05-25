@@ -61,4 +61,13 @@ export class CreateBookingDto {
   @IsOptional()
   @IsBoolean()
   prepaidCharging?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Purchase fixed roadside-support credit for eligible post-trip roadside assistance charges.',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  roadsideSupport?: boolean;
 }

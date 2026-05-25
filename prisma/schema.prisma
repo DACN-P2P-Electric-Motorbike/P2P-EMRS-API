@@ -208,6 +208,9 @@ model Booking {
   prepaidCharging              Boolean              @default(false) @map("prepaid_charging")
   prepaidChargingFee           Float                @default(0) @map("prepaid_charging_fee")
   prepaidChargingCreditPercent Int                  @default(0) @map("prepaid_charging_credit_percent")
+  roadsideSupport              Boolean              @default(false) @map("roadside_support")
+  roadsideSupportFee           Float                @default(0) @map("roadside_support_fee")
+  roadsideSupportCreditAmount  Float                @default(0) @map("roadside_support_credit_amount")
   notes                        String?
   cancellationReason           String?              @map("cancellation_reason")
   cancelledBy                  String?              @map("cancelled_by")

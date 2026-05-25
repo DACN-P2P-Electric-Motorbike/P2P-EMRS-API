@@ -40,6 +40,9 @@ export type MockBooking = {
   prepaidCharging: boolean;
   prepaidChargingFee: number;
   prepaidChargingCreditPercent: number;
+  roadsideSupport: boolean;
+  roadsideSupportFee: number;
+  roadsideSupportCreditAmount: number;
   notes: string | null;
   cancellationReason: string | null;
   cancelledBy: string | null;
@@ -82,6 +85,9 @@ export function createMockBooking(
     prepaidCharging: false,
     prepaidChargingFee: 0,
     prepaidChargingCreditPercent: 0,
+    roadsideSupport: false,
+    roadsideSupportFee: 0,
+    roadsideSupportCreditAmount: 0,
     notes: null,
     cancellationReason: null,
     cancelledBy: null,

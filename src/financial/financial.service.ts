@@ -72,6 +72,7 @@ export class FinancialService {
   private readonly logger = new Logger(FinancialService.name);
   private readonly LATE_RETURN_GRACE_MINUTES = 15;
   private readonly DEFAULT_LOW_BATTERY_FEE_PER_PERCENT = 5000;
+  private readonly ROADSIDE_SUPPORT_CREDIT_AMOUNT = 200_000;
   private readonly RELEASE_REVIEW_HOURS = 24;
 
   constructor(
@@ -437,9 +438,18 @@ export class FinancialService {
     }
 
     const now = new Date();
-    const status = isAdmin
-      ? PostTripChargeStatus.APPROVED
-      : PostTripChargeStatus.PENDING_REVIEW;
+    const roadsideAdjustment = this.applyRoadsideSupportCredit(
+      booking,
+      dto.type,
+      this.roundMoney(dto.amount),
+    );
+    const isFullyCoveredByRoadsideSupport =
+      roadsideAdjustment.appliedAmount > 0 && roadsideAdjustment.amount === 0;
+    const status = isFullyCoveredByRoadsideSupport
+      ? PostTripChargeStatus.WAIVED
+      : isAdmin
+        ? PostTripChargeStatus.APPROVED
+        : PostTripChargeStatus.PENDING_REVIEW;
 
     const createdCharge = await this.prisma.postTripCharge.create({
       data: {
@@ -450,18 +460,29 @@ export class FinancialService {
           ? PostTripChargeSource.ADMIN
           : PostTripChargeSource.OWNER,
         status,
-        amount: this.roundMoney(dto.amount),
+        amount: roadsideAdjustment.amount,
         quantity: dto.quantity,
         unitPrice: dto.unitPrice,
         description: dto.description.trim(),
-        reviewedBy: isAdmin ? userId : null,
-        reviewedAt: isAdmin ? now : null,
+        reviewedBy: isAdmin || isFullyCoveredByRoadsideSupport ? userId : null,
+        reviewedAt: isAdmin || isFullyCoveredByRoadsideSupport ? now : null,
         evidence: {
           manual: {
             createdBy: userId,
             createdRole: isAdmin ? UserRole.ADMIN : UserRole.OWNER,
             createdAt: now.toISOString(),
             evidenceUrls: dto.evidenceUrls ?? [],
+            ...(roadsideAdjustment.appliedAmount > 0
+              ? {
+                  requestedAmount: roadsideAdjustment.requestedAmount,
+                  roadsideSupport: {
+                    creditAmount: roadsideAdjustment.creditAmount,
+                    creditUsedBefore: roadsideAdjustment.creditUsedBefore,
+                    creditAppliedAmount: roadsideAdjustment.appliedAmount,
+                    billableAmount: roadsideAdjustment.amount,
+                  },
+                }
+              : {}),
           },
         },
       },
@@ -1270,6 +1291,78 @@ export class FinancialService {
     }
 
     return booking.trip?.distanceTraveled ?? null;
+  }
+
+  private applyRoadsideSupportCredit(
+    booking: FinancialBooking,
+    type: PostTripChargeType,
+    requestedAmount: number,
+  ): {
+    requestedAmount: number;
+    amount: number;
+    creditAmount: number;
+    creditUsedBefore: number;
+    appliedAmount: number;
+  } {
+    const creditAmount =
+      type === PostTripChargeType.ROADSIDE_ASSISTANCE &&
+      booking.roadsideSupport
+        ? Math.max(
+            0,
+            booking.roadsideSupportCreditAmount ??
+              this.ROADSIDE_SUPPORT_CREDIT_AMOUNT,
+          )
+        : 0;
+    const creditUsedBefore =
+      creditAmount > 0 ? this.roadsideSupportCreditUsed(booking) : 0;
+    const remainingCredit = Math.max(0, creditAmount - creditUsedBefore);
+    const appliedAmount = Math.min(requestedAmount, remainingCredit);
+
+    return {
+      requestedAmount,
+      amount: this.roundMoney(requestedAmount - appliedAmount),
+      creditAmount,
+      creditUsedBefore,
+      appliedAmount,
+    };
+  }
+
+  private roadsideSupportCreditUsed(booking: FinancialBooking): number {
+    return booking.postTripCharges
+      .filter((charge) => charge.status !== PostTripChargeStatus.CANCELLED)
+      .reduce(
+        (total, charge) =>
+          total + this.extractRoadsideSupportCreditApplied(charge.evidence),
+        0,
+      );
+  }
+
+  private extractRoadsideSupportCreditApplied(
+    evidence: Prisma.JsonValue | null,
+  ): number {
+    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+      return 0;
+    }
+
+    const manual = (evidence as Record<string, unknown>).manual;
+    if (!manual || typeof manual !== 'object' || Array.isArray(manual)) {
+      return 0;
+    }
+
+    const roadsideSupport = (manual as Record<string, unknown>).roadsideSupport;
+    if (
+      !roadsideSupport ||
+      typeof roadsideSupport !== 'object' ||
+      Array.isArray(roadsideSupport)
+    ) {
+      return 0;
+    }
+
+    const applied = (roadsideSupport as Record<string, unknown>)
+      .creditAppliedAmount;
+    return typeof applied === 'number' && Number.isFinite(applied)
+      ? this.roundMoney(applied)
+      : 0;
   }
 
   private async syncDepositForBooking(

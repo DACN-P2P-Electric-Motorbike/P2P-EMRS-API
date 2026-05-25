@@ -205,8 +205,13 @@ export class PaymentsService implements OnModuleInit {
     // held/refundable amount and add-ons are tracked on the booking.
     const protectionFee = booking.protectionFee ?? 0;
     const prepaidChargingFee = booking.prepaidChargingFee ?? 0;
+    const roadsideSupportFee = booking.roadsideSupportFee ?? 0;
     const totalAmount =
-      booking.totalPrice + protectionFee + prepaidChargingFee + booking.deposit;
+      booking.totalPrice +
+      protectionFee +
+      prepaidChargingFee +
+      roadsideSupportFee +
+      booking.deposit;
     const platformFee = booking.totalPrice * this.PLATFORM_FEE_RATE;
     const ownerAmount = booking.totalPrice - platformFee;
 

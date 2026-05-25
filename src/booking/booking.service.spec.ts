@@ -282,6 +282,34 @@ describe('BookingsService', () => {
       );
     });
 
+    it('should persist roadside support add-on fee and credit', async () => {
+      const vehicle = createAvailableVehicle();
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+        roadsideSupport: true,
+        roadsideSupportFee: 30000,
+        roadsideSupportCreditAmount: 200000,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+
+      await service.createBooking(
+        RENTER_ID,
+        buildCreateBookingDto({ roadsideSupport: true }) as any,
+      );
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            roadsideSupport: true,
+            roadsideSupportFee: 30000,
+            roadsideSupportCreditAmount: 200000,
+          }),
+        }),
+      );
+    });
+
     it('should reject prepaid charging when no battery return rule applies', async () => {
       mockVehicleDelegate.findUnique.mockResolvedValue(
         createAvailableVehicle({ batteryReturnMin: null }),
@@ -639,6 +667,36 @@ describe('BookingsService', () => {
       expect(preview.forfeitedPrepaidChargingAmount).toBe(25000);
       expect(preview.refundAmount).toBe(575000);
       expect(preview.forfeitedAmount).toBe(75000);
+    });
+
+    it('applies cancellation refund policy to roadside support fees', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+          roadsideSupport: true,
+          roadsideSupportFee: 30000,
+          roadsideSupportCreditAmount: 200000,
+        }),
+        payment: {
+          amount: 630000,
+          status: PaymentStatus.COMPLETED,
+        },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.roadsideSupportAmount).toBe(30000);
+      expect(preview.refundableRoadsideSupportAmount).toBe(15000);
+      expect(preview.forfeitedRoadsideSupportAmount).toBe(15000);
+      expect(preview.refundAmount).toBe(565000);
+      expect(preview.forfeitedAmount).toBe(65000);
     });
 
     it('should set booking status to CANCELLED when called by the renter', async () => {

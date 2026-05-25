@@ -72,6 +72,18 @@ export class BookingEntity implements Booking {
   @Expose()
   prepaidChargingCreditPercent: number;
 
+  @ApiProperty()
+  @Expose()
+  roadsideSupport: boolean;
+
+  @ApiProperty()
+  @Expose()
+  roadsideSupportFee: number;
+
+  @ApiProperty()
+  @Expose()
+  roadsideSupportCreditAmount: number;
+
   @ApiPropertyOptional()
   @Expose()
   notes: string | null;

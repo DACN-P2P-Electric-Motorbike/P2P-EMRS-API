@@ -118,6 +118,9 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
   prepaidCharging: false,
   prepaidChargingFee: 0,
   prepaidChargingCreditPercent: 0,
+  roadsideSupport: false,
+  roadsideSupportFee: 0,
+  roadsideSupportCreditAmount: 0,
   payment: makePayment(),
   trip: {
     id: TRIP_ID,
@@ -533,6 +536,150 @@ describe('FinancialService', () => {
       }),
     });
     expect(result.totalApprovedCharges).toBe(30000);
+  });
+
+  it('applies roadside support credit to manual roadside assistance charges', async () => {
+    const manualCharge = makeCharge({
+      type: PostTripChargeType.ROADSIDE_ASSISTANCE,
+      source: PostTripChargeSource.OWNER,
+      status: PostTripChargeStatus.PENDING_REVIEW,
+      amount: 50000,
+      description: 'Roadside tire support',
+      evidence: {
+        manual: {
+          createdBy: OWNER_ID,
+          createdRole: UserRole.OWNER,
+          roadsideSupport: {
+            creditAmount: 200000,
+            creditUsedBefore: 0,
+            creditAppliedAmount: 200000,
+            billableAmount: 50000,
+          },
+        },
+      },
+    });
+    const syncedDeposit = makeDeposit({
+      status: DepositLedgerStatus.PENDING_CHARGES,
+      pendingChargeAmount: 50000,
+      releasedAmount: 450000,
+    });
+
+    prisma.booking.findUnique
+      .mockResolvedValueOnce(
+        makeBooking({
+          roadsideSupport: true,
+          roadsideSupportFee: 30000,
+          roadsideSupportCreditAmount: 200000,
+          postTripCharges: [],
+        }),
+      )
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [manualCharge] }))
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: syncedDeposit,
+          postTripCharges: [manualCharge],
+        }),
+      );
+    prisma.postTripCharge.create.mockResolvedValue(manualCharge);
+    prisma.depositLedger.update.mockResolvedValue(syncedDeposit);
+
+    const result = await service.createManualPostTripCharge(
+      BOOKING_ID,
+      OWNER_ID,
+      [UserRole.OWNER],
+      {
+        type: PostTripChargeType.ROADSIDE_ASSISTANCE,
+        amount: 250000,
+        description: 'Roadside tire support',
+      },
+    );
+
+    expect(prisma.postTripCharge.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: PostTripChargeType.ROADSIDE_ASSISTANCE,
+        status: PostTripChargeStatus.PENDING_REVIEW,
+        amount: 50000,
+        evidence: expect.objectContaining({
+          manual: expect.objectContaining({
+            requestedAmount: 250000,
+            roadsideSupport: expect.objectContaining({
+              creditAppliedAmount: 200000,
+              billableAmount: 50000,
+            }),
+          }),
+        }),
+      }),
+    });
+    expect(result.totalPendingCharges).toBe(50000);
+  });
+
+  it('waives manual roadside assistance charges fully covered by roadside support credit', async () => {
+    const manualCharge = makeCharge({
+      type: PostTripChargeType.ROADSIDE_ASSISTANCE,
+      source: PostTripChargeSource.OWNER,
+      status: PostTripChargeStatus.WAIVED,
+      amount: 0,
+      description: 'Roadside battery rescue',
+      reviewedBy: OWNER_ID,
+      reviewedAt: new Date(),
+      evidence: {
+        manual: {
+          createdBy: OWNER_ID,
+          createdRole: UserRole.OWNER,
+          roadsideSupport: {
+            creditAmount: 200000,
+            creditUsedBefore: 0,
+            creditAppliedAmount: 150000,
+            billableAmount: 0,
+          },
+        },
+      },
+    });
+    const syncedDeposit = makeDeposit({
+      status: DepositLedgerStatus.RELEASE_PENDING,
+      pendingChargeAmount: 0,
+      releasedAmount: 500000,
+    });
+
+    prisma.booking.findUnique
+      .mockResolvedValueOnce(
+        makeBooking({
+          roadsideSupport: true,
+          roadsideSupportFee: 30000,
+          roadsideSupportCreditAmount: 200000,
+          postTripCharges: [],
+        }),
+      )
+      .mockResolvedValueOnce(makeBooking({ postTripCharges: [manualCharge] }))
+      .mockResolvedValueOnce(
+        makeBooking({
+          depositLedger: syncedDeposit,
+          postTripCharges: [manualCharge],
+        }),
+      );
+    prisma.postTripCharge.create.mockResolvedValue(manualCharge);
+    prisma.depositLedger.update.mockResolvedValue(syncedDeposit);
+
+    const result = await service.createManualPostTripCharge(
+      BOOKING_ID,
+      OWNER_ID,
+      [UserRole.OWNER],
+      {
+        type: PostTripChargeType.ROADSIDE_ASSISTANCE,
+        amount: 150000,
+        description: 'Roadside battery rescue',
+      },
+    );
+
+    expect(prisma.postTripCharge.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: PostTripChargeStatus.WAIVED,
+        amount: 0,
+        reviewedBy: OWNER_ID,
+        reviewedAt: expect.any(Date),
+      }),
+    });
+    expect(result.totalPendingCharges).toBe(0);
   });
 
   it('lets renters dispute pending or approved charges and marks deposit disputed', async () => {
