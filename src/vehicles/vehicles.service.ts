@@ -22,7 +22,9 @@ import {
 import {
   AvailabilityWindowRecurrence,
   AvailabilityWindowType,
+  BatteryType,
   VehicleStatus,
+  VehicleCondition,
   UserRole,
   BookingStatus,
   UserStatus,
@@ -404,6 +406,9 @@ export class VehiclesService {
     longitude?: number;
     radiusKm?: number;
     instantBook?: boolean;
+    condition?: VehicleCondition | string;
+    batteryType?: BatteryType | string;
+    minBatteryHealth?: number;
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
@@ -429,6 +434,18 @@ export class VehiclesService {
     // Instant book filter
     if (params?.instantBook !== undefined) {
       where.instantBook = params.instantBook;
+    }
+
+    if (params?.condition) {
+      where.condition = params.condition;
+    }
+
+    if (params?.batteryType) {
+      where.batteryType = params.batteryType;
+    }
+
+    if (params?.minBatteryHealth !== undefined) {
+      where.batteryHealth = { gte: params.minBatteryHealth };
     }
 
     // Date-range availability filter: exclude vehicles with overlapping bookings,
@@ -602,10 +619,17 @@ export class VehiclesService {
         score += 5;
       }
 
+      // 7. EV condition and battery lifecycle signal (max 10 points)
+      score += this.vehicleConditionScore(v.condition) * 5;
+      if (v.batteryHealth !== null) {
+        score += (Math.max(0, Math.min(v.batteryHealth, 100)) / 100) * 4;
+      }
+      score += this.batteryTypeScore(v.batteryType);
+
       return { vehicle: v, score };
     });
 
-    // 7. Price competitiveness bonus (max 5 points — lower = higher score)
+    // 8. Price competitiveness bonus (max 5 points — lower = higher score)
     if (scoredVehicles.length > 0) {
       const prices = scoredVehicles.map((sv) =>
         Number(sv.vehicle.pricePerHour),
@@ -656,6 +680,35 @@ export class VehiclesService {
       vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
       total: rawTotal,
     };
+  }
+
+  private vehicleConditionScore(condition: VehicleCondition | null): number {
+    switch (condition) {
+      case VehicleCondition.NEW:
+        return 1;
+      case VehicleCondition.LIKE_NEW:
+        return 0.9;
+      case VehicleCondition.GOOD:
+        return 0.75;
+      case VehicleCondition.FAIR:
+        return 0.45;
+      case VehicleCondition.NEEDS_MAINTENANCE:
+      default:
+        return 0;
+    }
+  }
+
+  private batteryTypeScore(batteryType: BatteryType | null): number {
+    switch (batteryType) {
+      case BatteryType.SWAPPABLE:
+        return 1;
+      case BatteryType.REMOVABLE:
+        return 0.75;
+      case BatteryType.FIXED_NON_REMOVABLE:
+        return 0.4;
+      default:
+        return 0;
+    }
   }
 
   private assertValidAvailabilityRange(startTime: Date, endTime: Date): void {

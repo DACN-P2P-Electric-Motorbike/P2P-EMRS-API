@@ -477,6 +477,56 @@ describe('VehiclesService', () => {
       );
     });
 
+    it('should filter by EV condition, battery type, and battery health', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({
+        condition: VehicleCondition.LIKE_NEW,
+        batteryType: BatteryType.SWAPPABLE,
+        minBatteryHealth: 90,
+      });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            condition: VehicleCondition.LIKE_NEW,
+            batteryType: BatteryType.SWAPPABLE,
+            batteryHealth: { gte: 90 },
+          }),
+        }),
+      );
+    });
+
+    it('should rank stronger EV condition and battery health higher', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({
+          id: 'tired-ev',
+          condition: VehicleCondition.FAIR,
+          batteryType: BatteryType.FIXED_NON_REMOVABLE,
+          batteryHealth: 60,
+          totalTrips: 0,
+          totalRating: 4,
+        }),
+        createMockVehicle({
+          id: 'healthy-ev',
+          condition: VehicleCondition.LIKE_NEW,
+          batteryType: BatteryType.SWAPPABLE,
+          batteryHealth: 96,
+          totalTrips: 0,
+          totalRating: 4,
+        }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(2);
+
+      const result = await service.getAvailableVehicles();
+
+      expect(result.vehicles.map((vehicle) => vehicle.id)).toEqual([
+        'healthy-ev',
+        'tired-ev',
+      ]);
+    });
+
     it('should exclude active booking locks in requested rental window', async () => {
       const startTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
       const endTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();

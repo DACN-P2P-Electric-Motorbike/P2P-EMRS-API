@@ -204,6 +204,9 @@ describe('VehiclesController', () => {
         longitude: undefined,
         radiusKm: undefined,
         instantBook: undefined,
+        condition: undefined,
+        batteryType: undefined,
+        minBatteryHealth: undefined,
       });
       expect(result).toEqual(mockResponse);
     });
@@ -228,6 +231,36 @@ describe('VehiclesController', () => {
 
       expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
         expect.objectContaining({ instantBook: true }),
+      );
+    });
+
+    it('should forward EV metadata filters', async () => {
+      const mockResponse = { vehicles: [], total: 0 };
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue(mockResponse);
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'LIKE_NEW',
+        'SWAPPABLE',
+        '90',
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({
+          condition: 'LIKE_NEW',
+          batteryType: 'SWAPPABLE',
+          minBatteryHealth: 90,
+        }),
       );
     });
   });

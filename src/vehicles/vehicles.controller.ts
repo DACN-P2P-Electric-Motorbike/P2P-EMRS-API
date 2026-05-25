@@ -31,6 +31,7 @@ import { PublicVehicleAvailabilitySummaryEntity } from './entities/public-vehicl
 import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserEntity } from '../auth/entities/user.entity';
+import { BatteryType, VehicleCondition } from '@prisma/client';
 
 @ApiTags('Vehicles')
 @Controller('vehicles')
@@ -142,6 +143,23 @@ export class VehiclesController {
     description: 'Filter by instant book availability',
     type: Boolean,
   })
+  @ApiQuery({
+    name: 'condition',
+    required: false,
+    description: 'Filter by EV condition',
+    enum: VehicleCondition,
+  })
+  @ApiQuery({
+    name: 'batteryType',
+    required: false,
+    description: 'Filter by EV battery pack type',
+    enum: BatteryType,
+  })
+  @ApiQuery({
+    name: 'minBatteryHealth',
+    required: false,
+    description: 'Minimum EV battery health percentage',
+  })
   @ApiResponse({
     status: 200,
     description: 'List of available vehicles',
@@ -158,6 +176,9 @@ export class VehiclesController {
     @Query('longitude') longitude?: string,
     @Query('radiusKm') radiusKm?: string,
     @Query('instantBook') instantBook?: string,
+    @Query('condition') condition?: string,
+    @Query('batteryType') batteryType?: string,
+    @Query('minBatteryHealth') minBatteryHealth?: string,
   ): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     return this.vehiclesService.getAvailableVehicles({
       type,
@@ -172,6 +193,11 @@ export class VehiclesController {
       radiusKm: radiusKm ? Number.parseFloat(radiusKm) : undefined,
       instantBook:
         instantBook !== undefined ? instantBook === 'true' : undefined,
+      condition: condition || undefined,
+      batteryType: batteryType || undefined,
+      minBatteryHealth: minBatteryHealth
+        ? Number.parseInt(minBatteryHealth)
+        : undefined,
     });
   }
 
