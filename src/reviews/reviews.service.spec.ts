@@ -2,7 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ReviewsService } from './reviews.service';
 import { PrismaService } from '../database/prisma.service';
 import { TrustScoreService } from '../trust-score/trust-score.service';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ReviewType } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
@@ -78,7 +82,7 @@ const mockPrisma = () => ({
     aggregate: jest.fn(),
   },
   user: { findUnique: jest.fn(), update: jest.fn() },
-  booking: { count: jest.fn() },
+  booking: { count: jest.fn(), findUnique: jest.fn() },
 });
 
 describe('ReviewsService', () => {
@@ -558,6 +562,85 @@ describe('ReviewsService', () => {
         }),
       );
       expect(result[0].bookingId).toBe('booking-uuid');
+    });
+  });
+
+  describe('getBookingReviewStatus', () => {
+    it('keeps counterpart content hidden before persisted reveal', async () => {
+      const elapsedDeadline = new Date(Date.now() - 1000);
+      prisma.booking.findUnique.mockResolvedValue({
+        id: 'booking-uuid',
+        renterId: USER_ID,
+        ownerId: OWNER_ID,
+        trip: { id: 'trip-1' },
+      });
+      prisma.review.findMany.mockResolvedValue([
+        makeReview({ id: 'mine', visibleAt: elapsedDeadline }),
+        makeReview({
+          id: 'theirs',
+          userId: OWNER_ID,
+          revieweeId: USER_ID,
+          reviewType: ReviewType.OWNER_TO_RENTER,
+          comment: 'Responsible renter',
+          visibleAt: elapsedDeadline,
+        }),
+      ]);
+
+      const result = await service.getBookingReviewStatus(
+        USER_ID,
+        'booking-uuid',
+      );
+
+      expect(result.submitted).toBe(true);
+      expect(result.counterpartSubmitted).toBe(true);
+      expect(result.ownReview?.id).toBe('mine');
+      expect(result.receivedReview).toBeNull();
+      expect(result.isRevealed).toBe(false);
+    });
+
+    it('returns the counterpart review after it is revealed', async () => {
+      const revealedAt = new Date();
+      prisma.booking.findUnique.mockResolvedValue({
+        id: 'booking-uuid',
+        renterId: USER_ID,
+        ownerId: OWNER_ID,
+        trip: { id: 'trip-1' },
+      });
+      prisma.review.findMany.mockResolvedValue([
+        makeReview({
+          id: 'theirs',
+          userId: OWNER_ID,
+          revieweeId: USER_ID,
+          reviewType: ReviewType.OWNER_TO_RENTER,
+          comment: 'Responsible renter',
+          revealedAt,
+        }),
+      ]);
+
+      const result = await service.getBookingReviewStatus(
+        USER_ID,
+        'booking-uuid',
+      );
+
+      expect(result.submitted).toBe(false);
+      expect(result.counterpartSubmitted).toBe(true);
+      expect(result.receivedReview?.id).toBe('theirs');
+      expect(result.receivedReview?.comment).toBe('Responsible renter');
+      expect(result.isRevealed).toBe(true);
+    });
+
+    it('rejects users who are not booking participants', async () => {
+      prisma.booking.findUnique.mockResolvedValue({
+        id: 'booking-uuid',
+        renterId: USER_ID,
+        ownerId: OWNER_ID,
+        trip: { id: 'trip-1' },
+      });
+
+      await expect(
+        service.getBookingReviewStatus('outsider', 'booking-uuid'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.review.findMany).not.toHaveBeenCalled();
     });
   });
 });
