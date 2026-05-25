@@ -14,9 +14,42 @@ export enum ClaimCaseSlaStage {
   CLOSED = 'CLOSED',
 }
 
-const FIRST_REVIEW_SLA_HOURS = 24;
-const SECOND_REVIEW_SLA_HOURS = 12;
-const AT_RISK_WINDOW_HOURS = 2;
+export enum ClaimCaseAssignmentFilter {
+  MINE = 'MINE',
+  UNASSIGNED = 'UNASSIGNED',
+}
+
+export type ClaimCaseSlaPolicy = {
+  firstReviewHours: number;
+  secondReviewHours: number;
+  atRiskWindowHours: number;
+  highEscalationOverdueHours: number;
+};
+
+export const DEFAULT_CLAIM_CASE_SLA_POLICY: ClaimCaseSlaPolicy = {
+  firstReviewHours: 24,
+  secondReviewHours: 12,
+  atRiskWindowHours: 2,
+  highEscalationOverdueHours: 24,
+};
+
+export class ClaimCaseSlaPolicyEntity implements ClaimCaseSlaPolicy {
+  @ApiProperty()
+  firstReviewHours: number;
+
+  @ApiProperty()
+  secondReviewHours: number;
+
+  @ApiProperty()
+  atRiskWindowHours: number;
+
+  @ApiProperty()
+  highEscalationOverdueHours: number;
+
+  constructor(partial: Partial<ClaimCaseSlaPolicyEntity>) {
+    Object.assign(this, partial);
+  }
+}
 
 export class ClaimCaseSlaEntity {
   @ApiProperty({ enum: ClaimCaseSlaStatus })
@@ -41,6 +74,51 @@ export class ClaimCaseSlaEntity {
   escalationLevel: number;
 
   constructor(partial: Partial<ClaimCaseSlaEntity>) {
+    Object.assign(this, partial);
+  }
+}
+
+export class ClaimCaseQueueSummaryEntity {
+  @ApiProperty({ type: ClaimCaseSlaPolicyEntity })
+  policy: ClaimCaseSlaPolicyEntity;
+
+  @ApiProperty()
+  total: number;
+
+  @ApiProperty()
+  active: number;
+
+  @ApiProperty()
+  finalized: number;
+
+  @ApiProperty()
+  assignedToMe: number;
+
+  @ApiProperty()
+  unassigned: number;
+
+  @ApiProperty()
+  firstReview: number;
+
+  @ApiProperty()
+  secondReview: number;
+
+  @ApiProperty()
+  closed: number;
+
+  @ApiProperty()
+  overdue: number;
+
+  @ApiProperty()
+  atRisk: number;
+
+  @ApiProperty()
+  onTrack: number;
+
+  @ApiProperty()
+  completed: number;
+
+  constructor(partial: Partial<ClaimCaseQueueSummaryEntity>) {
     Object.assign(this, partial);
   }
 }
@@ -73,6 +151,7 @@ type ClaimCaseBookingSummary = {
 type ClaimCaseLike = ClaimCase & {
   booking?: ClaimCaseBookingSummary;
   opener?: ClaimCaseUserSummary | null;
+  assignee?: ClaimCaseUserSummary | null;
   firstReviewer?: ClaimCaseUserSummary | null;
   secondReviewer?: ClaimCaseUserSummary | null;
 };
@@ -98,6 +177,12 @@ export class ClaimCaseEntity implements ClaimCase {
 
   @ApiPropertyOptional()
   openedBy: string | null;
+
+  @ApiPropertyOptional()
+  assignedAdminId: string | null;
+
+  @ApiPropertyOptional()
+  assignedAt: Date | null;
 
   @ApiPropertyOptional({ enum: ClaimCaseOutcome, nullable: true })
   firstDecision: ClaimCaseOutcome | null;
@@ -142,6 +227,9 @@ export class ClaimCaseEntity implements ClaimCase {
   opener?: ClaimCaseUserSummary | null;
 
   @ApiPropertyOptional()
+  assignee?: ClaimCaseUserSummary | null;
+
+  @ApiPropertyOptional()
   firstReviewer?: ClaimCaseUserSummary | null;
 
   @ApiPropertyOptional()
@@ -157,17 +245,20 @@ export class ClaimCaseEntity implements ClaimCase {
   static fromPrisma(
     claimCase: ClaimCaseLike,
     now = new Date(),
+    policy?: Partial<ClaimCaseSlaPolicy>,
   ): ClaimCaseEntity {
     return new ClaimCaseEntity({
       ...claimCase,
-      sla: ClaimCaseEntity.buildSla(claimCase, now),
+      sla: ClaimCaseEntity.buildSla(claimCase, now, policy),
     });
   }
 
   private static buildSla(
     claimCase: ClaimCaseLike,
     now: Date,
+    policyInput?: Partial<ClaimCaseSlaPolicy>,
   ): ClaimCaseSlaEntity {
+    const policy = ClaimCaseEntity.normalizePolicy(policyInput);
     if (ClaimCaseEntity.isFinalStatus(claimCase.status)) {
       return new ClaimCaseSlaEntity({
         status: ClaimCaseSlaStatus.COMPLETED,
@@ -186,14 +277,14 @@ export class ClaimCaseEntity implements ClaimCase {
         : ClaimCaseSlaStage.FIRST_REVIEW;
     const startAt =
       stage === ClaimCaseSlaStage.SECOND_REVIEW
-        ? claimCase.firstReviewedAt ?? claimCase.updatedAt
+        ? (claimCase.firstReviewedAt ?? claimCase.updatedAt)
         : claimCase.createdAt;
     const dueAt = new Date(
       startAt.getTime() +
         ClaimCaseEntity.hoursToMs(
           stage === ClaimCaseSlaStage.SECOND_REVIEW
-            ? SECOND_REVIEW_SLA_HOURS
-            : FIRST_REVIEW_SLA_HOURS,
+            ? policy.secondReviewHours
+            : policy.firstReviewHours,
         ),
     );
     const remainingMinutes = Math.ceil(
@@ -204,7 +295,7 @@ export class ClaimCaseEntity implements ClaimCase {
       overdueMinutes > 0
         ? ClaimCaseSlaStatus.OVERDUE
         : remainingMinutes <=
-            ClaimCaseEntity.hoursToMinutes(AT_RISK_WINDOW_HOURS)
+            ClaimCaseEntity.hoursToMinutes(policy.atRiskWindowHours)
           ? ClaimCaseSlaStatus.AT_RISK
           : ClaimCaseSlaStatus.ON_TRACK;
 
@@ -218,8 +309,35 @@ export class ClaimCaseEntity implements ClaimCase {
           : 'First admin review due',
       remainingMinutes: Math.max(remainingMinutes, 0),
       overdueMinutes,
-      escalationLevel: ClaimCaseEntity.escalationLevel(status, overdueMinutes),
+      escalationLevel: ClaimCaseEntity.escalationLevel(
+        status,
+        overdueMinutes,
+        policy,
+      ),
     });
+  }
+
+  private static normalizePolicy(
+    policy?: Partial<ClaimCaseSlaPolicy>,
+  ): ClaimCaseSlaPolicy {
+    return {
+      firstReviewHours: ClaimCaseEntity.positiveNumber(
+        policy?.firstReviewHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.firstReviewHours,
+      ),
+      secondReviewHours: ClaimCaseEntity.positiveNumber(
+        policy?.secondReviewHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.secondReviewHours,
+      ),
+      atRiskWindowHours: ClaimCaseEntity.positiveNumber(
+        policy?.atRiskWindowHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.atRiskWindowHours,
+      ),
+      highEscalationOverdueHours: ClaimCaseEntity.positiveNumber(
+        policy?.highEscalationOverdueHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.highEscalationOverdueHours,
+      ),
+    };
   }
 
   private static isFinalStatus(status: ClaimCaseStatus): boolean {
@@ -234,10 +352,14 @@ export class ClaimCaseEntity implements ClaimCase {
   private static escalationLevel(
     status: ClaimCaseSlaStatus,
     overdueMinutes: number,
+    policy: ClaimCaseSlaPolicy,
   ): number {
     if (status === ClaimCaseSlaStatus.AT_RISK) return 1;
     if (status !== ClaimCaseSlaStatus.OVERDUE) return 0;
-    return overdueMinutes >= ClaimCaseEntity.hoursToMinutes(24) ? 3 : 2;
+    return overdueMinutes >=
+      ClaimCaseEntity.hoursToMinutes(policy.highEscalationOverdueHours)
+      ? 3
+      : 2;
   }
 
   private static hoursToMs(hours: number): number {
@@ -246,5 +368,15 @@ export class ClaimCaseEntity implements ClaimCase {
 
   private static hoursToMinutes(hours: number): number {
     return hours * 60;
+  }
+
+  private static positiveNumber(
+    value: number | undefined,
+    fallback: number,
+  ): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return fallback;
+    }
+    return value;
   }
 }

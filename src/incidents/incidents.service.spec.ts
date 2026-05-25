@@ -17,7 +17,12 @@ import {
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
-import { ClaimCaseSlaStatus } from './entities';
+import {
+  ClaimCaseAssignmentFilter,
+  ClaimCaseSlaStage,
+  ClaimCaseSlaStatus,
+} from './entities';
+import { ClaimCaseAssignmentAction } from './dto';
 import { IncidentsService } from './incidents.service';
 
 const BOOKING_ID = 'booking-uuid';
@@ -195,6 +200,8 @@ const makeClaimCase = (overrides: Record<string, unknown> = {}) => ({
   outcome: null,
   summary: '1 incident(s), 1 unresolved',
   openedBy: ADMIN_ID,
+  assignedAdminId: null,
+  assignedAt: null,
   firstDecision: null,
   firstReviewedBy: null,
   firstReviewNotes: null,
@@ -207,6 +214,7 @@ const makeClaimCase = (overrides: Record<string, unknown> = {}) => ({
   resolvedAt: null,
   createdAt: new Date('2026-05-24T01:00:00.000Z'),
   updatedAt: new Date('2026-05-24T01:00:00.000Z'),
+  assignee: null,
   ...overrides,
 });
 
@@ -251,6 +259,12 @@ const mockPrisma = () => ({
   evidenceAnnotation: {
     create: jest.fn(),
     findMany: jest.fn(),
+  },
+  user: {
+    findMany: jest.fn(),
+  },
+  notification: {
+    findFirst: jest.fn(),
   },
   postTripCharge: {
     findFirst: jest.fn(),
@@ -657,9 +671,373 @@ describe('IncidentsService', () => {
 
       expect(overdueCases).toHaveLength(1);
       expect(overdueCases[0].id).toBe('overdue-case');
+
+      const secondReviewCases = await service.getAdminClaimCases({
+        slaStage: ClaimCaseSlaStage.SECOND_REVIEW,
+        limit: 100,
+      });
+
+      expect(secondReviewCases).toHaveLength(1);
+      expect(secondReviewCases[0].id).toBe('at-risk-case');
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('uses configured claim-case SLA policy for derivation and summary metadata', async () => {
+    const previousEnv = {
+      firstReview: process.env.CLAIM_CASE_FIRST_REVIEW_SLA_HOURS,
+      secondReview: process.env.CLAIM_CASE_SECOND_REVIEW_SLA_HOURS,
+      atRisk: process.env.CLAIM_CASE_AT_RISK_WINDOW_HOURS,
+      highEscalation: process.env.CLAIM_CASE_HIGH_ESCALATION_OVERDUE_HOURS,
+    };
+
+    process.env.CLAIM_CASE_FIRST_REVIEW_SLA_HOURS = '6';
+    process.env.CLAIM_CASE_SECOND_REVIEW_SLA_HOURS = '3';
+    process.env.CLAIM_CASE_AT_RISK_WINDOW_HOURS = '1';
+    process.env.CLAIM_CASE_HIGH_ESCALATION_OVERDUE_HOURS = '1';
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-24T08:30:00.000Z'));
+
+    try {
+      prisma.claimCase.findMany.mockResolvedValue([
+        makeClaimCase({
+          id: 'configured-overdue-case',
+          status: ClaimCaseStatus.OPEN,
+          createdAt: new Date('2026-05-24T01:00:00.000Z'),
+          updatedAt: new Date('2026-05-24T01:00:00.000Z'),
+        }),
+      ]);
+
+      const cases = await service.getAdminClaimCases({ limit: 10 });
+      const summary = await service.getAdminClaimCaseQueueSummary(ADMIN_ID);
+
+      expect(cases[0].sla.dueAt?.toISOString()).toBe(
+        '2026-05-24T07:00:00.000Z',
+      );
+      expect(cases[0].sla).toMatchObject({
+        status: ClaimCaseSlaStatus.OVERDUE,
+        overdueMinutes: 90,
+        escalationLevel: 3,
+      });
+      expect(summary.policy).toMatchObject({
+        firstReviewHours: 6,
+        secondReviewHours: 3,
+        atRiskWindowHours: 1,
+        highEscalationOverdueHours: 1,
+      });
+    } finally {
+      const restoreEnv = (key: string, value: string | undefined) => {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      };
+      restoreEnv(
+        'CLAIM_CASE_FIRST_REVIEW_SLA_HOURS',
+        previousEnv.firstReview,
+      );
+      restoreEnv(
+        'CLAIM_CASE_SECOND_REVIEW_SLA_HOURS',
+        previousEnv.secondReview,
+      );
+      restoreEnv('CLAIM_CASE_AT_RISK_WINDOW_HOURS', previousEnv.atRisk);
+      restoreEnv(
+        'CLAIM_CASE_HIGH_ESCALATION_OVERDUE_HOURS',
+        previousEnv.highEscalation,
+      );
+      jest.useRealTimers();
+    }
+  });
+
+  it('sends automated claim-case SLA escalation alerts to assigned admins and admin pool', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-25T00:15:00.000Z'));
+    const notificationService = {
+      createNotification: jest
+        .fn()
+        .mockImplementation((payload) =>
+          Promise.resolve({ id: `notification-${payload.receiverId}` }),
+        ),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn().mockReturnValue(true),
+      sendToUser: jest.fn(),
+      broadcastToAdmins: jest.fn(),
+    };
+    service = new IncidentsService(
+      prisma as unknown as PrismaService,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        id: 'assigned-at-risk-case',
+        caseNumber: 'CLM-AT-RISK',
+        assignedAdminId: ADMIN_ID,
+        status: ClaimCaseStatus.OPEN,
+        createdAt: new Date('2026-05-24T01:00:00.000Z'),
+        updatedAt: new Date('2026-05-24T01:00:00.000Z'),
+      }),
+      makeClaimCase({
+        id: 'unassigned-overdue-case',
+        caseNumber: 'CLM-OVERDUE',
+        assignedAdminId: null,
+        status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+        firstDecision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        firstReviewedAt: new Date('2026-05-24T10:00:00.000Z'),
+        createdAt: new Date('2026-05-24T08:00:00.000Z'),
+        updatedAt: new Date('2026-05-24T10:00:00.000Z'),
+      }),
+    ]);
+    prisma.user.findMany.mockResolvedValue([
+      { id: ADMIN_ID },
+      { id: 'admin-two' },
+    ]);
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    try {
+      await service.sendClaimCaseSlaEscalationAlerts();
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(prisma.claimCase.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: {
+            notIn: [
+              ClaimCaseStatus.APPROVED,
+              ClaimCaseStatus.REJECTED,
+              ClaimCaseStatus.RESOLVED,
+              ClaimCaseStatus.CANCELLED,
+            ],
+          },
+        },
+      }),
+    );
+    expect(notificationService.createNotification).toHaveBeenCalledTimes(3);
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: ADMIN_ID,
+        type: NotificationType.SYSTEM_ALERT,
+        title: expect.stringContaining('AT_RISK'),
+        bookingId: BOOKING_ID,
+      }),
+    );
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: 'admin-two',
+        type: NotificationType.SYSTEM_ALERT,
+        title: expect.stringContaining('OVERDUE'),
+        message: expect.stringContaining('quá hạn'),
+      }),
+    );
+    expect(notificationGateway.sendToUser).toHaveBeenCalledTimes(3);
+    expect(notificationGateway.broadcastToAdmins).toHaveBeenCalledTimes(1);
+    expect(notificationGateway.broadcastToAdmins).toHaveBeenCalledWith(
+      'admin_alert',
+      expect.objectContaining({
+        type: 'CLAIM_SLA_ESCALATION',
+        claimCaseId: 'unassigned-overdue-case',
+        slaStatus: ClaimCaseSlaStatus.OVERDUE,
+      }),
+    );
+  });
+
+  it('dedupes automated claim-case SLA escalation alerts', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-25T00:15:00.000Z'));
+    const notificationService = {
+      createNotification: jest.fn(),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn(),
+      sendToUser: jest.fn(),
+      broadcastToAdmins: jest.fn(),
+    };
+    service = new IncidentsService(
+      prisma as unknown as PrismaService,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        id: 'deduped-overdue-case',
+        caseNumber: 'CLM-DEDUPED',
+        assignedAdminId: null,
+        status: ClaimCaseStatus.OPEN,
+        createdAt: new Date('2026-05-23T00:00:00.000Z'),
+        updatedAt: new Date('2026-05-23T00:00:00.000Z'),
+      }),
+    ]);
+    prisma.user.findMany.mockResolvedValue([{ id: ADMIN_ID }]);
+    prisma.notification.findFirst.mockResolvedValue({ id: 'existing-alert' });
+
+    try {
+      await service.sendClaimCaseSlaEscalationAlerts();
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(notificationService.createNotification).not.toHaveBeenCalled();
+    expect(notificationGateway.sendToUser).not.toHaveBeenCalled();
+    expect(notificationGateway.broadcastToAdmins).not.toHaveBeenCalled();
+  });
+
+  it('filters admin claim cases by assignment ownership', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        id: 'assigned-case',
+        assignedAdminId: ADMIN_ID,
+        assignedAt: new Date('2026-05-24T01:30:00.000Z'),
+        assignee: {
+          id: ADMIN_ID,
+          fullName: 'Admin One',
+          email: 'admin@example.com',
+        },
+      }),
+    ]);
+
+    const cases = await service.getAdminClaimCases({
+      assignment: ClaimCaseAssignmentFilter.MINE,
+      adminId: ADMIN_ID,
+      limit: 100,
+    });
+
+    expect(prisma.claimCase.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { assignedAdminId: ADMIN_ID },
+      }),
+    );
+    expect(cases[0].assignee?.fullName).toBe('Admin One');
+
+    await service.getAdminClaimCases({
+      assignment: ClaimCaseAssignmentFilter.UNASSIGNED,
+      limit: 100,
+    });
+
+    expect(prisma.claimCase.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { assignedAdminId: null },
+      }),
+    );
+  });
+
+  it('builds a global admin claim-case queue summary', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-24T02:30:00.000Z'));
+    try {
+      prisma.claimCase.findMany.mockResolvedValue([
+        makeClaimCase({
+          id: 'mine-case',
+          status: ClaimCaseStatus.OPEN,
+          assignedAdminId: ADMIN_ID,
+          createdAt: new Date('2026-05-24T01:00:00.000Z'),
+          updatedAt: new Date('2026-05-24T01:00:00.000Z'),
+        }),
+        makeClaimCase({
+          id: 'unassigned-overdue-case',
+          status: ClaimCaseStatus.OPEN,
+          assignedAdminId: null,
+          createdAt: new Date('2026-05-22T01:00:00.000Z'),
+          updatedAt: new Date('2026-05-22T01:00:00.000Z'),
+        }),
+        makeClaimCase({
+          id: 'second-review-case',
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          assignedAdminId: 'other-admin',
+          firstReviewedAt: new Date('2026-05-23T16:00:00.000Z'),
+          createdAt: new Date('2026-05-23T12:00:00.000Z'),
+          updatedAt: new Date('2026-05-23T16:00:00.000Z'),
+        }),
+        makeClaimCase({
+          id: 'finalized-case',
+          status: ClaimCaseStatus.APPROVED,
+          assignedAdminId: ADMIN_ID,
+        }),
+      ]);
+
+      const summary = await service.getAdminClaimCaseQueueSummary(ADMIN_ID);
+
+      expect(summary).toMatchObject({
+        total: 4,
+        active: 3,
+        finalized: 1,
+        assignedToMe: 1,
+        unassigned: 1,
+        firstReview: 2,
+        secondReview: 1,
+        closed: 1,
+        overdue: 1,
+        atRisk: 1,
+        onTrack: 1,
+        completed: 1,
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('assigns an open claim case to the current admin and moves it under review', async () => {
+    prisma.claimCase.findUnique.mockResolvedValue(makeClaimCase());
+    prisma.claimCase.update.mockResolvedValue(
+      makeClaimCase({
+        status: ClaimCaseStatus.UNDER_REVIEW,
+        assignedAdminId: ADMIN_ID,
+        assignedAt: new Date('2026-05-24T02:00:00.000Z'),
+        assignee: {
+          id: ADMIN_ID,
+          fullName: 'Admin One',
+          email: 'admin@example.com',
+        },
+      }),
+    );
+
+    const result = await service.updateClaimCaseAssignment(
+      'claim-case-uuid',
+      ADMIN_ID,
+      { action: ClaimCaseAssignmentAction.ASSIGN_SELF },
+    );
+
+    expect(prisma.claimCase.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'claim-case-uuid' },
+        data: expect.objectContaining({
+          assignedAdminId: ADMIN_ID,
+          assignedAt: expect.any(Date),
+          status: ClaimCaseStatus.UNDER_REVIEW,
+        }),
+      }),
+    );
+    expect(result.assignee?.fullName).toBe('Admin One');
+  });
+
+  it('releases an active claim case assignment', async () => {
+    prisma.claimCase.findUnique.mockResolvedValue(
+      makeClaimCase({
+        status: ClaimCaseStatus.UNDER_REVIEW,
+        assignedAdminId: ADMIN_ID,
+        assignedAt: new Date('2026-05-24T02:00:00.000Z'),
+      }),
+    );
+    prisma.claimCase.update.mockResolvedValue(
+      makeClaimCase({
+        status: ClaimCaseStatus.UNDER_REVIEW,
+        assignedAdminId: null,
+        assignedAt: null,
+      }),
+    );
+
+    await service.updateClaimCaseAssignment('claim-case-uuid', ADMIN_ID, {
+      action: ClaimCaseAssignmentAction.RELEASE,
+    });
+
+    expect(prisma.claimCase.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          assignedAdminId: null,
+          assignedAt: null,
+        },
+      }),
+    );
   });
 
   it('requires a different second admin with the same claim decision', async () => {

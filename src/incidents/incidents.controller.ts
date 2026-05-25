@@ -25,12 +25,16 @@ import {
   CreateEvidenceAnnotationDto,
   CreateIncidentReportDto,
   ReviewClaimCaseDto,
+  UpdateClaimCaseAssignmentDto,
   UpdateIncidentStatusDto,
 } from './dto';
 import {
   BookingClaimSummaryEntity,
+  ClaimCaseAssignmentFilter,
   ClaimCaseEntity,
+  ClaimCaseQueueSummaryEntity,
   ClaimCaseSlaStatus,
+  ClaimCaseSlaStage,
   EvidenceAnnotationEntity,
   IncidentReportEntity,
 } from './entities';
@@ -155,6 +159,21 @@ export class IncidentsController {
     return this.incidentsService.createOrRefreshClaimCase(bookingId, adminId);
   }
 
+  @Get('admin/claim-cases/summary')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get claim-case workload summary for admin triage',
+  })
+  @ApiResponse({ status: 200, type: ClaimCaseQueueSummaryEntity })
+  async getAdminClaimCaseQueueSummary(@CurrentUser('id') adminId: string) {
+    return {
+      status: 'success',
+      data: await this.incidentsService.getAdminClaimCaseQueueSummary(adminId),
+    };
+  }
+
   @Get('admin/claim-cases')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
@@ -163,8 +182,11 @@ export class IncidentsController {
     summary: 'List claim cases for admin review',
   })
   async getAdminClaimCases(
+    @CurrentUser('id') adminId: string,
     @Query('status') status?: string,
     @Query('slaStatus') slaStatus?: string,
+    @Query('slaStage') slaStage?: string,
+    @Query('assignment') assignment?: string,
     @Query('limit') limit?: string,
   ) {
     const claimCaseStatus = Object.values(ClaimCaseStatus).includes(
@@ -177,12 +199,25 @@ export class IncidentsController {
     )
       ? (slaStatus as ClaimCaseSlaStatus)
       : undefined;
+    const claimCaseSlaStage = Object.values(ClaimCaseSlaStage).includes(
+      slaStage as ClaimCaseSlaStage,
+    )
+      ? (slaStage as ClaimCaseSlaStage)
+      : undefined;
+    const claimCaseAssignment = Object.values(
+      ClaimCaseAssignmentFilter,
+    ).includes(assignment as ClaimCaseAssignmentFilter)
+      ? (assignment as ClaimCaseAssignmentFilter)
+      : undefined;
 
     return {
       status: 'success',
       data: await this.incidentsService.getAdminClaimCases({
         status: claimCaseStatus,
         slaStatus: claimCaseSlaStatus,
+        slaStage: claimCaseSlaStage,
+        assignment: claimCaseAssignment,
+        adminId,
         limit: Number(limit),
       }),
     };
@@ -237,5 +272,26 @@ export class IncidentsController {
     @Body() dto: ReviewClaimCaseDto,
   ): Promise<ClaimCaseEntity> {
     return this.incidentsService.reviewClaimCase(claimCaseId, adminId, dto);
+  }
+
+  @Patch('claim-cases/:id/assignment')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Assign or release a claim case for Admin ownership',
+  })
+  @ApiParam({ name: 'id', description: 'Claim case UUID' })
+  @ApiResponse({ status: 200, type: ClaimCaseEntity })
+  async updateClaimCaseAssignment(
+    @Param('id') claimCaseId: string,
+    @CurrentUser('id') adminId: string,
+    @Body() dto: UpdateClaimCaseAssignmentDto,
+  ): Promise<ClaimCaseEntity> {
+    return this.incidentsService.updateClaimCaseAssignment(
+      claimCaseId,
+      adminId,
+      dto,
+    );
   }
 }

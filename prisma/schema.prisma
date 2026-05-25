@@ -43,6 +43,7 @@ model User {
   incidentReportsFiled     IncidentReport[]     @relation("IncidentReporter")
   incidentReportsReviewed  IncidentReport[]     @relation("IncidentReviewer")
   claimCasesOpened         ClaimCase[]          @relation("ClaimCaseOpenedBy")
+  claimCasesAssigned       ClaimCase[]          @relation("ClaimCaseAssignee")
   claimCasesFirstReviewed  ClaimCase[]          @relation("ClaimCaseFirstReviewer")
   claimCasesSecondReviewed ClaimCase[]          @relation("ClaimCaseSecondReviewer")
   evidenceAnnotations      EvidenceAnnotation[] @relation("EvidenceAnnotationAuthor")
@@ -818,6 +819,8 @@ model ClaimCase {
   outcome           ClaimCaseOutcome?
   summary           String?
   openedBy          String?           @map("opened_by")
+  assignedAdminId   String?           @map("assigned_admin_id")
+  assignedAt        DateTime?         @map("assigned_at")
   firstDecision     ClaimCaseOutcome? @map("first_decision")
   firstReviewedBy   String?           @map("first_reviewed_by")
   firstReviewNotes  String?           @map("first_review_notes")
@@ -833,6 +836,7 @@ model ClaimCase {
 
   booking             Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   opener              User?                @relation("ClaimCaseOpenedBy", fields: [openedBy], references: [id], onDelete: SetNull)
+  assignee            User?                @relation("ClaimCaseAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
   firstReviewer       User?                @relation("ClaimCaseFirstReviewer", fields: [firstReviewedBy], references: [id], onDelete: SetNull)
   secondReviewer      User?                @relation("ClaimCaseSecondReviewer", fields: [secondReviewedBy], references: [id], onDelete: SetNull)
   evidenceAnnotations EvidenceAnnotation[]
@@ -840,6 +844,8 @@ model ClaimCase {
   @@index([status])
   @@index([outcome])
   @@index([openedBy])
+  @@index([assignedAdminId])
+  @@index([assignedAt])
   @@index([firstReviewedBy])
   @@index([secondReviewedBy])
   @@index([createdAt])

@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   DepositLedger,
   DepositLedgerStatus,
@@ -24,6 +25,7 @@ import {
   PostTripCharge,
   PostTripChargeStatus,
   UserRole,
+  UserStatus,
 } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationGateway } from '../notification/notification.gateway';
@@ -37,12 +39,19 @@ import {
   CreateIncidentReportDto,
   CreateEvidenceAnnotationDto,
   ReviewClaimCaseDto,
+  UpdateClaimCaseAssignmentDto,
   UpdateIncidentStatusDto,
+  ClaimCaseAssignmentAction,
 } from './dto';
 import {
   BookingClaimSummaryEntity,
   BookingClaimWorkflowStatus,
+  ClaimCaseAssignmentFilter,
   ClaimCaseEntity,
+  ClaimCaseQueueSummaryEntity,
+  ClaimCaseSlaPolicy,
+  ClaimCaseSlaPolicyEntity,
+  ClaimCaseSlaStage,
   ClaimCaseSlaStatus,
   ClaimActionActor,
   ClaimActionPriority,
@@ -50,6 +59,7 @@ import {
   ClaimFinancialTotalsEntity,
   ClaimNextActionEntity,
   ClaimTimelineEventEntity,
+  DEFAULT_CLAIM_CASE_SLA_POLICY,
   EvidenceAnnotationEntity,
   IncidentReportEntity,
 } from './entities';
@@ -105,6 +115,14 @@ const FINAL_CLAIM_CASE_STATUSES = [
   ClaimCaseStatus.RESOLVED,
   ClaimCaseStatus.CANCELLED,
 ] as const;
+
+const CLAIM_CASE_SLA_ENV_KEYS = {
+  firstReviewHours: 'CLAIM_CASE_FIRST_REVIEW_SLA_HOURS',
+  secondReviewHours: 'CLAIM_CASE_SECOND_REVIEW_SLA_HOURS',
+  atRiskWindowHours: 'CLAIM_CASE_AT_RISK_WINDOW_HOURS',
+  highEscalationOverdueHours:
+    'CLAIM_CASE_HIGH_ESCALATION_OVERDUE_HOURS',
+} as const;
 
 type IncidentBooking = Prisma.BookingGetPayload<{
   include: {
@@ -355,35 +373,190 @@ export class IncidentsService {
         : `Hồ sơ claim ${claimCase.caseNumber} đã được mở và đang chờ Admin review.`,
     });
 
-    return ClaimCaseEntity.fromPrisma(claimCase);
+    return ClaimCaseEntity.fromPrisma(
+      claimCase,
+      new Date(),
+      this.getClaimCaseSlaPolicy(),
+    );
   }
 
   async getAdminClaimCases(input: {
     status?: ClaimCaseStatus;
     slaStatus?: ClaimCaseSlaStatus;
+    slaStage?: ClaimCaseSlaStage;
+    assignment?: ClaimCaseAssignmentFilter;
+    adminId?: string;
     limit?: number;
   }): Promise<ClaimCaseEntity[]> {
     const take = Math.min(
       Math.max(Math.trunc(input.limit ?? 50) || 50, 1),
       100,
     );
-    const queryTake = input.slaStatus ? 100 : take;
+    const queryTake = input.slaStatus || input.slaStage ? 100 : take;
+    const where: Prisma.ClaimCaseWhereInput = {};
+    if (input.status) {
+      where.status = input.status;
+    }
+    if (input.assignment === ClaimCaseAssignmentFilter.MINE) {
+      where.assignedAdminId = input.adminId ?? '';
+    } else if (input.assignment === ClaimCaseAssignmentFilter.UNASSIGNED) {
+      where.assignedAdminId = null;
+    }
+
     const claimCases = await this.prisma.claimCase.findMany({
-      where: input.status ? { status: input.status } : undefined,
+      where: Object.keys(where).length ? where : undefined,
       include: this.claimCaseInclude(),
       orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
       take: queryTake,
     });
 
     const now = new Date();
+    const policy = this.getClaimCaseSlaPolicy();
     return claimCases
-      .map((claimCase) => ClaimCaseEntity.fromPrisma(claimCase, now))
+      .map((claimCase) => ClaimCaseEntity.fromPrisma(claimCase, now, policy))
       .filter(
         (claimCase) =>
-          !input.slaStatus || claimCase.sla.status === input.slaStatus,
+          (!input.slaStatus || claimCase.sla.status === input.slaStatus) &&
+          (!input.slaStage || claimCase.sla.stage === input.slaStage),
       )
       .sort(this.compareClaimCaseSla)
       .slice(0, take);
+  }
+
+  async getAdminClaimCaseQueueSummary(
+    adminId: string,
+  ): Promise<ClaimCaseQueueSummaryEntity> {
+    const claimCases = await this.prisma.claimCase.findMany();
+    const now = new Date();
+    const policy = this.getClaimCaseSlaPolicy();
+    const summary = new ClaimCaseQueueSummaryEntity({
+      policy: new ClaimCaseSlaPolicyEntity(policy),
+      total: 0,
+      active: 0,
+      finalized: 0,
+      assignedToMe: 0,
+      unassigned: 0,
+      firstReview: 0,
+      secondReview: 0,
+      closed: 0,
+      overdue: 0,
+      atRisk: 0,
+      onTrack: 0,
+      completed: 0,
+    });
+
+    for (const claimCase of claimCases) {
+      const entity = ClaimCaseEntity.fromPrisma(claimCase, now, policy);
+      const isFinal = FINAL_CLAIM_CASE_STATUSES.includes(entity.status as any);
+
+      summary.total += 1;
+      if (isFinal) {
+        summary.finalized += 1;
+      } else {
+        summary.active += 1;
+        if (entity.assignedAdminId === adminId) {
+          summary.assignedToMe += 1;
+        }
+        if (!entity.assignedAdminId) {
+          summary.unassigned += 1;
+        }
+      }
+
+      if (entity.sla.stage === ClaimCaseSlaStage.FIRST_REVIEW) {
+        summary.firstReview += 1;
+      } else if (entity.sla.stage === ClaimCaseSlaStage.SECOND_REVIEW) {
+        summary.secondReview += 1;
+      } else if (entity.sla.stage === ClaimCaseSlaStage.CLOSED) {
+        summary.closed += 1;
+      }
+
+      if (entity.sla.status === ClaimCaseSlaStatus.OVERDUE) {
+        summary.overdue += 1;
+      } else if (entity.sla.status === ClaimCaseSlaStatus.AT_RISK) {
+        summary.atRisk += 1;
+      } else if (entity.sla.status === ClaimCaseSlaStatus.ON_TRACK) {
+        summary.onTrack += 1;
+      } else if (entity.sla.status === ClaimCaseSlaStatus.COMPLETED) {
+        summary.completed += 1;
+      }
+    }
+
+    return summary;
+  }
+
+  @Cron('0 */15 * * * *')
+  async sendClaimCaseSlaEscalationAlerts(): Promise<void> {
+    if (!this.notificationService) return;
+
+    const claimCases = await this.prisma.claimCase.findMany({
+      where: {
+        status: {
+          notIn: [...FINAL_CLAIM_CASE_STATUSES],
+        },
+      },
+      include: this.claimCaseInclude(),
+      orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
+      take: 100,
+    });
+
+    const now = new Date();
+    const policy = this.getClaimCaseSlaPolicy();
+    for (const claimCase of claimCases) {
+      const entity = ClaimCaseEntity.fromPrisma(claimCase, now, policy);
+      if (
+        entity.sla.status !== ClaimCaseSlaStatus.AT_RISK &&
+        entity.sla.status !== ClaimCaseSlaStatus.OVERDUE
+      ) {
+        continue;
+      }
+
+      await this.notifyClaimCaseSlaEscalation(entity);
+    }
+  }
+
+  async updateClaimCaseAssignment(
+    claimCaseId: string,
+    adminId: string,
+    dto: UpdateClaimCaseAssignmentDto,
+  ): Promise<ClaimCaseEntity> {
+    const claimCase = await this.prisma.claimCase.findUnique({
+      where: { id: claimCaseId },
+    });
+
+    if (!claimCase) {
+      throw new NotFoundException('Claim case not found');
+    }
+
+    if (FINAL_CLAIM_CASE_STATUSES.includes(claimCase.status as any)) {
+      throw new BadRequestException(
+        'Finalized claim cases cannot be reassigned',
+      );
+    }
+
+    const assignToSelf = dto.action === ClaimCaseAssignmentAction.ASSIGN_SELF;
+    const updated = await this.prisma.claimCase.update({
+      where: { id: claimCaseId },
+      data: assignToSelf
+        ? {
+            assignedAdminId: adminId,
+            assignedAt: new Date(),
+            status:
+              claimCase.status === ClaimCaseStatus.OPEN
+                ? ClaimCaseStatus.UNDER_REVIEW
+                : claimCase.status,
+          }
+        : {
+            assignedAdminId: null,
+            assignedAt: null,
+          },
+      include: this.claimCaseInclude(),
+    });
+
+    return ClaimCaseEntity.fromPrisma(
+      updated,
+      new Date(),
+      this.getClaimCaseSlaPolicy(),
+    );
   }
 
   async reviewClaimCase(
@@ -427,7 +600,11 @@ export class IncidentsService {
         message: `Hồ sơ claim ${updated.caseNumber} đã có quyết định đầu tiên và cần Admin khác xác nhận.`,
         outcome: dto.decision,
       });
-      return ClaimCaseEntity.fromPrisma(updated);
+      return ClaimCaseEntity.fromPrisma(
+        updated,
+        new Date(),
+        this.getClaimCaseSlaPolicy(),
+      );
     }
 
     if (claimCase.firstReviewedBy === adminId) {
@@ -467,7 +644,11 @@ export class IncidentsService {
       outcome: dto.decision,
     });
 
-    return ClaimCaseEntity.fromPrisma(updated);
+    return ClaimCaseEntity.fromPrisma(
+      updated,
+      new Date(),
+      this.getClaimCaseSlaPolicy(),
+    );
   }
 
   async getAdminQueue(limit = 50): Promise<IncidentReportEntity[]> {
@@ -748,6 +929,152 @@ export class IncidentsService {
     }
   }
 
+  private getClaimCaseSlaPolicy(): ClaimCaseSlaPolicy {
+    return {
+      firstReviewHours: this.getPositiveNumberEnv(
+        CLAIM_CASE_SLA_ENV_KEYS.firstReviewHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.firstReviewHours,
+      ),
+      secondReviewHours: this.getPositiveNumberEnv(
+        CLAIM_CASE_SLA_ENV_KEYS.secondReviewHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.secondReviewHours,
+      ),
+      atRiskWindowHours: this.getPositiveNumberEnv(
+        CLAIM_CASE_SLA_ENV_KEYS.atRiskWindowHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.atRiskWindowHours,
+      ),
+      highEscalationOverdueHours: this.getPositiveNumberEnv(
+        CLAIM_CASE_SLA_ENV_KEYS.highEscalationOverdueHours,
+        DEFAULT_CLAIM_CASE_SLA_POLICY.highEscalationOverdueHours,
+      ),
+    };
+  }
+
+  private getPositiveNumberEnv(key: string, fallback: number): number {
+    const parsed = Number(process.env[key]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private async notifyClaimCaseSlaEscalation(
+    claimCase: ClaimCaseEntity,
+  ): Promise<void> {
+    if (!this.notificationService) return;
+
+    const receiverIds =
+      await this.resolveClaimCaseSlaEscalationReceivers(claimCase);
+    if (receiverIds.length === 0) return;
+
+    const title = `Claim SLA ${claimCase.sla.status} cấp ${claimCase.sla.escalationLevel}: ${claimCase.caseNumber}`;
+    const message = this.describeClaimCaseSlaEscalation(claimCase);
+    const baseData = this.stringifyNotificationData({
+      bookingId: claimCase.bookingId,
+      claimCaseId: claimCase.id,
+      caseNumber: claimCase.caseNumber,
+      slaStatus: claimCase.sla.status,
+      slaStage: claimCase.sla.stage,
+      escalationLevel: claimCase.sla.escalationLevel,
+      dueAt: claimCase.sla.dueAt?.toISOString(),
+      remainingMinutes: claimCase.sla.remainingMinutes,
+      overdueMinutes: claimCase.sla.overdueMinutes,
+      assignedAdminId: claimCase.assignedAdminId,
+    });
+
+    let createdCount = 0;
+    try {
+      for (const receiverId of receiverIds) {
+        const existing = await this.prisma.notification.findFirst({
+          where: {
+            receiverId,
+            bookingId: claimCase.bookingId,
+            type: NotificationType.SYSTEM_ALERT,
+            title,
+          },
+          select: { id: true },
+        });
+
+        if (existing) continue;
+
+        const notification = await this.notificationService.createNotification({
+          receiverId,
+          type: NotificationType.SYSTEM_ALERT,
+          title,
+          message,
+          bookingId: claimCase.bookingId,
+          data: baseData,
+        });
+        createdCount += 1;
+
+        if (this.notificationGateway?.isUserOnline(receiverId)) {
+          this.notificationGateway.sendToUser(
+            receiverId,
+            'claim_sla_escalation',
+            {
+              notification,
+              ...baseData,
+            },
+          );
+        }
+      }
+
+      if (
+        createdCount > 0 &&
+        (claimCase.sla.status === ClaimCaseSlaStatus.OVERDUE ||
+          !claimCase.assignedAdminId)
+      ) {
+        this.notificationGateway?.broadcastToAdmins('admin_alert', {
+          type: 'CLAIM_SLA_ESCALATION',
+          title,
+          message,
+          link: '/claim-cases',
+          ...baseData,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to send claim SLA escalation for case ${claimCase.id}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async resolveClaimCaseSlaEscalationReceivers(
+    claimCase: ClaimCaseEntity,
+  ): Promise<string[]> {
+    const receivers = new Set<string>();
+    if (claimCase.assignedAdminId) {
+      receivers.add(claimCase.assignedAdminId);
+    }
+
+    if (
+      claimCase.sla.status === ClaimCaseSlaStatus.OVERDUE ||
+      !claimCase.assignedAdminId
+    ) {
+      const admins = await this.prisma.user.findMany({
+        where: {
+          roles: { has: UserRole.ADMIN },
+          status: UserStatus.ACTIVE,
+        },
+        select: { id: true },
+      });
+      admins.forEach((admin) => receivers.add(admin.id));
+    }
+
+    return [...receivers];
+  }
+
+  private describeClaimCaseSlaEscalation(claimCase: ClaimCaseEntity): string {
+    const stage =
+      claimCase.sla.stage === ClaimCaseSlaStage.SECOND_REVIEW
+        ? 'review lần 2'
+        : 'review lần 1';
+
+    if (claimCase.sla.status === ClaimCaseSlaStatus.OVERDUE) {
+      return `Hồ sơ claim ${claimCase.caseNumber} đã quá hạn ${stage} ${claimCase.sla.overdueMinutes} phút. Vui lòng xử lý hoặc phân công lại.`;
+    }
+
+    return `Hồ sơ claim ${claimCase.caseNumber} sắp quá hạn ${stage}, còn ${claimCase.sla.remainingMinutes} phút. Vui lòng ưu tiên xử lý.`;
+  }
+
   private async notifyClaimParticipants(input: {
     claimCase: ClaimCase & {
       booking?: { id: string; renterId: string; ownerId: string } | null;
@@ -855,7 +1182,11 @@ export class IncidentsService {
       ? OwnerPayoutEntity.fromPrisma(booking.ownerPayout)
       : null;
     const claimCase = booking.claimCase
-      ? ClaimCaseEntity.fromPrisma(booking.claimCase as any)
+      ? ClaimCaseEntity.fromPrisma(
+          booking.claimCase as any,
+          new Date(),
+          this.getClaimCaseSlaPolicy(),
+        )
       : null;
     const evidenceAnnotations = includeEvidenceAnnotations
       ? (booking.evidenceAnnotations ?? []).map((annotation) =>
@@ -1501,7 +1832,8 @@ export class IncidentsService {
       [ClaimCaseSlaStatus.ON_TRACK]: 2,
       [ClaimCaseSlaStatus.COMPLETED]: 3,
     };
-    const priorityDelta = priority[left.sla.status] - priority[right.sla.status];
+    const priorityDelta =
+      priority[left.sla.status] - priority[right.sla.status];
     if (priorityDelta !== 0) return priorityDelta;
 
     const leftDue = left.sla.dueAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -1676,6 +2008,13 @@ export class IncidentsService {
   private claimCaseInclude() {
     return {
       opener: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+        },
+      },
+      assignee: {
         select: {
           id: true,
           fullName: true,
