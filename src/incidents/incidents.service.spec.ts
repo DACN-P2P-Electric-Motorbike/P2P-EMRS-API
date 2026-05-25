@@ -13,6 +13,7 @@ import {
   PostTripChargeSource,
   PostTripChargeStatus,
   PostTripChargeType,
+  ProtectionPlanType,
   TripStatus,
   UserRole,
 } from '@prisma/client';
@@ -277,6 +278,46 @@ const makeClaimCaseBookingForRisk = (
       severity: IncidentSeverity.LOW,
       status: IncidentStatus.OPEN,
       createdAt: new Date('2026-05-23T03:35:00.000Z'),
+    },
+  ],
+  ...overrides,
+});
+
+const makeProtectedClaimCaseBooking = (
+  overrides: Record<string, unknown> = {},
+) => ({
+  ...makeClaimCaseBookingForRisk(),
+  protectionPlan: ProtectionPlanType.PREMIUM,
+  protectionDeductible: 500_000,
+  protectionCoverageLimit: 3_000_000,
+  postTripCharges: [
+    {
+      id: 'approved-damage',
+      type: PostTripChargeType.DAMAGE,
+      status: PostTripChargeStatus.APPROVED,
+      amount: 4_000_000,
+      createdAt: new Date('2026-05-23T03:40:00.000Z'),
+    },
+    {
+      id: 'captured-damage',
+      type: PostTripChargeType.DAMAGE,
+      status: PostTripChargeStatus.DEDUCTED_FROM_DEPOSIT,
+      amount: 2_000_000,
+      createdAt: new Date('2026-05-23T03:42:00.000Z'),
+    },
+    {
+      id: 'approved-low-battery',
+      type: PostTripChargeType.LOW_BATTERY,
+      status: PostTripChargeStatus.APPROVED,
+      amount: 100_000,
+      createdAt: new Date('2026-05-23T03:45:00.000Z'),
+    },
+    {
+      id: 'waived-damage',
+      type: PostTripChargeType.DAMAGE,
+      status: PostTripChargeStatus.WAIVED,
+      amount: 9_000_000,
+      createdAt: new Date('2026-05-23T03:46:00.000Z'),
     },
   ],
   ...overrides,
@@ -576,6 +617,31 @@ describe('IncidentsService', () => {
     );
   });
 
+  it('exposes finalized protection settlement to booking participants', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeClaimBooking({
+        claimCase: makeClaimCase({
+          status: ClaimCaseStatus.APPROVED,
+          outcome: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+          booking: makeProtectedClaimCaseBooking(),
+        }),
+      }),
+    );
+
+    const summary = await service.getClaimSummaryForBooking(
+      BOOKING_ID,
+      RENTER_ID,
+      [UserRole.RENTER],
+    );
+
+    expect(summary.claimCase?.protectionSettlement).toMatchObject({
+      status: 'CALCULATED',
+      eligibleDamageAmount: 6_000_000,
+      platformCoverageAmount: 3_000_000,
+      renterLiabilityAmount: 3_000_000,
+    });
+  });
+
   it('creates a booking-scoped evidence annotation for valid claim evidence', async () => {
     prisma.booking.findUnique.mockResolvedValue({ id: BOOKING_ID });
     prisma.incidentReport.findFirst.mockResolvedValue({ id: 'incident-uuid' });
@@ -800,6 +866,60 @@ describe('IncidentsService', () => {
     });
   });
 
+  it('applies protection deductible and limit to finalized approved damage charges', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        status: ClaimCaseStatus.APPROVED,
+        outcome: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        booking: makeProtectedClaimCaseBooking(),
+      }),
+    ]);
+
+    const cases = await service.getAdminClaimCases({ limit: 100 });
+
+    expect(cases[0].protectionSettlement).toMatchObject({
+      status: 'CALCULATED',
+      protectionPlan: ProtectionPlanType.PREMIUM,
+      eligibleDamageAmount: 6_000_000,
+      nonCoveredChargeAmount: 100_000,
+      deductibleAmount: 500_000,
+      deductibleAppliedAmount: 500_000,
+      coverageLimit: 3_000_000,
+      platformCoverageAmount: 3_000_000,
+      renterLiabilityAmount: 3_000_000,
+      excessAboveCoverageAmount: 2_500_000,
+    });
+  });
+
+  it('waits for an approved damage amount before calculating finalized owner claim settlement', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        status: ClaimCaseStatus.APPROVED,
+        outcome: ClaimCaseOutcome.OWNER_CLAIM_PARTIALLY_APPROVED,
+        booking: makeProtectedClaimCaseBooking({
+          postTripCharges: [
+            {
+              id: 'pending-damage',
+              type: PostTripChargeType.DAMAGE,
+              status: PostTripChargeStatus.PENDING_REVIEW,
+              amount: 1_000_000,
+              createdAt: new Date('2026-05-23T03:40:00.000Z'),
+            },
+          ],
+        }),
+      }),
+    ]);
+
+    const cases = await service.getAdminClaimCases({ limit: 100 });
+
+    expect(cases[0].protectionSettlement).toMatchObject({
+      status: 'AWAITING_APPROVED_DAMAGE_CHARGE',
+      eligibleDamageAmount: 0,
+      platformCoverageAmount: 0,
+      renterLiabilityAmount: 0,
+    });
+  });
+
   it('uses configured claim-case SLA policy for derivation and summary metadata', async () => {
     const previousEnv = {
       firstReview: process.env.CLAIM_CASE_FIRST_REVIEW_SLA_HOURS,
@@ -849,10 +969,7 @@ describe('IncidentsService', () => {
           process.env[key] = value;
         }
       };
-      restoreEnv(
-        'CLAIM_CASE_FIRST_REVIEW_SLA_HOURS',
-        previousEnv.firstReview,
-      );
+      restoreEnv('CLAIM_CASE_FIRST_REVIEW_SLA_HOURS', previousEnv.firstReview);
       restoreEnv(
         'CLAIM_CASE_SECOND_REVIEW_SLA_HOURS',
         previousEnv.secondReview,

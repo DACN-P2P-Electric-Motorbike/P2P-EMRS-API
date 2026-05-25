@@ -120,8 +120,7 @@ const CLAIM_CASE_SLA_ENV_KEYS = {
   firstReviewHours: 'CLAIM_CASE_FIRST_REVIEW_SLA_HOURS',
   secondReviewHours: 'CLAIM_CASE_SECOND_REVIEW_SLA_HOURS',
   atRiskWindowHours: 'CLAIM_CASE_AT_RISK_WINDOW_HOURS',
-  highEscalationOverdueHours:
-    'CLAIM_CASE_HIGH_ESCALATION_OVERDUE_HOURS',
+  highEscalationOverdueHours: 'CLAIM_CASE_HIGH_ESCALATION_OVERDUE_HOURS',
 } as const;
 
 type IncidentBooking = Prisma.BookingGetPayload<{
@@ -2065,6 +2064,9 @@ export class IncidentsService {
           vehicleId: true,
           startTime: true,
           endTime: true,
+          protectionPlan: true,
+          protectionDeductible: true,
+          protectionCoverageLimit: true,
           renter: {
             select: {
               id: true,
@@ -2106,6 +2108,7 @@ export class IncidentsService {
           postTripCharges: {
             select: {
               id: true,
+              type: true,
               status: true,
               amount: true,
               createdAt: true,

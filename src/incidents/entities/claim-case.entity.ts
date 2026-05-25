@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ClaimCase, ClaimCaseOutcome, ClaimCaseStatus } from '@prisma/client';
+import {
+  ClaimCase,
+  ClaimCaseOutcome,
+  ClaimCaseStatus,
+  PostTripChargeStatus,
+  PostTripChargeType,
+  ProtectionPlanType,
+} from '@prisma/client';
 
 export enum ClaimCaseSlaStatus {
   ON_TRACK = 'ON_TRACK',
@@ -114,6 +121,47 @@ export class ClaimCaseRiskEntity {
   }
 }
 
+export enum ClaimProtectionSettlementStatus {
+  AWAITING_APPROVED_DAMAGE_CHARGE = 'AWAITING_APPROVED_DAMAGE_CHARGE',
+  CALCULATED = 'CALCULATED',
+}
+
+export class ClaimProtectionSettlementEntity {
+  @ApiProperty({ enum: ClaimProtectionSettlementStatus })
+  status: ClaimProtectionSettlementStatus;
+
+  @ApiProperty({ enum: ProtectionPlanType })
+  protectionPlan: ProtectionPlanType;
+
+  @ApiProperty()
+  eligibleDamageAmount: number;
+
+  @ApiProperty()
+  nonCoveredChargeAmount: number;
+
+  @ApiProperty()
+  deductibleAmount: number;
+
+  @ApiProperty()
+  deductibleAppliedAmount: number;
+
+  @ApiProperty()
+  coverageLimit: number;
+
+  @ApiProperty()
+  platformCoverageAmount: number;
+
+  @ApiProperty()
+  renterLiabilityAmount: number;
+
+  @ApiProperty()
+  excessAboveCoverageAmount: number;
+
+  constructor(partial: Partial<ClaimProtectionSettlementEntity>) {
+    Object.assign(this, partial);
+  }
+}
+
 export class ClaimCaseQueueSummaryEntity {
   @ApiProperty({ type: ClaimCaseSlaPolicyEntity })
   policy: ClaimCaseSlaPolicyEntity;
@@ -179,6 +227,15 @@ type ClaimCaseBookingSummary = {
   vehicleId: string;
   startTime: Date;
   endTime: Date;
+  protectionPlan?: ProtectionPlanType;
+  protectionDeductible?: number;
+  protectionCoverageLimit?: number;
+  postTripCharges?: Array<{
+    type: PostTripChargeType;
+    status: PostTripChargeStatus;
+    amount: number;
+    createdAt?: Date | string;
+  }>;
   renter?: ClaimCaseUserSummary;
   owner?: ClaimCaseUserSummary;
   vehicle?: {
@@ -283,6 +340,12 @@ export class ClaimCaseEntity implements ClaimCase {
   @ApiPropertyOptional({ type: ClaimCaseRiskEntity })
   risk?: ClaimCaseRiskEntity;
 
+  @ApiPropertyOptional({
+    type: ClaimProtectionSettlementEntity,
+    nullable: true,
+  })
+  protectionSettlement?: ClaimProtectionSettlementEntity | null;
+
   constructor(partial: Partial<ClaimCaseEntity>) {
     Object.assign(this, partial);
   }
@@ -298,6 +361,8 @@ export class ClaimCaseEntity implements ClaimCase {
       ...rest,
       booking: ClaimCaseEntity.toBookingSummary(booking),
       sla: ClaimCaseEntity.buildSla(claimCase, now, policy),
+      protectionSettlement:
+        ClaimCaseEntity.buildProtectionSettlement(claimCase),
       ...(options.includeRisk
         ? { risk: ClaimCaseEntity.buildRisk(claimCase) }
         : {}),
@@ -331,6 +396,88 @@ export class ClaimCaseEntity implements ClaimCase {
       fullName: user.fullName,
       email: user.email,
     };
+  }
+
+  private static buildProtectionSettlement(
+    claimCase: ClaimCaseLike,
+  ): ClaimProtectionSettlementEntity | null {
+    if (
+      claimCase.status !== ClaimCaseStatus.APPROVED ||
+      (claimCase.outcome !== ClaimCaseOutcome.OWNER_CLAIM_APPROVED &&
+        claimCase.outcome !== ClaimCaseOutcome.OWNER_CLAIM_PARTIALLY_APPROVED)
+    ) {
+      return null;
+    }
+
+    const booking = claimCase.booking;
+    if (
+      !booking?.protectionPlan ||
+      booking.protectionDeductible == null ||
+      booking.protectionCoverageLimit == null
+    ) {
+      return null;
+    }
+
+    const settledStatuses = new Set<PostTripChargeStatus>([
+      PostTripChargeStatus.APPROVED,
+      PostTripChargeStatus.DEDUCTED_FROM_DEPOSIT,
+      PostTripChargeStatus.PAID,
+    ]);
+    const settledCharges = (booking.postTripCharges ?? []).filter((charge) =>
+      settledStatuses.has(charge.status),
+    );
+    const eligibleDamageAmount = ClaimCaseEntity.roundMoney(
+      settledCharges
+        .filter((charge) => charge.type === PostTripChargeType.DAMAGE)
+        .reduce((total, charge) => total + (Number(charge.amount) || 0), 0),
+    );
+    const nonCoveredChargeAmount = ClaimCaseEntity.roundMoney(
+      settledCharges
+        .filter((charge) => charge.type !== PostTripChargeType.DAMAGE)
+        .reduce((total, charge) => total + (Number(charge.amount) || 0), 0),
+    );
+    const deductibleAmount = Math.max(0, booking.protectionDeductible);
+    const coverageLimit = Math.max(0, booking.protectionCoverageLimit);
+    const deductibleAppliedAmount = Math.min(
+      eligibleDamageAmount,
+      deductibleAmount,
+    );
+    const amountAfterDeductible = Math.max(
+      eligibleDamageAmount - deductibleAppliedAmount,
+      0,
+    );
+    const platformCoverageAmount = Math.min(
+      amountAfterDeductible,
+      coverageLimit,
+    );
+    const excessAboveCoverageAmount = Math.max(
+      amountAfterDeductible - platformCoverageAmount,
+      0,
+    );
+
+    return new ClaimProtectionSettlementEntity({
+      status:
+        eligibleDamageAmount > 0
+          ? ClaimProtectionSettlementStatus.CALCULATED
+          : ClaimProtectionSettlementStatus.AWAITING_APPROVED_DAMAGE_CHARGE,
+      protectionPlan: booking.protectionPlan,
+      eligibleDamageAmount,
+      nonCoveredChargeAmount,
+      deductibleAmount: ClaimCaseEntity.roundMoney(deductibleAmount),
+      deductibleAppliedAmount: ClaimCaseEntity.roundMoney(
+        deductibleAppliedAmount,
+      ),
+      coverageLimit: ClaimCaseEntity.roundMoney(coverageLimit),
+      platformCoverageAmount: ClaimCaseEntity.roundMoney(
+        platformCoverageAmount,
+      ),
+      renterLiabilityAmount: ClaimCaseEntity.roundMoney(
+        deductibleAppliedAmount + excessAboveCoverageAmount,
+      ),
+      excessAboveCoverageAmount: ClaimCaseEntity.roundMoney(
+        excessAboveCoverageAmount,
+      ),
+    });
   }
 
   private static buildRisk(claimCase: ClaimCaseLike): ClaimCaseRiskEntity {
@@ -419,9 +566,7 @@ export class ClaimCaseEntity implements ClaimCase {
       );
     }
 
-    const tripCompletedAt = ClaimCaseEntity.toDate(
-      booking?.trip?.completedAt,
-    );
+    const tripCompletedAt = ClaimCaseEntity.toDate(booking?.trip?.completedAt);
     const firstActivityAt = ClaimCaseEntity.earliestDate([
       ...incidents.map((incident) => incident.createdAt),
       ...charges.map((charge) => charge.createdAt),
@@ -465,6 +610,10 @@ export class ClaimCaseEntity implements ClaimCase {
       score,
       indicators,
     });
+  }
+
+  private static roundMoney(value: number): number {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 
   private static buildSla(
