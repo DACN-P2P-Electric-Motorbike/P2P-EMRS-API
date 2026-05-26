@@ -7,6 +7,7 @@ import {
   VehicleFeature,
   VehicleCondition,
   BatteryType,
+  CancellationPolicyType,
   Prisma,
 } from '@prisma/client';
 import { Expose } from 'class-transformer';
@@ -132,6 +133,13 @@ export class VehicleEntity implements Vehicle {
   @Expose()
   instantBook: boolean;
 
+  @ApiProperty({
+    description: 'Renter cancellation refund tier',
+    enum: CancellationPolicyType,
+  })
+  @Expose()
+  cancellationPolicy: CancellationPolicyType;
+
   @ApiPropertyOptional({ description: 'Max km per day (null = unlimited)' })
   @Expose()
   dailyKmLimit: number | null;
@@ -175,7 +183,10 @@ export class VehicleEntity implements Vehicle {
   @Expose()
   condition: VehicleCondition | null;
 
-  @ApiPropertyOptional({ description: 'EV battery pack type', enum: BatteryType })
+  @ApiPropertyOptional({
+    description: 'EV battery pack type',
+    enum: BatteryType,
+  })
   @Expose()
   batteryType: BatteryType | null;
 
@@ -183,7 +194,9 @@ export class VehicleEntity implements Vehicle {
   @Expose()
   batteryHealth: number | null;
 
-  @ApiPropertyOptional({ description: 'Approximate battery charge cycle count' })
+  @ApiPropertyOptional({
+    description: 'Approximate battery charge cycle count',
+  })
   @Expose()
   batteryCycleCount: number | null;
 

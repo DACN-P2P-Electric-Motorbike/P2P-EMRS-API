@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   Booking,
   BookingStatus,
+  CancellationPolicyType,
   PaymentStatus,
   ProtectionPlanType,
 } from '@prisma/client';
@@ -83,6 +84,10 @@ export class BookingEntity implements Booking {
   @ApiProperty()
   @Expose()
   roadsideSupportCreditAmount: number;
+
+  @ApiProperty({ enum: CancellationPolicyType })
+  @Expose()
+  cancellationPolicy: CancellationPolicyType;
 
   @ApiPropertyOptional()
   @Expose()

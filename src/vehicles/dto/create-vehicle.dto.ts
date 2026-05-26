@@ -18,6 +18,7 @@ import {
 import { Type } from 'class-transformer';
 import {
   BatteryType,
+  CancellationPolicyType,
   VehicleType,
   VehicleBrand,
   VehicleCondition,
@@ -187,6 +188,16 @@ export class CreateVehicleDto {
   instantBook?: boolean;
 
   @ApiPropertyOptional({
+    description: 'Renter cancellation refund tier selected by the owner',
+    enum: CancellationPolicyType,
+    example: CancellationPolicyType.FLEXIBLE,
+    default: CancellationPolicyType.FLEXIBLE,
+  })
+  @IsOptional()
+  @IsEnum(CancellationPolicyType)
+  cancellationPolicy?: CancellationPolicyType;
+
+  @ApiPropertyOptional({
     description: 'Maximum km allowed per day (null = unlimited)',
     example: 100,
   })
@@ -247,7 +258,8 @@ export class CreateVehicleDto {
   allowPets?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Geographic restriction (e.g., "province_only", "nationwide", "no_restriction")',
+    description:
+      'Geographic restriction (e.g., "province_only", "nationwide", "no_restriction")',
     example: 'no_restriction',
   })
   @IsOptional()
@@ -255,7 +267,8 @@ export class CreateVehicleDto {
   geoRestriction?: string;
 
   @ApiPropertyOptional({
-    description: 'Minimum battery level required on return (0-100, EV-specific)',
+    description:
+      'Minimum battery level required on return (0-100, EV-specific)',
     example: 20,
   })
   @IsOptional()

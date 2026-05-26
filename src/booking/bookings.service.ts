@@ -17,6 +17,7 @@ import {
   PaymentStatus,
   Prisma,
   ProtectionPlanType,
+  CancellationPolicyType,
   TrustScoreEventType,
 } from '@prisma/client';
 import {
@@ -319,6 +320,7 @@ export class BookingsService {
         roadsideSupportCreditAmount: roadsideSupport
           ? this.ROADSIDE_SUPPORT_CREDIT_AMOUNT
           : 0,
+        cancellationPolicy: vehicle.cancellationPolicy,
         notes: dto.notes,
         status: BookingStatus.PENDING,
       },
@@ -501,11 +503,10 @@ export class BookingsService {
   }
 
   /**
-   * Cancel booking (renter or owner) with time-based cancellation policy:
-   *   Renter:
-   *   - >24h before start: full rental refund, full deposit refund, no trust penalty
-   *   - 1-24h before start: 50% rental refund, full deposit refund, -5 trust
-   *   - <1h before start: no rental refund, full deposit refund, -10 trust
+   * Cancel booking (renter or owner) with the booking-snapshotted policy:
+   *   - Flexible: full renter refund before 24h, otherwise 50%.
+   *   - Moderate: full renter refund before 5 days, otherwise 50%.
+   *   - Strict: 50% renter refund before 7 days, otherwise none.
    *   Owner:
    *   - Always full rental/deposit refund to renter, -10 trust penalty to owner
    */
@@ -678,6 +679,7 @@ export class BookingsService {
       protectionFee?: number | null;
       prepaidChargingFee?: number | null;
       roadsideSupportFee?: number | null;
+      cancellationPolicy?: CancellationPolicyType | null;
     },
     payment: { amount: number; status: PaymentStatus } | null,
     userId: string,
@@ -693,22 +695,23 @@ export class BookingsService {
     let rentalRefundRate = 0;
     let trustPenalty = 0;
     let policyCode = 'NOT_CANCELLABLE';
+    const cancellationPolicy =
+      booking.cancellationPolicy ?? CancellationPolicyType.FLEXIBLE;
 
     if (cancellable && isOwner) {
       rentalRefundRate = 1;
       trustPenalty = 10;
       policyCode = 'OWNER_FULL_REFUND';
-    } else if (cancellable && hoursUntilStart > 24) {
-      rentalRefundRate = 1;
-      policyCode = 'RENTER_EARLY_FULL_REFUND';
-    } else if (cancellable && hoursUntilStart >= 1) {
-      rentalRefundRate = 0.5;
-      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 5 : 0;
-      policyCode = 'RENTER_STANDARD_PARTIAL_REFUND';
     } else if (cancellable) {
-      rentalRefundRate = 0;
-      trustPenalty = booking.status === BookingStatus.CONFIRMED ? 10 : 0;
-      policyCode = 'RENTER_LATE_DEPOSIT_ONLY';
+      const refund = this.getRenterCancellationTerms(
+        cancellationPolicy,
+        hoursUntilStart,
+      );
+      rentalRefundRate = refund.rentalRefundRate;
+      policyCode = refund.policyCode;
+      if (booking.status === BookingStatus.CONFIRMED && rentalRefundRate < 1) {
+        trustPenalty = rentalRefundRate === 0 ? 10 : 5;
+      }
     }
 
     const isPaid = payment?.status === PaymentStatus.COMPLETED;
@@ -802,6 +805,7 @@ export class BookingsService {
       cancellable,
       hoursUntilStart,
       policyCode,
+      cancellationPolicy,
       rentalRefundRate,
       trustPenalty,
       rentalAmount,
@@ -826,6 +830,42 @@ export class BookingsService {
       paymentStatus: payment?.status ?? null,
       refundType,
     });
+  }
+
+  private getRenterCancellationTerms(
+    cancellationPolicy: CancellationPolicyType,
+    hoursUntilStart: number,
+  ): { rentalRefundRate: number; policyCode: string } {
+    switch (cancellationPolicy) {
+      case CancellationPolicyType.MODERATE:
+        return hoursUntilStart > 5 * 24
+          ? {
+              rentalRefundRate: 1,
+              policyCode: 'RENTER_MODERATE_FULL_REFUND',
+            }
+          : {
+              rentalRefundRate: 0.5,
+              policyCode: 'RENTER_MODERATE_PARTIAL_REFUND',
+            };
+      case CancellationPolicyType.STRICT:
+        return hoursUntilStart > 7 * 24
+          ? {
+              rentalRefundRate: 0.5,
+              policyCode: 'RENTER_STRICT_PARTIAL_REFUND',
+            }
+          : { rentalRefundRate: 0, policyCode: 'RENTER_STRICT_NO_REFUND' };
+      case CancellationPolicyType.FLEXIBLE:
+      default:
+        return hoursUntilStart > 24
+          ? {
+              rentalRefundRate: 1,
+              policyCode: 'RENTER_FLEXIBLE_FULL_REFUND',
+            }
+          : {
+              rentalRefundRate: 0.5,
+              policyCode: 'RENTER_FLEXIBLE_PARTIAL_REFUND',
+            };
+    }
   }
 
   private roundMoney(value: number): number {

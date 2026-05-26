@@ -20,6 +20,7 @@ import {
   AvailabilityWindowRecurrence,
   AvailabilityWindowType,
   BatteryType,
+  CancellationPolicyType,
   VehicleStatus,
   VehicleType,
   VehicleBrand,
@@ -256,6 +257,7 @@ describe('VehiclesService', () => {
       const createdVehicle: MockVehicle = createMockVehicle({
         status: VehicleStatus.PENDING_APPROVAL,
         instantBook: true,
+        cancellationPolicy: CancellationPolicyType.MODERATE,
         dailyKmLimit: 120,
         excessKmPrice: 3000,
         weeklyDiscount: 10,
@@ -271,6 +273,7 @@ describe('VehiclesService', () => {
       await service.registerVehicle(OWNER_ID, ownerRoles, {
         ...dto,
         instantBook: true,
+        cancellationPolicy: CancellationPolicyType.MODERATE,
         dailyKmLimit: 120,
         excessKmPrice: 3000,
         weeklyDiscount: 10,
@@ -285,6 +288,7 @@ describe('VehiclesService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             instantBook: true,
+            cancellationPolicy: CancellationPolicyType.MODERATE,
             dailyKmLimit: 120,
             excessKmPrice: 3000,
             weeklyDiscount: 10,
@@ -913,6 +917,7 @@ describe('VehiclesService', () => {
 
       await service.updateVehicle(VEHICLE_ID, OWNER_ID, [UserRole.OWNER], {
         instantBook: true,
+        cancellationPolicy: CancellationPolicyType.STRICT,
         dailyKmLimit: 100,
         excessKmPrice: 2500,
         weeklyDiscount: 8,
@@ -927,6 +932,7 @@ describe('VehiclesService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             instantBook: true,
+            cancellationPolicy: CancellationPolicyType.STRICT,
             dailyKmLimit: 100,
             excessKmPrice: 2500,
             weeklyDiscount: 8,

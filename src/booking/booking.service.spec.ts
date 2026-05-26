@@ -25,6 +25,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   BookingStatus,
+  CancellationPolicyType,
   DepositLedgerStatus,
   PaymentStatus,
   ProtectionPlanType,
@@ -293,6 +294,29 @@ describe('BookingsService', () => {
             protectionFee: 5000,
             protectionDeductible: 500000,
             protectionCoverageLimit: 30000000,
+          }),
+        }),
+      );
+    });
+
+    it('should snapshot the vehicle cancellation policy onto the booking', async () => {
+      const vehicle = createAvailableVehicle({
+        cancellationPolicy: CancellationPolicyType.STRICT,
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(
+        createMockBooking({
+          cancellationPolicy: CancellationPolicyType.STRICT,
+        }),
+      );
+
+      await service.createBooking(RENTER_ID, buildCreateBookingDto() as any);
+
+      expect(mockBookingDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cancellationPolicy: CancellationPolicyType.STRICT,
           }),
         }),
       );
@@ -680,7 +704,57 @@ describe('BookingsService', () => {
       expect(preview.refundAmount).toBe(550000);
       expect(preview.forfeitedRentalAmount).toBe(50000);
       expect(preview.trustPenalty).toBe(5);
-      expect(preview.policyCode).toBe('RENTER_STANDARD_PARTIAL_REFUND');
+      expect(preview.cancellationPolicy).toBe(CancellationPolicyType.FLEXIBLE);
+      expect(preview.policyCode).toBe('RENTER_FLEXIBLE_PARTIAL_REFUND');
+    });
+
+    it('applies the moderate tier from the booking snapshot', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(48),
+          totalPrice: 100000,
+          deposit: 500000,
+          cancellationPolicy: CancellationPolicyType.MODERATE,
+        }),
+        payment: { amount: 600000, status: PaymentStatus.COMPLETED },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.cancellationPolicy).toBe(CancellationPolicyType.MODERATE);
+      expect(preview.rentalRefundRate).toBe(0.5);
+      expect(preview.policyCode).toBe('RENTER_MODERATE_PARTIAL_REFUND');
+    });
+
+    it('applies strict no-refund terms within seven days', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(48),
+          totalPrice: 100000,
+          deposit: 500000,
+          cancellationPolicy: CancellationPolicyType.STRICT,
+        }),
+        payment: { amount: 600000, status: PaymentStatus.COMPLETED },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        RENTER_ID,
+      );
+
+      expect(preview.cancellationPolicy).toBe(CancellationPolicyType.STRICT);
+      expect(preview.rentalRefundRate).toBe(0);
+      expect(preview.refundableRentalAmount).toBe(0);
+      expect(preview.refundableDepositAmount).toBe(500000);
+      expect(preview.policyCode).toBe('RENTER_STRICT_NO_REFUND');
+      expect(preview.trustPenalty).toBe(10);
     });
 
     it('applies cancellation refund policy to prepaid charging fees', async () => {
