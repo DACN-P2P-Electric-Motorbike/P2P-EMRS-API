@@ -15,6 +15,7 @@ import {
 import { Type } from 'class-transformer';
 import {
   BatteryType,
+  CancellationPolicyType,
   VehicleCondition,
   VehicleType,
   VehicleStatus,
@@ -131,6 +132,14 @@ export class UpdateVehicleDto {
   @Type(() => Boolean)
   instantBook?: boolean;
 
+  @ApiPropertyOptional({
+    description: 'Renter cancellation refund tier selected by the owner',
+    enum: CancellationPolicyType,
+  })
+  @IsOptional()
+  @IsEnum(CancellationPolicyType)
+  cancellationPolicy?: CancellationPolicyType;
+
   @ApiPropertyOptional({ description: 'Maximum km allowed per day' })
   @IsOptional()
   @IsNumber()
@@ -218,7 +227,9 @@ export class UpdateVehicleDto {
   @Type(() => Number)
   batteryHealth?: number | null;
 
-  @ApiPropertyOptional({ description: 'Approximate battery charge cycle count' })
+  @ApiPropertyOptional({
+    description: 'Approximate battery charge cycle count',
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)

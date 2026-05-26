@@ -17,13 +17,22 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { UploadService, UploadResult } from './upload.service';
+import { IncidentEvidenceReceiptService } from './incident-evidence-receipt.service';
+import {
+  IncidentUploadResult,
+  UploadResult,
+  UploadService,
+} from './upload.service';
 
 @ApiTags('Upload')
 @Controller('upload')
 export class UploadController {
-  constructor(private readonly uploadService: UploadService) {}
+  constructor(
+    private readonly uploadService: UploadService,
+    private readonly incidentEvidenceReceiptService: IncidentEvidenceReceiptService,
+  ) {}
 
   @Post('vehicle-image')
   @UseGuards(JwtAuthGuard)
@@ -196,9 +205,18 @@ export class UploadController {
     description: 'Incident evidence image uploaded successfully',
   })
   async uploadIncidentImage(
+    @CurrentUser('id') userId: string,
     @UploadedFile() file: Express.Multer.File,
-  ): Promise<UploadResult> {
-    return this.uploadService.uploadFile(file, 'incidents');
+  ): Promise<IncidentUploadResult> {
+    const uploaded = await this.uploadService.uploadFile(file, 'incidents');
+
+    return {
+      ...uploaded,
+      evidenceReceipt: this.incidentEvidenceReceiptService.issue(
+        userId,
+        uploaded.url,
+      ),
+    };
   }
 
   @Delete()

@@ -8,7 +8,25 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class IncidentEvidenceUploadDto {
+  @ApiProperty({
+    description: 'Uploaded incident evidence URL returned by the upload API',
+  })
+  @IsString()
+  @IsNotEmpty()
+  url: string;
+
+  @ApiProperty({
+    description: 'Signed upload receipt returned with the incident image URL',
+  })
+  @IsString()
+  @IsNotEmpty()
+  receipt: string;
+}
 
 export class CreateIncidentReportDto {
   @ApiProperty({
@@ -65,6 +83,17 @@ export class CreateIncidentReportDto {
   @ArrayMaxSize(10)
   @IsString({ each: true })
   evidenceUrls?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Incident images with API-issued signed upload receipts',
+    type: [IncidentEvidenceUploadDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => IncidentEvidenceUploadDto)
+  evidenceUploads?: IncidentEvidenceUploadDto[];
 
   @ApiPropertyOptional({
     description: 'Existing handover photo IDs to attach as evidence',

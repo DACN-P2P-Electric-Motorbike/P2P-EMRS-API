@@ -3,7 +3,11 @@
  * @member Member A — Dương Hoàng Long
  * @coverage target ≥80%
  */
-import { BookingStatus, ProtectionPlanType } from '@prisma/client';
+import {
+  BookingStatus,
+  CancellationPolicyType,
+  ProtectionPlanType,
+} from '@prisma/client';
 
 // ─── Stable test UUIDs ────────────────────────────────────────────────────────
 /** UUID for the renter used across booking tests */
@@ -43,6 +47,7 @@ export type MockBooking = {
   roadsideSupport: boolean;
   roadsideSupportFee: number;
   roadsideSupportCreditAmount: number;
+  cancellationPolicy: CancellationPolicyType;
   notes: string | null;
   cancellationReason: string | null;
   cancelledBy: string | null;
@@ -88,6 +93,7 @@ export function createMockBooking(
     roadsideSupport: false,
     roadsideSupportFee: 0,
     roadsideSupportCreditAmount: 0,
+    cancellationPolicy: CancellationPolicyType.FLEXIBLE,
     notes: null,
     cancellationReason: null,
     cancelledBy: null,

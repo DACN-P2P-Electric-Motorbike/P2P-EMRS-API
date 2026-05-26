@@ -30,6 +30,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { NotificationGateway } from '../notification/notification.gateway';
 import { NotificationService } from '../notification/notification.service';
+import { IncidentEvidenceReceiptService } from '../upload/incident-evidence-receipt.service';
 import {
   DepositLedgerEntity,
   OwnerPayoutEntity,
@@ -150,6 +151,8 @@ export class IncidentsService {
     private readonly notificationService?: NotificationService,
     @Optional()
     private readonly notificationGateway?: NotificationGateway,
+    @Optional()
+    private readonly incidentEvidenceReceiptService?: IncidentEvidenceReceiptService,
   ) {}
 
   async createReport(
@@ -798,9 +801,43 @@ export class IncidentsService {
     evidence: Prisma.InputJsonValue;
     requiredEvidence: Prisma.InputJsonValue;
   } {
-    const evidenceUrls = (dto.evidenceUrls ?? [])
+    const submittedEvidenceUrls = (dto.evidenceUrls ?? [])
       .map((url) => url.trim())
       .filter(Boolean);
+    const uploadedEvidence = (dto.evidenceUploads ?? []).map((upload) => {
+      if (!this.incidentEvidenceReceiptService) {
+        throw new BadRequestException(
+          'Verified incident evidence uploads are unavailable',
+        );
+      }
+
+      const url = upload.url.trim();
+      const verified = this.incidentEvidenceReceiptService.verify(
+        upload.receipt,
+        reporterId,
+        url,
+      );
+
+      return {
+        url: verified.url,
+        uploadedAt: verified.uploadedAt,
+        serverVerified: true,
+      };
+    });
+    const verifiedUploadUrls = new Set(
+      uploadedEvidence.map((upload) => upload.url),
+    );
+    const evidenceUrls = [
+      ...new Set([
+        ...submittedEvidenceUrls,
+        ...uploadedEvidence.map((upload) => upload.url),
+      ]),
+    ];
+    if (evidenceUrls.length > 10) {
+      throw new BadRequestException(
+        'Incident evidence uploads cannot exceed 10 images',
+      );
+    }
     const requestedPhotoIds = [...new Set(dto.handoverPhotoIds ?? [])];
     const handoverPhotos = booking.handovers.flatMap((handover) =>
       handover.photos.map((photo) => ({
@@ -810,6 +847,10 @@ export class IncidentsService {
         photoUrl: photo.photoUrl,
         photoType: photo.photoType,
         capturedAt: photo.capturedAt.toISOString(),
+        confirmedByOwner: handover.confirmedByOwner,
+        confirmedByRenter: handover.confirmedByRenter,
+        jointlyConfirmed:
+          handover.confirmedByOwner && handover.confirmedByRenter,
       })),
     );
 
@@ -826,6 +867,9 @@ export class IncidentsService {
     const attachedHandoverPhotos = requestedPhotoIds.map(
       (id) => photoById.get(id)!,
     );
+    const jointlyConfirmedPhotoCount = attachedHandoverPhotos.filter(
+      (photo) => photo.jointlyConfirmed,
+    ).length;
     const hasEvidence =
       evidenceUrls.length > 0 || attachedHandoverPhotos.length > 0;
     const requiresPhoto =
@@ -843,13 +887,29 @@ export class IncidentsService {
         reportedBy: reporterId,
         reportedAt: new Date().toISOString(),
         evidenceUrls,
+        uploadedEvidence,
+        uploadedEvidenceProvenance: {
+          verifiedUploadCount: uploadedEvidence.length,
+          legacyUrlCount: evidenceUrls.filter(
+            (url) => !verifiedUploadUrls.has(url),
+          ).length,
+        },
         handoverPhotos: attachedHandoverPhotos,
+        handoverEvidenceProvenance: {
+          jointlyConfirmedPhotoCount,
+          pendingConfirmationPhotoCount:
+            attachedHandoverPhotos.length - jointlyConfirmedPhotoCount,
+        },
       },
       requiredEvidence: {
         photoRequired: requiresPhoto,
         minimumItems: requiresPhoto ? 1 : 0,
         satisfied: hasEvidence || !requiresPhoto,
-        acceptedSources: ['evidenceUrls', 'handoverPhotoIds'],
+        acceptedSources: [
+          'evidenceUploads',
+          'evidenceUrls',
+          'handoverPhotoIds',
+        ],
       },
     };
   }

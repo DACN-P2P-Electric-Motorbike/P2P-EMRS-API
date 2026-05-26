@@ -1,9 +1,11 @@
 import { UploadController } from './upload.controller';
+import { IncidentEvidenceReceiptService } from './incident-evidence-receipt.service';
 import { UploadService } from './upload.service';
 
 describe('UploadController', () => {
   let controller: UploadController;
   let uploadService: jest.Mocked<UploadService>;
+  let receiptService: jest.Mocked<IncidentEvidenceReceiptService>;
 
   const file = { originalname: 'bike.jpg' } as Express.Multer.File;
   const uploadResult = {
@@ -18,7 +20,10 @@ describe('UploadController', () => {
       uploadFiles: jest.fn().mockResolvedValue([uploadResult]),
       deleteFile: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<UploadService>;
-    controller = new UploadController(uploadService);
+    receiptService = {
+      issue: jest.fn().mockReturnValue('signed-upload-receipt'),
+    } as unknown as jest.Mocked<IncidentEvidenceReceiptService>;
+    controller = new UploadController(uploadService, receiptService);
   });
 
   it('uploads a single vehicle image to the vehicles folder', async () => {
@@ -60,11 +65,18 @@ describe('UploadController', () => {
   });
 
   it('uploads incident images to the incidents folder', async () => {
-    await expect(controller.uploadIncidentImage(file)).resolves.toBe(
-      uploadResult,
-    );
+    await expect(
+      controller.uploadIncidentImage('renter-id', file),
+    ).resolves.toEqual({
+      ...uploadResult,
+      evidenceReceipt: 'signed-upload-receipt',
+    });
 
     expect(uploadService.uploadFile).toHaveBeenCalledWith(file, 'incidents');
+    expect(receiptService.issue).toHaveBeenCalledWith(
+      'renter-id',
+      uploadResult.url,
+    );
   });
 
   it('deletes an uploaded file and returns a user-facing message', async () => {

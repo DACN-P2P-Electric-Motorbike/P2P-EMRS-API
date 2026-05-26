@@ -5,6 +5,7 @@
  */
 import {
   BatteryType,
+  CancellationPolicyType,
   Prisma,
   VehicleBrand,
   VehicleCondition,
@@ -53,6 +54,7 @@ export type MockVehicle = {
   totalRating: number;
   reviewCount: number;
   instantBook: boolean;
+  cancellationPolicy: CancellationPolicyType;
   dailyKmLimit: number | null;
   excessKmPrice: number | null;
   weeklyDiscount: number | null;
@@ -109,6 +111,7 @@ export function createMockVehicle(
     totalRating: 5,
     reviewCount: 0,
     instantBook: false,
+    cancellationPolicy: CancellationPolicyType.FLEXIBLE,
     dailyKmLimit: null,
     excessKmPrice: null,
     weeklyDiscount: null,

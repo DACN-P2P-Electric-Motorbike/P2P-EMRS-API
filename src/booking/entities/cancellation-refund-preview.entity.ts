@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaymentStatus } from '@prisma/client';
+import { CancellationPolicyType, PaymentStatus } from '@prisma/client';
 import { Expose } from 'class-transformer';
 
 export class CancellationRefundPreviewEntity {
@@ -24,6 +24,10 @@ export class CancellationRefundPreviewEntity {
   @ApiProperty()
   @Expose()
   policyCode: string;
+
+  @ApiProperty({ enum: CancellationPolicyType })
+  @Expose()
+  cancellationPolicy: CancellationPolicyType;
 
   @ApiProperty()
   @Expose()

@@ -135,6 +135,7 @@ model Vehicle {
   totalRating           Float                       @default(5.0) @map("total_rating")
   reviewCount           Int                         @default(0) @map("review_count")
   instantBook           Boolean                     @default(false) @map("instant_book")
+  cancellationPolicy    CancellationPolicyType      @default(FLEXIBLE) @map("cancellation_policy")
   dailyKmLimit          Int?                        @map("daily_km_limit")
   excessKmPrice         Float?                      @map("excess_km_price")
   weeklyDiscount        Float?                      @map("weekly_discount")
@@ -192,35 +193,36 @@ model VehicleAvailabilityWindow {
 }
 
 model Booking {
-  id                           String               @id @default(uuid())
-  renterId                     String               @map("renter_id")
-  ownerId                      String               @map("owner_id")
-  vehicleId                    String               @map("vehicle_id")
-  status                       BookingStatus        @default(PENDING)
-  startTime                    DateTime             @map("start_time")
-  endTime                      DateTime             @map("end_time")
-  totalPrice                   Float                @map("total_price")
+  id                           String                 @id @default(uuid())
+  renterId                     String                 @map("renter_id")
+  ownerId                      String                 @map("owner_id")
+  vehicleId                    String                 @map("vehicle_id")
+  status                       BookingStatus          @default(PENDING)
+  startTime                    DateTime               @map("start_time")
+  endTime                      DateTime               @map("end_time")
+  totalPrice                   Float                  @map("total_price")
   deposit                      Float
-  protectionPlan               ProtectionPlanType   @default(STANDARD) @map("protection_plan")
-  protectionFee                Float                @default(0) @map("protection_fee")
-  protectionDeductible         Float                @default(1500000) @map("protection_deductible")
-  protectionCoverageLimit      Float                @default(15000000) @map("protection_coverage_limit")
-  prepaidCharging              Boolean              @default(false) @map("prepaid_charging")
-  prepaidChargingFee           Float                @default(0) @map("prepaid_charging_fee")
-  prepaidChargingCreditPercent Int                  @default(0) @map("prepaid_charging_credit_percent")
-  roadsideSupport              Boolean              @default(false) @map("roadside_support")
-  roadsideSupportFee           Float                @default(0) @map("roadside_support_fee")
-  roadsideSupportCreditAmount  Float                @default(0) @map("roadside_support_credit_amount")
+  protectionPlan               ProtectionPlanType     @default(STANDARD) @map("protection_plan")
+  protectionFee                Float                  @default(0) @map("protection_fee")
+  protectionDeductible         Float                  @default(1500000) @map("protection_deductible")
+  protectionCoverageLimit      Float                  @default(15000000) @map("protection_coverage_limit")
+  prepaidCharging              Boolean                @default(false) @map("prepaid_charging")
+  prepaidChargingFee           Float                  @default(0) @map("prepaid_charging_fee")
+  prepaidChargingCreditPercent Int                    @default(0) @map("prepaid_charging_credit_percent")
+  roadsideSupport              Boolean                @default(false) @map("roadside_support")
+  roadsideSupportFee           Float                  @default(0) @map("roadside_support_fee")
+  roadsideSupportCreditAmount  Float                  @default(0) @map("roadside_support_credit_amount")
+  cancellationPolicy           CancellationPolicyType @default(FLEXIBLE) @map("cancellation_policy")
   notes                        String?
-  cancellationReason           String?              @map("cancellation_reason")
-  cancelledBy                  String?              @map("cancelled_by")
-  createdAt                    DateTime             @default(now()) @map("created_at")
-  updatedAt                    DateTime             @updatedAt @map("updated_at")
-  confirmedAt                  DateTime?            @map("confirmed_at")
-  cancelledAt                  DateTime?            @map("cancelled_at")
-  owner                        User                 @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  renter                       User                 @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
-  vehicle                      Vehicle              @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  cancellationReason           String?                @map("cancellation_reason")
+  cancelledBy                  String?                @map("cancelled_by")
+  createdAt                    DateTime               @default(now()) @map("created_at")
+  updatedAt                    DateTime               @updatedAt @map("updated_at")
+  confirmedAt                  DateTime?              @map("confirmed_at")
+  cancelledAt                  DateTime?              @map("cancelled_at")
+  owner                        User                   @relation("BookingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  renter                       User                   @relation("BookingRenter", fields: [renterId], references: [id], onDelete: Cascade)
+  vehicle                      Vehicle                @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   notifications                Notification[]
   payment                      Payment?
   trip                         Trip?
@@ -515,6 +517,12 @@ enum ProtectionPlanType {
   BASIC
   STANDARD
   PREMIUM
+}
+
+enum CancellationPolicyType {
+  FLEXIBLE
+  MODERATE
+  STRICT
 }
 
 enum ReviewType {
