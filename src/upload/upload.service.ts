@@ -13,6 +13,10 @@ export interface UploadResult {
   fileName: string;
 }
 
+export interface IncidentUploadResult extends UploadResult {
+  evidenceReceipt: string;
+}
+
 @Injectable()
 export class UploadService {
   private readonly logger = new Logger(UploadService.name);

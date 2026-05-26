@@ -18,6 +18,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { IncidentEvidenceReceiptService } from '../upload/incident-evidence-receipt.service';
 import {
   ClaimCaseAssignmentFilter,
   ClaimCaseRiskLevel,
@@ -58,6 +59,8 @@ const makeBooking = (overrides: Record<string, unknown> = {}) => ({
     {
       id: 'handover-uuid',
       type: 'CHECK_OUT',
+      confirmedByOwner: true,
+      confirmedByRenter: true,
       photos: [
         {
           id: 'photo-uuid',
@@ -388,10 +391,22 @@ const mockPrisma = () => ({
 describe('IncidentsService', () => {
   let service: IncidentsService;
   let prisma: ReturnType<typeof mockPrisma>;
+  let receiptService: jest.Mocked<IncidentEvidenceReceiptService>;
 
   beforeEach(() => {
     prisma = mockPrisma();
-    service = new IncidentsService(prisma as unknown as PrismaService);
+    receiptService = {
+      verify: jest.fn().mockReturnValue({
+        url: 'https://cdn.example.com/incidents/rear-panel.jpg',
+        uploadedAt: '2026-05-25T03:00:00.000Z',
+      }),
+    } as unknown as jest.Mocked<IncidentEvidenceReceiptService>;
+    service = new IncidentsService(
+      prisma as unknown as PrismaService,
+      undefined,
+      undefined,
+      receiptService,
+    );
   });
 
   it('creates a participant incident with required handover evidence and marks deposit disputed', async () => {
@@ -420,8 +435,15 @@ describe('IncidentsService', () => {
               expect.objectContaining({
                 id: 'photo-uuid',
                 photoUrl: 'https://cdn.example.com/scratch.jpg',
+                confirmedByOwner: true,
+                confirmedByRenter: true,
+                jointlyConfirmed: true,
               }),
             ],
+            handoverEvidenceProvenance: {
+              jointlyConfirmedPhotoCount: 1,
+              pendingConfirmationPhotoCount: 0,
+            },
           }),
           requiredEvidence: expect.objectContaining({
             photoRequired: true,
@@ -438,6 +460,148 @@ describe('IncidentsService', () => {
       }),
     );
     expect(result.id).toBe('incident-uuid');
+  });
+
+  it('preserves pending handover sign-off provenance without blocking a report', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        handovers: [
+          {
+            id: 'handover-uuid',
+            type: 'CHECK_OUT',
+            confirmedByOwner: true,
+            confirmedByRenter: false,
+            photos: [
+              {
+                id: 'photo-uuid',
+                photoUrl: 'https://cdn.example.com/scratch.jpg',
+                photoType: 'rear_panel',
+                capturedAt: new Date('2026-05-23T03:00:00.000Z'),
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    prisma.incidentReport.create.mockResolvedValue(makeIncident());
+    prisma.depositLedger.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.createReport(RENTER_ID, [], {
+      bookingId: BOOKING_ID,
+      category: IncidentCategory.DAMAGE,
+      description: 'Damage reported while checkout confirmation is disputed',
+      handoverPhotoIds: ['photo-uuid'],
+    });
+
+    expect(prisma.incidentReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          evidence: expect.objectContaining({
+            handoverPhotos: [
+              expect.objectContaining({
+                id: 'photo-uuid',
+                jointlyConfirmed: false,
+              }),
+            ],
+            handoverEvidenceProvenance: {
+              jointlyConfirmedPhotoCount: 0,
+              pendingConfirmationPhotoCount: 1,
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('verifies uploaded evidence receipts and snapshots server provenance', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+    prisma.incidentReport.create.mockResolvedValue(makeIncident());
+    prisma.depositLedger.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.createReport(RENTER_ID, [], {
+      bookingId: BOOKING_ID,
+      category: IncidentCategory.DAMAGE,
+      description: 'Rear panel scratch documented after return',
+      evidenceUploads: [
+        {
+          url: 'https://cdn.example.com/incidents/rear-panel.jpg',
+          receipt: 'signed-upload-receipt',
+        },
+      ],
+    });
+
+    expect(receiptService.verify).toHaveBeenCalledWith(
+      'signed-upload-receipt',
+      RENTER_ID,
+      'https://cdn.example.com/incidents/rear-panel.jpg',
+    );
+    expect(prisma.incidentReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          evidence: expect.objectContaining({
+            evidenceUrls: ['https://cdn.example.com/incidents/rear-panel.jpg'],
+            uploadedEvidence: [
+              {
+                url: 'https://cdn.example.com/incidents/rear-panel.jpg',
+                uploadedAt: '2026-05-25T03:00:00.000Z',
+                serverVerified: true,
+              },
+            ],
+            uploadedEvidenceProvenance: {
+              verifiedUploadCount: 1,
+              legacyUrlCount: 0,
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('rejects an invalid uploaded evidence receipt', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+    receiptService.verify.mockImplementationOnce(() => {
+      throw new BadRequestException('Incident evidence receipt is invalid');
+    });
+
+    await expect(
+      service.createReport(RENTER_ID, [], {
+        bookingId: BOOKING_ID,
+        category: IncidentCategory.DAMAGE,
+        description: 'Submitted with a modified receipt',
+        evidenceUploads: [
+          {
+            url: 'https://cdn.example.com/incidents/rear-panel.jpg',
+            receipt: 'modified-receipt',
+          },
+        ],
+      }),
+    ).rejects.toThrow('Incident evidence receipt is invalid');
+
+    expect(prisma.incidentReport.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps verified and legacy uploaded evidence within one image limit', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+    await expect(
+      service.createReport(RENTER_ID, [], {
+        bookingId: BOOKING_ID,
+        category: IncidentCategory.DAMAGE,
+        description: 'Too many uploaded evidence images',
+        evidenceUrls: Array.from(
+          { length: 10 },
+          (_, index) => `https://cdn.example.com/incidents/legacy-${index}.jpg`,
+        ),
+        evidenceUploads: [
+          {
+            url: 'https://cdn.example.com/incidents/rear-panel.jpg',
+            receipt: 'signed-upload-receipt',
+          },
+        ],
+      }),
+    ).rejects.toThrow('Incident evidence uploads cannot exceed 10 images');
+
+    expect(prisma.incidentReport.create).not.toHaveBeenCalled();
   });
 
   it('requires evidence for damage, accident, theft, mismatch, and critical incidents', async () => {
