@@ -167,7 +167,6 @@ export class VehiclesService {
           select: {
             id: true,
             fullName: true,
-            phone: true,
             avatarUrl: true,
             trustScore: true,
           },
@@ -629,7 +628,17 @@ export class VehiclesService {
       }
       score += this.batteryTypeScore(v.batteryType);
 
-      return { vehicle: v, score };
+      const distance =
+        useGeoFilter && v.latitude !== null && v.longitude !== null
+          ? this.haversineKm(
+              params!.latitude!,
+              params!.longitude!,
+              v.latitude,
+              v.longitude,
+            )
+          : undefined;
+
+      return { vehicle: v, score, distance };
     });
 
     // 8. Price competitiveness bonus (max 5 points — lower = higher score)
@@ -651,25 +660,22 @@ export class VehiclesService {
 
     if (useGeoFilter) {
       const radius = params!.radiusKm ?? 10;
-      const geoFiltered = scoredVehicles.filter((sv) => {
-        if (sv.vehicle.latitude === null || sv.vehicle.longitude === null)
-          return false;
-        return (
-          this.haversineKm(
-            params!.latitude!,
-            params!.longitude!,
-            sv.vehicle.latitude,
-            sv.vehicle.longitude,
-          ) <= radius
+      const geoFiltered = scoredVehicles
+        .filter((sv) => sv.distance !== undefined && sv.distance <= radius)
+        .sort(
+          (a, b) =>
+            (a.distance ?? Number.POSITIVE_INFINITY) -
+            (b.distance ?? Number.POSITIVE_INFINITY),
         );
-      });
 
-      const pageSize = params?.limit ?? 20;
+      const pageSize = params?.limit ?? 50;
       const pageOffset = params?.offset ?? 0;
       const paged = geoFiltered.slice(pageOffset, pageOffset + pageSize);
 
       return {
-        vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
+        vehicles: paged.map((sv) =>
+          VehicleEntity.fromPrisma(sv.vehicle, sv.distance),
+        ),
         total: geoFiltered.length,
       };
     }

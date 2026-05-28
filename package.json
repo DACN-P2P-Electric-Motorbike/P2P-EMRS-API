@@ -24,6 +24,7 @@
     "test:smoke:live": "RUN_LIVE_SMOKE=1 jest --runInBand test/security-privacy-live.e2e-spec.ts",
     "test:smoke:providers": "RUN_PROVIDER_SMOKE=1 jest --runInBand test/provider-integrations-smoke.e2e-spec.ts",
     "test:member-a": "jest --config jest.config.ts --testPathPattern='vehicle|booking' --coverage --coverageDirectory=coverage/member-a --collectCoverageFrom='src/vehicles/**/*.ts' --collectCoverageFrom='src/booking/**/*.ts'",
+    "trust-score:set": "ts-node scripts/set-trust-score.ts",
     "docker:dev": "docker compose up --build",
     "docker:prod": "docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d",
     "docker:down": "docker compose down",
