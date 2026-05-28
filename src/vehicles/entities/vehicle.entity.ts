@@ -9,8 +9,38 @@ import {
   BatteryType,
   CancellationPolicyType,
   Prisma,
+  User,
 } from '@prisma/client';
 import { Expose } from 'class-transformer';
+
+export class PublicVehicleOwnerEntity implements Pick<
+  User,
+  'id' | 'fullName' | 'avatarUrl' | 'trustScore'
+> {
+  @ApiProperty({ description: 'Owner user ID' })
+  @Expose()
+  id: string;
+
+  @ApiProperty({ description: 'Owner display name' })
+  @Expose()
+  fullName: string;
+
+  @ApiPropertyOptional({ description: 'Owner avatar URL', nullable: true })
+  @Expose()
+  avatarUrl: string | null;
+
+  @ApiProperty({ description: 'Owner trust score' })
+  @Expose()
+  trustScore: number;
+
+  constructor(partial: Partial<PublicVehicleOwnerEntity>) {
+    Object.assign(this, partial);
+  }
+}
+
+type VehicleWithPublicOwner = Vehicle & {
+  owner?: Pick<User, 'id' | 'fullName' | 'avatarUrl' | 'trustScore'> | null;
+};
 
 export class VehicleEntity implements Vehicle {
   @ApiProperty({ description: 'Vehicle unique identifier' })
@@ -208,6 +238,14 @@ export class VehicleEntity implements Vehicle {
   @Expose()
   ownerId: string;
 
+  @ApiPropertyOptional({
+    description: 'Public owner summary for renter-facing listing details',
+    type: () => PublicVehicleOwnerEntity,
+    nullable: true,
+  })
+  @Expose()
+  owner?: PublicVehicleOwnerEntity | null;
+
   @ApiProperty({ description: 'Creation timestamp' })
   @Expose()
   createdAt: Date;
@@ -224,9 +262,25 @@ export class VehicleEntity implements Vehicle {
     Object.assign(this, partial);
   }
 
-  static fromPrisma(vehicle: Vehicle, distance?: number): VehicleEntity {
+  static fromPrisma(
+    vehicle: VehicleWithPublicOwner,
+    distance?: number,
+  ): VehicleEntity {
+    const { owner, ...vehicleFields } = vehicle;
+
     return new VehicleEntity({
-      ...vehicle,
+      ...vehicleFields,
+      owner:
+        owner === undefined
+          ? undefined
+          : owner === null
+            ? null
+            : new PublicVehicleOwnerEntity({
+                id: owner.id,
+                fullName: owner.fullName,
+                avatarUrl: owner.avatarUrl,
+                trustScore: owner.trustScore,
+              }),
       distance,
     });
   }

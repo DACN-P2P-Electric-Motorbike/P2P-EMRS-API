@@ -359,6 +359,44 @@ describe('VehiclesService', () => {
       );
     });
 
+    it('should expose only public owner summary fields on vehicle detail', async () => {
+      const vehicle = {
+        ...createMockVehicle(),
+        owner: {
+          id: OWNER_ID,
+          fullName: 'Nguyen Owner',
+          phone: '0901234567',
+          avatarUrl: 'https://example.com/avatar.jpg',
+          trustScore: 122,
+        },
+      };
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+
+      const result = await service.getVehicleById(VEHICLE_ID);
+
+      expect(result.owner).toEqual({
+        id: OWNER_ID,
+        fullName: 'Nguyen Owner',
+        avatarUrl: 'https://example.com/avatar.jpg',
+        trustScore: 122,
+      });
+      expect(result.owner).not.toHaveProperty('phone');
+      expect(mockVehicleDelegate.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            owner: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true,
+                trustScore: true,
+              },
+            },
+          },
+        }),
+      );
+    });
+
     it('should throw NotFoundException when vehicleId does not exist', async () => {
       // Arrange
       mockVehicleDelegate.findUnique.mockResolvedValue(null);
@@ -529,6 +567,36 @@ describe('VehiclesService', () => {
         'healthy-ev',
         'tired-ev',
       ]);
+    });
+
+    it('should return geo-filtered vehicles sorted by distance with distance payloads', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({
+          id: 'far-vehicle',
+          latitude: 10.8269,
+          longitude: 106.7009,
+        }),
+        createMockVehicle({
+          id: 'near-vehicle',
+          latitude: 10.7769,
+          longitude: 106.7009,
+        }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(2);
+
+      const result = await service.getAvailableVehicles({
+        latitude: 10.7769,
+        longitude: 106.7009,
+        radiusKm: 10,
+      });
+
+      expect(result.vehicles.map((vehicle) => vehicle.id)).toEqual([
+        'near-vehicle',
+        'far-vehicle',
+      ]);
+      expect(result.total).toBe(2);
+      expect(result.vehicles[0].distance).toBeCloseTo(0, 3);
+      expect(result.vehicles[1].distance).toBeGreaterThan(0);
     });
 
     it('should exclude active booking locks in requested rental window', async () => {
