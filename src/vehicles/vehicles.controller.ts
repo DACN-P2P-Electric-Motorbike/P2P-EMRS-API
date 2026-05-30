@@ -10,7 +10,9 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
+import * as jwt from 'jsonwebtoken';
 import {
   ApiTags,
   ApiOperation,
@@ -179,6 +181,7 @@ export class VehiclesController {
     @Query('condition') condition?: string,
     @Query('batteryType') batteryType?: string,
     @Query('minBatteryHealth') minBatteryHealth?: string,
+    @Req() req?: { user?: UserEntity; headers?: Record<string, unknown> },
   ): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     return this.vehiclesService.getAvailableVehicles({
       type,
@@ -198,7 +201,28 @@ export class VehiclesController {
       minBatteryHealth: minBatteryHealth
         ? Number.parseInt(minBatteryHealth)
         : undefined,
+      excludeOwnerId: req?.user?.id ?? this.getOptionalUserId(req),
     });
+  }
+
+  private getOptionalUserId(
+    req?: { headers?: Record<string, unknown> },
+  ): string | undefined {
+    const header = req?.headers?.authorization;
+    const authorization = Array.isArray(header) ? header[0] : header;
+    if (typeof authorization !== 'string') return undefined;
+
+    const [scheme, token] = authorization.split(' ');
+    if (scheme?.toLowerCase() !== 'bearer' || !token) return undefined;
+
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET ?? '') as {
+        sub?: string;
+      };
+      return payload.sub;
+    } catch {
+      return undefined;
+    }
   }
 
   @Get(':id/availability')

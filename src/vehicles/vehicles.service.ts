@@ -411,6 +411,7 @@ export class VehiclesService {
     condition?: VehicleCondition | string;
     batteryType?: BatteryType | string;
     minBatteryHealth?: number;
+    excludeOwnerId?: string;
   }): Promise<{ vehicles: VehicleEntity[]; total: number }> {
     const where: any = {
       status: VehicleStatus.AVAILABLE,
@@ -422,6 +423,10 @@ export class VehiclesService {
         },
       },
     };
+
+    if (params?.excludeOwnerId) {
+      where.ownerId = { not: params.excludeOwnerId };
+    }
 
     if (params?.type) {
       where.type = params.type;
@@ -687,7 +692,7 @@ export class VehiclesService {
 
     return {
       vehicles: paged.map((sv) => VehicleEntity.fromPrisma(sv.vehicle)),
-      total: rawTotal,
+      total: scoredVehicles.length,
     };
   }
 
