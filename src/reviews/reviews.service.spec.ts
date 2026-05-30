@@ -83,6 +83,8 @@ const mockPrisma = () => ({
   },
   user: { findUnique: jest.fn(), update: jest.fn() },
   booking: { count: jest.fn(), findUnique: jest.fn() },
+  trustScoreEvent: { aggregate: jest.fn() },
+  trustScoreWarning: { count: jest.fn() },
 });
 
 describe('ReviewsService', () => {
@@ -416,6 +418,18 @@ describe('ReviewsService', () => {
       prisma.trip.count
         .mockResolvedValueOnce(10) // completedTrips
         .mockResolvedValueOnce(2); // tripsWithIssues
+      // Penalties now reflect ACTUAL deducted points from trust events, not a
+      // theoretical count * weight. Order matches the Promise.all in the
+      // service: cancellation, rejection, violation sums.
+      prisma.trustScoreEvent.aggregate
+        .mockResolvedValueOnce({ _sum: { delta: -5 } }) // cancellation applied
+        .mockResolvedValueOnce({ _sum: { delta: -2 } }) // rejection applied
+        .mockResolvedValueOnce({ _sum: { delta: -3 } }); // violation applied
+      // Active warning counts: cancellation, rejection, violation.
+      prisma.trustScoreWarning.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(1);
 
       const result = await service.getTrustScoreBreakdown(USER_ID);
 
@@ -425,12 +439,45 @@ describe('ReviewsService', () => {
       expect(result.breakdown.avgRatingReceived).toBe(4.2);
       expect(result.breakdown.totalReviewsReceived).toBe(8);
       expect(result.breakdown.cancelledBookings).toBe(3);
-      expect(result.breakdown.cancellationPenalty).toBe(-15); // 3 * -5
+      // Actual deducted points (one cancellation was warning-only → still -5).
+      expect(result.breakdown.cancellationPenalty).toBe(-5);
+      expect(result.breakdown.cancellationWarnings).toBe(1);
       expect(result.breakdown.rejectedBookings).toBe(1);
-      expect(result.breakdown.rejectionPenalty).toBe(-2); // 1 * -2
+      expect(result.breakdown.rejectionPenalty).toBe(-2);
+      expect(result.breakdown.rejectionWarnings).toBe(0);
       expect(result.breakdown.completedTrips).toBe(10);
       expect(result.breakdown.tripsWithIssues).toBe(2);
-      expect(result.breakdown.violationPenalty).toBe(-6); // 2 * -3
+      expect(result.breakdown.violationPenalty).toBe(-3);
+      expect(result.breakdown.violationWarnings).toBe(1);
+    });
+
+    it('shows zero penalty while a first cancellation is warning-only', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 100 }));
+      prisma.review.count.mockResolvedValue(0);
+      prisma.vehicle.findMany.mockResolvedValue([]);
+      prisma.booking.count
+        .mockResolvedValueOnce(1) // cancelledBookings
+        .mockResolvedValueOnce(0); // rejectedBookings
+      prisma.trip.count
+        .mockResolvedValueOnce(0) // completedTrips
+        .mockResolvedValueOnce(0); // tripsWithIssues
+      // No score was actually deducted: the only event is a WARNING (delta 0).
+      prisma.trustScoreEvent.aggregate
+        .mockResolvedValueOnce({ _sum: { delta: 0 } })
+        .mockResolvedValueOnce({ _sum: { delta: null } })
+        .mockResolvedValueOnce({ _sum: { delta: null } });
+      prisma.trustScoreWarning.count
+        .mockResolvedValueOnce(1) // one active cancellation warning
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(0);
+
+      const result = await service.getTrustScoreBreakdown(USER_ID);
+
+      expect(result.trustScore).toBe(100);
+      expect(result.breakdown.cancelledBookings).toBe(1);
+      // The misleading "-5" is gone: nothing was deducted yet.
+      expect(result.breakdown.cancellationPenalty).toBe(0);
+      expect(result.breakdown.cancellationWarnings).toBe(1);
     });
 
     it('should return null avgRatingReceived when user owns no vehicles', async () => {
@@ -439,6 +486,10 @@ describe('ReviewsService', () => {
       prisma.vehicle.findMany.mockResolvedValue([]);
       prisma.booking.count.mockResolvedValue(0);
       prisma.trip.count.mockResolvedValue(0);
+      prisma.trustScoreEvent.aggregate.mockResolvedValue({
+        _sum: { delta: 0 },
+      });
+      prisma.trustScoreWarning.count.mockResolvedValue(0);
 
       const result = await service.getTrustScoreBreakdown(USER_ID);
 

@@ -424,7 +424,7 @@ export class BookingsService {
             trustScore: true,
           },
         },
-        payment: { select: { status: true } },
+        payment: { select: { status: true, gatewayResponse: true } },
       },
     });
 

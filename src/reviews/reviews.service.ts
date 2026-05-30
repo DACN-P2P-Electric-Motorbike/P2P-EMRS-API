@@ -493,6 +493,61 @@ export class ReviewsService {
       where: { renterId: userId, hasIssues: true },
     });
 
+    // Penalties must reflect the score actually deducted, not a theoretical
+    // `count * weight`. The progressive-warning policy means the first matching
+    // violation inside the 30-day window only records a WARNING (delta 0), so a
+    // single cancellation must NOT be shown as "-5". We therefore sum the real
+    // applied deltas from trust-score events (penalised events carry a negative
+    // delta; warning-only events carry delta 0) and surface how many violations
+    // are still in the warning-only state.
+    const sumAppliedPenalty = async (
+      types: TrustScoreEventType[],
+    ): Promise<number> => {
+      const agg = await this.prisma.trustScoreEvent.aggregate({
+        where: { userId, type: { in: types } },
+        _sum: { delta: true },
+      });
+      return agg._sum.delta ?? 0;
+    };
+
+    const countActiveWarnings = (
+      types: TrustScoreEventType[],
+    ): Promise<number> =>
+      this.prisma.trustScoreWarning.count({
+        where: {
+          userId,
+          type: { in: types },
+          penalizedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      });
+
+    const [
+      cancellationPenalty,
+      rejectionPenalty,
+      violationPenalty,
+      cancellationWarnings,
+      rejectionWarnings,
+      violationWarnings,
+    ] = await Promise.all([
+      sumAppliedPenalty([TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER]),
+      sumAppliedPenalty([TrustScoreEventType.BOOKING_REJECTED_BY_OWNER]),
+      sumAppliedPenalty([
+        TrustScoreEventType.LATE_RETURN,
+        TrustScoreEventType.CONFIRMED_REPORT,
+        TrustScoreEventType.SERIOUS_VIOLATION,
+        TrustScoreEventType.BAD_REVIEW_RECEIVED,
+      ]),
+      countActiveWarnings([TrustScoreEventType.BOOKING_CANCELLED_BY_RENTER]),
+      countActiveWarnings([TrustScoreEventType.BOOKING_REJECTED_BY_OWNER]),
+      countActiveWarnings([
+        TrustScoreEventType.LATE_RETURN,
+        TrustScoreEventType.CONFIRMED_REPORT,
+        TrustScoreEventType.SERIOUS_VIOLATION,
+        TrustScoreEventType.BAD_REVIEW_RECEIVED,
+      ]),
+    ]);
+
     const trustProfile =
       includeAudit || userId
         ? await this.trustScoreService.getUserTrustProfile(userId)
@@ -513,12 +568,16 @@ export class ReviewsService {
         avgRatingReceived,
         totalReviewsReceived,
         cancelledBookings,
-        cancellationPenalty: cancelledBookings * -5,
+        // Actual deducted points (0 while only a warning has been issued).
+        cancellationPenalty,
+        cancellationWarnings,
         rejectedBookings,
-        rejectionPenalty: rejectedBookings * -2,
+        rejectionPenalty,
+        rejectionWarnings,
         completedTrips,
         tripsWithIssues,
-        violationPenalty: tripsWithIssues * -3,
+        violationPenalty,
+        violationWarnings,
       },
     };
   }
