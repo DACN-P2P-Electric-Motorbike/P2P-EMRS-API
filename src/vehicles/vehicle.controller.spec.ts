@@ -207,6 +207,7 @@ describe('VehiclesController', () => {
         condition: undefined,
         batteryType: undefined,
         minBatteryHealth: undefined,
+        excludeOwnerId: undefined,
       });
       expect(result).toEqual(mockResponse);
     });

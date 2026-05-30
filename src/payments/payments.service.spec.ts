@@ -527,6 +527,7 @@ describe('PaymentsService', () => {
 
     it('should update status to COMPLETED and set paidAt', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
+      prisma.booking.findUnique.mockResolvedValue(makeBooking());
       const completed = makePayment({
         status: PaymentStatus.COMPLETED,
         paidAt: new Date(),
@@ -548,6 +549,7 @@ describe('PaymentsService', () => {
 
     it('should generate a SIM_ transaction ID', async () => {
       prisma.payment.findUnique.mockResolvedValue(makePayment());
+      prisma.booking.findUnique.mockResolvedValue(makeBooking());
       prisma.payment.update.mockResolvedValue(
         makePayment({ status: PaymentStatus.COMPLETED }),
       );

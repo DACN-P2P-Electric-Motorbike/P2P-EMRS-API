@@ -103,6 +103,12 @@ export class PaymentsService implements OnModuleInit {
       throw new BadRequestException('You can only pay for your own bookings');
     }
 
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new BadRequestException(
+        'Only confirmed bookings can be paid. Please wait for owner approval.',
+      );
+    }
+
     // Keep payment creation idempotent for retry/resume flows, but let the
     // renter switch gateway before the payment reaches a final state.
     if (booking.payment) {
@@ -193,11 +199,6 @@ export class PaymentsService implements OnModuleInit {
       this.logger.log(
         `Deleted stale ${booking.payment.status} payment ${booking.payment.id} for booking ${dto.bookingId}`,
       );
-    }
-
-    // Check booking status
-    if (booking.status !== BookingStatus.CONFIRMED) {
-      throw new BadRequestException('Can only pay for confirmed bookings');
     }
 
     // Renter pays rental plus selected add-on fees plus deposit.
@@ -323,6 +324,21 @@ export class PaymentsService implements OnModuleInit {
     if (payment.status === PaymentStatus.REFUNDED) {
       throw new BadRequestException(
         'Refunded payments cannot be marked as completed',
+      );
+    }
+
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: payment.bookingId },
+      select: { status: true },
+    });
+
+    if (
+      !booking ||
+      (booking.status !== BookingStatus.CONFIRMED &&
+        booking.status !== BookingStatus.ONGOING)
+    ) {
+      throw new BadRequestException(
+        'Only confirmed or ongoing bookings can be marked as paid',
       );
     }
 
