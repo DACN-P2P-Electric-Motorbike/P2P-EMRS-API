@@ -16,6 +16,9 @@ describe('PaymentsController', () => {
       handlePayOSReturn: jest
         .fn()
         .mockResolvedValue({ status: 'success', bookingId: 'booking-1' }),
+      handleMoMoReturn: jest
+        .fn()
+        .mockResolvedValue({ status: 'success', bookingId: 'booking-1' }),
       getOwnerEarnings: jest.fn().mockResolvedValue({ totalEarned: 100 }),
       getPaymentById: jest.fn().mockResolvedValue(payment),
       simulatePaymentSuccess: jest.fn().mockResolvedValue(payment),
@@ -73,6 +76,11 @@ describe('PaymentsController', () => {
     expect(service.handlePayOSReturn).toHaveBeenLastCalledWith({
       orderCode: '1',
       status: 'CANCELLED',
+    });
+
+    await controller.momoReturn({ orderId: 'momo-1' }, response);
+    expect(service.handleMoMoReturn).toHaveBeenCalledWith({
+      orderId: 'momo-1',
     });
 
     await expect(

@@ -291,6 +291,27 @@ describe('BookingsController', () => {
     });
   });
 
+  describe('GET /history', () => {
+    it('should return completed and cancelled bookings for the current user', async () => {
+      // Arrange
+      const bookings = [
+        BookingEntity.fromPrisma(
+          createMockBooking({ status: BookingStatus.CANCELLED }),
+        ),
+      ];
+      mockBookingsService.getBookingHistory.mockResolvedValue(bookings);
+
+      // Act
+      const result = await controller.getBookingHistory(RENTER_ID);
+
+      // Assert
+      expect(result).toHaveLength(1);
+      expect(mockBookingsService.getBookingHistory).toHaveBeenCalledWith(
+        RENTER_ID,
+      );
+    });
+  });
+
   describe('GET /policy', () => {
     it('should return booking protection and add-on policy', () => {
       const policy = {
