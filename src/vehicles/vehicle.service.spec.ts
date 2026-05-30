@@ -929,6 +929,30 @@ describe('VehiclesService', () => {
       );
     });
 
+    it('should allow an owner to set MAINTENANCE on an available vehicle', async () => {
+      const vehicle = createMockVehicle({
+        ownerId: OWNER_ID,
+        status: VehicleStatus.AVAILABLE,
+      });
+      const updated = createMockVehicle({ status: VehicleStatus.MAINTENANCE });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockVehicleDelegate.update.mockResolvedValue(updated);
+
+      const result = await service.updateVehicle(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        { status: VehicleStatus.MAINTENANCE } as any,
+      );
+
+      expect(result.status).toBe(VehicleStatus.MAINTENANCE);
+      expect(mockVehicleDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: VehicleStatus.MAINTENANCE }),
+        }),
+      );
+    });
+
     it('should merge multiple optional fields into update', async () => {
       const vehicle = createMockVehicle({ ownerId: OWNER_ID });
       const updated = createMockVehicle({ address: 'New', latitude: 11 });
@@ -1678,6 +1702,651 @@ describe('VehiclesService', () => {
       await expect(
         service.adminUpdateStatus(VEHICLE_ID, VehicleStatus.AVAILABLE),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── getAvailableVehicles — extra filters, scoring & guards ─────────────────
+
+  describe('getAvailableVehicles (extra coverage)', () => {
+    it('should exclude a specific owner from the available pool', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ excludeOwnerId: OWNER_ID });
+
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ ownerId: { not: OWNER_ID } }),
+        }),
+      );
+    });
+
+    it('should not narrow the query when the rental window has no conflicts', async () => {
+      const startTime = '2026-05-25T08:00:00.000Z';
+      const endTime = '2026-05-25T10:00:00.000Z';
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockDelegate.findMany.mockResolvedValue([]);
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([]) // blocked windows
+        .mockResolvedValueOnce([]); // available windows
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      const call = mockVehicleDelegate.findMany.mock.calls[0][0];
+      expect(call.where).not.toHaveProperty('id');
+    });
+
+    it('should reject a rental window with unparseable timestamps', async () => {
+      await expect(
+        service.getAvailableVehicles({
+          startTime: 'not-a-date',
+          endTime: '2026-05-25T10:00:00.000Z',
+        }),
+      ).rejects.toThrow('Invalid availability time range');
+    });
+
+    it('should reject a rental window whose start is not before the end', async () => {
+      await expect(
+        service.getAvailableVehicles({
+          startTime: '2026-05-25T10:00:00.000Z',
+          endTime: '2026-05-25T08:00:00.000Z',
+        }),
+      ).rejects.toThrow('Invalid availability time range');
+    });
+
+    it('should rank a brand-new EV above a maintenance-needed one and tolerate a missing battery type', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({
+          id: 'worn-ev',
+          condition: VehicleCondition.NEEDS_MAINTENANCE,
+          batteryType: null,
+          batteryHealth: 80,
+          totalTrips: 0,
+          totalRating: 4,
+        }),
+        createMockVehicle({
+          id: 'new-ev',
+          condition: VehicleCondition.NEW,
+          batteryType: null,
+          batteryHealth: 80,
+          totalTrips: 0,
+          totalRating: 4,
+        }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(2);
+
+      const result = await service.getAvailableVehicles();
+
+      expect(result.vehicles.map((vehicle) => vehicle.id)).toEqual([
+        'new-ev',
+        'worn-ev',
+      ]);
+    });
+
+    it('should score listings with a null description and null battery health without crashing', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({
+          id: 'sparse-listing',
+          description: null,
+          batteryHealth: null,
+          images: [],
+        }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(1);
+
+      const result = await service.getAvailableVehicles();
+
+      expect(result.vehicles).toHaveLength(1);
+      expect(result.vehicles[0].id).toBe('sparse-listing');
+    });
+
+    it('should keep scoring stable when every listing is priced at zero', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({ id: 'free-1', pricePerHour: new Prisma.Decimal(0) }),
+        createMockVehicle({ id: 'free-2', pricePerHour: new Prisma.Decimal(0) }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(2);
+
+      const result = await service.getAvailableVehicles();
+
+      expect(result.vehicles).toHaveLength(2);
+    });
+
+    it('should apply the default radius when geo search omits radiusKm', async () => {
+      mockVehicleDelegate.findMany.mockResolvedValue([
+        createMockVehicle({
+          id: 'near-vehicle',
+          latitude: 10.7769,
+          longitude: 106.7009,
+        }),
+        createMockVehicle({
+          id: 'far-away',
+          latitude: 21.0285,
+          longitude: 105.8542,
+        }),
+      ]);
+      mockVehicleDelegate.count.mockResolvedValue(2);
+
+      const result = await service.getAvailableVehicles({
+        latitude: 10.7769,
+        longitude: 106.7009,
+      });
+
+      // Default radius is 10km, so the Hanoi vehicle is filtered out.
+      expect(result.vehicles.map((vehicle) => vehicle.id)).toEqual([
+        'near-vehicle',
+      ]);
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 1000 }),
+      );
+    });
+
+    it('should default vehicle type and battery level when omitted on registration', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+      mockVehicleDelegate.create.mockResolvedValue(
+        createMockVehicle({ status: VehicleStatus.PENDING_APPROVAL }),
+      );
+
+      await service.registerVehicle(OWNER_ID, [UserRole.OWNER], {
+        ...buildCreateDto(),
+        type: undefined,
+        batteryLevel: undefined,
+      } as any);
+
+      expect(mockVehicleDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ type: 'OTHER', batteryLevel: 100 }),
+        }),
+      );
+    });
+  });
+
+  // ─── Availability calendar — query/range guards & weekly conflicts ──────────
+
+  describe('availability calendar (extra coverage)', () => {
+    const onceWindow = {
+      id: 'once-window',
+      vehicleId: VEHICLE_ID,
+      type: AvailabilityWindowType.AVAILABLE,
+      recurrence: AvailabilityWindowRecurrence.ONCE,
+      recurringWeekdays: [],
+      timezoneOffsetMinutes: null,
+      timezoneName: null,
+      recurrenceEndsAt: null,
+      startTime: new Date('2026-05-25T08:00:00.000Z'),
+      endTime: new Date('2026-05-25T18:00:00.000Z'),
+      note: null,
+      createdAt: new Date('2026-05-22T00:00:00.000Z'),
+      updatedAt: new Date('2026-05-22T00:00:00.000Z'),
+    };
+
+    const weeklyWindow = (overrides: Record<string, any> = {}) => ({
+      id: 'weekly-existing',
+      vehicleId: VEHICLE_ID,
+      type: AvailabilityWindowType.AVAILABLE,
+      recurrence: AvailabilityWindowRecurrence.WEEKLY,
+      recurringWeekdays: [1],
+      timezoneOffsetMinutes: 420,
+      timezoneName: null,
+      recurrenceEndsAt: null,
+      startTime: new Date('2026-05-25T01:00:00.000Z'),
+      endTime: new Date('2026-05-25T11:00:00.000Z'),
+      note: null,
+      createdAt: new Date('2026-05-20T00:00:00.000Z'),
+      updatedAt: new Date('2026-05-20T00:00:00.000Z'),
+      ...overrides,
+    });
+
+    const weeklyDto = (overrides: Record<string, any> = {}) => ({
+      type: AvailabilityWindowType.AVAILABLE,
+      recurrence: AvailabilityWindowRecurrence.WEEKLY,
+      recurringWeekdays: [1],
+      timezoneOffsetMinutes: 420,
+      startTime: '2026-05-25T01:00:00.000Z',
+      endTime: '2026-05-25T11:00:00.000Z',
+      ...overrides,
+    });
+
+    it('should reject calendar access when the vehicle does not exist', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getAvailabilityWindows(VEHICLE_ID, OWNER_ID, [UserRole.OWNER]),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should reject an invalid availability query range', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.getAvailabilityWindows(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          '2026-05-26T00:00:00.000Z',
+          '2026-05-25T00:00:00.000Z',
+        ),
+      ).rejects.toThrow('Invalid availability query range');
+    });
+
+    it('should reject an unparseable availability query bound', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.getAvailabilityWindows(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          'not-a-date',
+        ),
+      ).rejects.toThrow('Invalid availability query range');
+    });
+
+    it('should keep only windows overlapping a from/to range', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        onceWindow,
+        {
+          ...onceWindow,
+          id: 'outside-window',
+          startTime: new Date('2026-06-10T08:00:00.000Z'),
+          endTime: new Date('2026-06-10T18:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.getAvailabilityWindows(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        '2026-05-25T00:00:00.000Z',
+        '2026-05-26T00:00:00.000Z',
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('once-window');
+    });
+
+    it('should apply recurrence-aware filtering when only a from bound is given', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        onceWindow,
+        weeklyWindow({ id: 'weekly-open', recurrenceEndsAt: null }),
+        weeklyWindow({
+          id: 'weekly-expired',
+          recurrenceEndsAt: new Date('2026-05-01T00:00:00.000Z'),
+        }),
+      ]);
+
+      const result = await service.getAvailabilityWindows(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        '2026-05-24T00:00:00.000Z',
+      );
+
+      const ids = result.map((window) => window.id);
+      expect(ids).toContain('once-window');
+      expect(ids).toContain('weekly-open');
+      // Weekly rule that already ended before the `from` bound is filtered out.
+      expect(ids).not.toContain('weekly-expired');
+    });
+
+    it('should apply recurrence-aware filtering when only a to bound is given', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        onceWindow,
+        weeklyWindow({ id: 'weekly-open' }),
+        {
+          ...onceWindow,
+          id: 'after-to',
+          startTime: new Date('2026-07-10T08:00:00.000Z'),
+          endTime: new Date('2026-07-10T18:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.getAvailabilityWindows(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        undefined,
+        '2026-06-01T00:00:00.000Z',
+      );
+
+      const ids = result.map((window) => window.id);
+      expect(ids).toContain('once-window');
+      expect(ids).toContain('weekly-open');
+      // A one-off window that starts after the `to` bound is excluded.
+      expect(ids).not.toContain('after-to');
+    });
+
+    it('should derive the weekly timezone offset from a timezone name when offset is omitted', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([]);
+      mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
+        weeklyWindow({ id: 'created-weekly' }),
+      );
+
+      await service.createAvailabilityWindow(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        {
+          type: AvailabilityWindowType.AVAILABLE,
+          recurrence: AvailabilityWindowRecurrence.WEEKLY,
+          recurringWeekdays: [1],
+          timezoneName: 'Asia/Ho_Chi_Minh',
+          startTime: '2026-05-25T01:00:00.000Z',
+          endTime: '2026-05-25T11:00:00.000Z',
+        },
+      );
+
+      expect(mockVehicleAvailabilityWindowDelegate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            timezoneName: 'Asia/Ho_Chi_Minh',
+            // Offset derived from the named zone (UTC+7 → 420 minutes).
+            timezoneOffsetMinutes: 420,
+          }),
+        }),
+      );
+    });
+
+    it('should treat a weekly DB window with no timezone as a fixed UTC offset when ranking', async () => {
+      const startTime = '2026-06-01T02:00:00.000Z';
+      const endTime = '2026-06-01T04:00:00.000Z';
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockDelegate.findMany.mockResolvedValue([]);
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([]) // blocked windows
+        .mockResolvedValueOnce([
+          weeklyWindow({
+            vehicleId: 'utc-weekly-vehicle',
+            timezoneName: null,
+            timezoneOffsetMinutes: null,
+            recurringWeekdays: [1],
+            startTime: new Date('2026-05-25T02:00:00.000Z'),
+            endTime: new Date('2026-05-25T04:00:00.000Z'),
+          }),
+        ]); // available windows
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      // 2026-06-01 is a Monday; with a UTC fallback offset the 02:00-04:00
+      // occurrence exactly covers the request, so the vehicle is NOT excluded.
+      const call = mockVehicleDelegate.findMany.mock.calls[0][0];
+      expect(call.where.id).toBeUndefined();
+    });
+
+    it('should reject weekly weekdays outside the 1-7 range', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          weeklyDto({ recurringWeekdays: [0, 8] }),
+        ),
+      ).rejects.toThrow('Invalid weekly availability weekdays');
+    });
+
+    it('should reject duplicate weekly weekdays', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          weeklyDto({ recurringWeekdays: [1, 1] }),
+        ),
+      ).rejects.toThrow('Invalid weekly availability weekdays');
+    });
+
+    it('should reject a recurring end that is not after the start', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          weeklyDto({ recurrenceEndsAt: '2026-05-24T00:00:00.000Z' }),
+        ),
+      ).rejects.toThrow(
+        'Recurring availability end must be after its start time',
+      );
+    });
+
+    it('should reject a weekly rule overlapping an existing weekly rule in the same timezone', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        weeklyWindow(),
+      ]);
+
+      await expect(
+        service.createAvailabilityWindow(
+          VEHICLE_ID,
+          OWNER_ID,
+          [UserRole.OWNER],
+          weeklyDto(),
+        ),
+      ).rejects.toThrow('overlaps an existing window');
+
+      expect(
+        mockVehicleAvailabilityWindowDelegate.create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should allow a weekly rule that shares a weekday but not a time-of-day', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        weeklyWindow({
+          // 15:00-17:00 wall-clock (UTC+7) — no overlap with 08:00-18:00? it does;
+          // use early morning instead: 17:00-19:00 UTC = 00:00-02:00 wall next anchor
+          startTime: new Date('2026-05-24T17:00:00.000Z'),
+          endTime: new Date('2026-05-24T19:00:00.000Z'),
+        }),
+      ]);
+      mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
+        weeklyWindow({ id: 'created-weekly' }),
+      );
+
+      const result = await service.createAvailabilityWindow(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        weeklyDto(),
+      );
+
+      expect(result.id).toBe('created-weekly');
+      expect(mockVehicleAvailabilityWindowDelegate.create).toHaveBeenCalled();
+    });
+
+    it('should allow a weekly rule with no shared weekday', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        weeklyWindow({ recurringWeekdays: [3] }),
+      ]);
+      mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
+        weeklyWindow({ id: 'created-weekly' }),
+      );
+
+      const result = await service.createAvailabilityWindow(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        weeklyDto(),
+      );
+
+      expect(result.id).toBe('created-weekly');
+    });
+
+    it('should allow a weekly rule that uses a different timezone name', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findMany.mockResolvedValue([
+        weeklyWindow({
+          timezoneName: 'Asia/Ho_Chi_Minh',
+          timezoneOffsetMinutes: 420,
+        }),
+      ]);
+      mockVehicleAvailabilityWindowDelegate.create.mockResolvedValue(
+        weeklyWindow({ id: 'created-weekly' }),
+      );
+
+      const result = await service.createAvailabilityWindow(
+        VEHICLE_ID,
+        OWNER_ID,
+        [UserRole.OWNER],
+        weeklyDto({ timezoneName: 'Asia/Bangkok', timezoneOffsetMinutes: 420 }),
+      );
+
+      expect(result.id).toBe('created-weekly');
+    });
+
+    it('should skip weekly occurrences after the recurrence end when ranking availability', async () => {
+      const startTime = '2026-06-01T02:00:00.000Z';
+      const endTime = '2026-06-01T04:00:00.000Z';
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockDelegate.findMany.mockResolvedValue([]);
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([]) // blocked windows
+        .mockResolvedValueOnce([
+          {
+            ...weeklyWindow({
+              vehicleId: 'weekly-expired-vehicle',
+              recurrenceEndsAt: new Date('2026-05-30T00:00:00.000Z'),
+            }),
+          },
+        ]); // available windows — occurrence falls past recurrenceEndsAt
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      // The vehicle opted into an AVAILABLE calendar but its only occurrence is
+      // past the recurrence end, so it is treated as not covered and excluded.
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['weekly-expired-vehicle'] },
+          }),
+        }),
+      );
+    });
+
+    it('should update a one-off window and exclude itself from the overlap check', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findFirst
+        .mockResolvedValueOnce({ id: 'once-window' }) // current window lookup
+        .mockResolvedValueOnce(null); // no conflicting once window
+      mockVehicleAvailabilityWindowDelegate.update.mockResolvedValue({
+        ...onceWindow,
+        id: 'once-window',
+        startTime: new Date('2026-05-25T09:00:00.000Z'),
+        endTime: new Date('2026-05-25T17:00:00.000Z'),
+      });
+
+      const result = await service.updateAvailabilityWindow(
+        VEHICLE_ID,
+        'once-window',
+        OWNER_ID,
+        [UserRole.OWNER],
+        {
+          type: AvailabilityWindowType.AVAILABLE,
+          startTime: '2026-05-25T09:00:00.000Z',
+          endTime: '2026-05-25T17:00:00.000Z',
+        },
+      );
+
+      expect(result.id).toBe('once-window');
+      // The second findFirst (conflict probe) must exclude the window itself.
+      expect(
+        mockVehicleAvailabilityWindowDelegate.findFirst,
+      ).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { not: 'once-window' } }),
+        }),
+      );
+    });
+
+    it('should treat a weekly window with no weekdays array as having no occurrences', async () => {
+      const startTime = '2026-06-01T02:00:00.000Z';
+      const endTime = '2026-06-01T04:00:00.000Z';
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingLockDelegate.findMany.mockResolvedValue([]);
+      const { recurringWeekdays, ...noWeekdayWindow } = weeklyWindow({
+        vehicleId: 'no-weekday-vehicle',
+      });
+      void recurringWeekdays;
+      mockVehicleAvailabilityWindowDelegate.findMany
+        .mockResolvedValueOnce([]) // blocked windows
+        .mockResolvedValueOnce([noWeekdayWindow]); // available windows, weekdays omitted
+      mockVehicleDelegate.findMany.mockResolvedValue([]);
+      mockVehicleDelegate.count.mockResolvedValue(0);
+
+      await service.getAvailableVehicles({ startTime, endTime });
+
+      // No weekdays → no occurrences → calendar not covered → excluded.
+      expect(mockVehicleDelegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['no-weekday-vehicle'] },
+          }),
+        }),
+      );
+    });
+
+    it('should reject deleting a missing availability window', async () => {
+      mockVehicleDelegate.findUnique.mockResolvedValue(
+        createMockVehicle({ ownerId: OWNER_ID }),
+      );
+      mockVehicleAvailabilityWindowDelegate.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.deleteAvailabilityWindow(
+          VEHICLE_ID,
+          'missing-window',
+          OWNER_ID,
+          [UserRole.OWNER],
+        ),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(
+        mockVehicleAvailabilityWindowDelegate.delete,
+      ).not.toHaveBeenCalled();
     });
   });
 });

@@ -159,6 +159,99 @@ describe('BookingLockService', () => {
     expect(prisma.bookingLock.delete).not.toHaveBeenCalled();
   });
 
+  it('deletes the lock when it belongs to the requesting user', async () => {
+    prisma.bookingLock.findFirst.mockResolvedValue({
+      id: 'lock-1',
+      userId: RENTER_ID,
+    });
+    prisma.bookingLock.delete.mockResolvedValue({ id: 'lock-1' });
+
+    await service.releaseLock('lock-1', RENTER_ID);
+
+    expect(prisma.bookingLock.delete).toHaveBeenCalledWith({
+      where: { id: 'lock-1' },
+    });
+  });
+
+  it('rejects lock windows with an unparsable date', async () => {
+    await expect(
+      service.createLock(
+        VEHICLE_ID,
+        RENTER_ID,
+        new Date('not-a-date'),
+        futureDate(4),
+      ),
+    ).rejects.toThrow('Invalid booking time range');
+    expect(prisma.vehicle.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects lock windows that start in the past', async () => {
+    const startTime = futureDate(-2);
+    const endTime = futureDate(4);
+
+    await expect(
+      service.createLock(VEHICLE_ID, RENTER_ID, startTime, endTime),
+    ).rejects.toThrow('Start time must be in the future');
+    expect(prisma.vehicle.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects lock windows shorter than the minimum duration', async () => {
+    const startTime = futureDate(2);
+    const endTime = new Date(startTime.getTime() + 10 * 60 * 1000); // 10 min
+
+    await expect(
+      service.createLock(VEHICLE_ID, RENTER_ID, startTime, endTime),
+    ).rejects.toThrow('Booking duration must be at least');
+    expect(prisma.vehicle.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects lock windows longer than the maximum duration', async () => {
+    const startTime = futureDate(2);
+    const endTime = new Date(startTime.getTime() + 31 * 24 * 60 * 60 * 1000); // 31 days
+
+    await expect(
+      service.createLock(VEHICLE_ID, RENTER_ID, startTime, endTime),
+    ).rejects.toThrow('Booking duration cannot exceed');
+    expect(prisma.vehicle.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('does not log when there are no overlapping locks to release', async () => {
+    prisma.bookingLock.deleteMany.mockResolvedValue({ count: 0 });
+
+    await service.releaseLocksByVehicleAndTime(
+      VEHICLE_ID,
+      futureDate(2),
+      futureDate(4),
+    );
+
+    expect(prisma.bookingLock.deleteMany).toHaveBeenCalled();
+  });
+
+  it('reports no conflicting lock when none exist and no user is excluded', async () => {
+    prisma.bookingLock.findFirst.mockResolvedValue(null);
+
+    const result = await service.hasConflictingLock(
+      VEHICLE_ID,
+      futureDate(2),
+      futureDate(4),
+    );
+
+    expect(result).toBe(false);
+    expect(prisma.bookingLock.findFirst).toHaveBeenCalledWith({
+      where: expect.not.objectContaining({ userId: expect.anything() }),
+    });
+  });
+
+  it('does not log cleanup when no expired locks were removed', async () => {
+    prisma.bookingLock.deleteMany.mockResolvedValue({ count: 0 });
+
+    await service.cleanupExpiredLocks();
+
+    expect(prisma.bookingLock.deleteMany).toHaveBeenCalledWith({
+      where: { expiresAt: { lt: expect.any(Date) } },
+    });
+  });
+
   it('releases only locks that strictly overlap the completed booking window', async () => {
     prisma.bookingLock.deleteMany.mockResolvedValue({ count: 1 });
     const startTime = futureDate(2);

@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { BookingStatus, HandoverType, TripStatus } from '@prisma/client';
+import { BookingStatus, HandoverType, TripStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { HandoverService } from './handover.service';
 
@@ -124,12 +124,97 @@ describe('HandoverService', () => {
     ).not.toHaveProperty('fuelLevel');
   });
 
+  it('normalizes blank notes and missing photo timestamps on check-in', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+    prisma.vehicleHandover.create.mockResolvedValue(makeHandover());
+
+    await service.createCheckIn(RENTER_ID, {
+      ...createDto,
+      notes: '   ',
+      photos: [{ ...photo, capturedAt: undefined }],
+    });
+
+    const data = prisma.vehicleHandover.create.mock.calls[0][0].data;
+    expect(data.notes).toBeNull();
+    expect(data.photos.create[0].capturedAt).toBeInstanceOf(Date);
+  });
+
   it('rejects check-in from a user outside the booking', async () => {
     prisma.booking.findUnique.mockResolvedValue(makeBooking());
 
     await expect(
       service.createCheckIn(THIRD_PARTY_ID, createDto),
     ).rejects.toThrow(NotFoundException);
+    expect(prisma.vehicleHandover.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects check-in when the booking is not in CONFIRMED status', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ status: BookingStatus.PENDING }),
+    );
+
+    await expect(service.createCheckIn(RENTER_ID, createDto)).rejects.toThrow(
+      'Check-in is only available for confirmed bookings before trip start',
+    );
+    expect(prisma.vehicleHandover.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects check-in once the trip has already started', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ trip: { id: TRIP_ID, status: TripStatus.ONGOING } }),
+    );
+
+    await expect(service.createCheckIn(RENTER_ID, createDto)).rejects.toThrow(
+      'Check-in must be completed before the trip starts',
+    );
+    expect(prisma.vehicleHandover.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects check-out when the booking is not ongoing or has no trip', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ status: BookingStatus.CONFIRMED, trip: null }),
+    );
+
+    await expect(service.createCheckOut(RENTER_ID, createDto)).rejects.toThrow(
+      'Check-out is only available for an ongoing trip',
+    );
+    expect(prisma.vehicleHandover.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects check-out when the trip status is not ONGOING', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        status: BookingStatus.ONGOING,
+        trip: { id: TRIP_ID, status: TripStatus.COMPLETED },
+      }),
+    );
+
+    await expect(service.createCheckOut(RENTER_ID, createDto)).rejects.toThrow(
+      'Check-out is only available for an ongoing trip',
+    );
+    expect(prisma.vehicleHandover.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate check-out handover records', async () => {
+    const checkIn = makeHandover({
+      confirmedByOwner: true,
+      confirmedByRenter: true,
+    });
+    const checkOut = makeHandover({
+      id: 'checkout-uuid',
+      type: HandoverType.CHECK_OUT,
+    });
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({
+        status: BookingStatus.ONGOING,
+        trip: { id: TRIP_ID, status: TripStatus.ONGOING },
+        handovers: [checkIn, checkOut],
+      }),
+    );
+
+    await expect(service.createCheckOut(OWNER_ID, createDto)).rejects.toThrow(
+      'Check-out handover already exists',
+    );
     expect(prisma.vehicleHandover.create).not.toHaveBeenCalled();
   });
 
@@ -322,5 +407,95 @@ describe('HandoverService', () => {
       include: expect.any(Object),
     });
     expect(result.isComplete).toBe(true);
+  });
+
+  it('confirms handover on behalf of the renter participant', async () => {
+    prisma.vehicleHandover.findUnique.mockResolvedValue({
+      ...makeHandover(),
+      booking: { renterId: RENTER_ID, ownerId: OWNER_ID },
+    });
+    prisma.vehicleHandover.update.mockResolvedValue(
+      makeHandover({ confirmedByRenter: true }),
+    );
+
+    await service.confirm(HANDOVER_ID, RENTER_ID);
+
+    expect(prisma.vehicleHandover.update).toHaveBeenCalledWith({
+      where: { id: HANDOVER_ID },
+      data: { confirmedByRenter: true },
+      include: expect.any(Object),
+    });
+  });
+
+  it('throws when confirming a handover that does not exist', async () => {
+    prisma.vehicleHandover.findUnique.mockResolvedValue(null);
+
+    await expect(service.confirm(HANDOVER_ID, OWNER_ID)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(prisma.vehicleHandover.update).not.toHaveBeenCalled();
+  });
+
+  it('hides the handover from users who are not booking participants', async () => {
+    prisma.vehicleHandover.findUnique.mockResolvedValue({
+      ...makeHandover(),
+      booking: { renterId: RENTER_ID, ownerId: OWNER_ID },
+    });
+
+    await expect(
+      service.confirm(HANDOVER_ID, THIRD_PARTY_ID),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.vehicleHandover.update).not.toHaveBeenCalled();
+  });
+
+  it('hides the booking from non-participants without admin role', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ handovers: [] }),
+    );
+
+    await expect(
+      service.getByBooking(BOOKING_ID, THIRD_PARTY_ID),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws when the booking does not exist for summary lookup', async () => {
+    prisma.booking.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.getByBooking(BOOKING_ID, OWNER_ID),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('allows admins to view handovers for any booking', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeBooking({ handovers: [] }),
+    );
+
+    const result = await service.getByBooking(BOOKING_ID, THIRD_PARTY_ID, [
+      UserRole.ADMIN,
+    ]);
+
+    expect(result.checkIn).toBeNull();
+    expect(result.checkOut).toBeNull();
+    expect(result.differences).toEqual({});
+  });
+
+  it('clamps the admin review queue limit to a sane range', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+
+    await service.getAdminReviewQueue(0);
+    expect(prisma.booking.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ take: 50 }),
+    );
+
+    await service.getAdminReviewQueue(500);
+    expect(prisma.booking.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ take: 100 }),
+    );
+
+    await service.getAdminReviewQueue();
+    expect(prisma.booking.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ take: 50 }),
+    );
   });
 });

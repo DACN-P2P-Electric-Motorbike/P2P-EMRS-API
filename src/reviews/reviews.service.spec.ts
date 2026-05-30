@@ -160,6 +160,66 @@ describe('ReviewsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it('creates an owner-to-renter review when the owner authors it', async () => {
+      // Owner is the reviewer → trip.renterId !== userId path.
+      prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
+      prisma.trip.findFirst.mockResolvedValue(
+        makeTrip({ renterId: USER_ID, booking: { ownerId: OWNER_ID } }),
+      );
+      prisma.review.findFirst.mockResolvedValue(null);
+      prisma.review.create.mockResolvedValue(
+        makeReview({
+          userId: OWNER_ID,
+          revieweeId: USER_ID,
+          reviewType: ReviewType.OWNER_TO_RENTER,
+        }),
+      );
+      prisma.review.findMany.mockResolvedValue([]);
+
+      await service.createReview(OWNER_ID, dto);
+
+      expect(prisma.review.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: OWNER_ID,
+          revieweeId: USER_ID,
+          reviewType: ReviewType.OWNER_TO_RENTER,
+        }),
+      });
+    });
+
+    it('falls back to trip.updatedAt for the reveal window when completedAt is null', async () => {
+      const updatedAt = new Date('2026-01-01T00:00:00.000Z');
+      prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
+      prisma.trip.findFirst.mockResolvedValue(
+        makeTrip({ completedAt: null, updatedAt }),
+      );
+      prisma.review.findFirst.mockResolvedValue(null);
+      prisma.review.create.mockResolvedValue(makeReview());
+      prisma.review.findMany.mockResolvedValue([]);
+
+      await service.createReview(USER_ID, dto);
+
+      const created = prisma.review.create.mock.calls[0][0];
+      const expected = new Date(updatedAt);
+      expected.setDate(expected.getDate() + 14);
+      expect(created.data.visibleAt).toEqual(expected);
+    });
+
+    it('falls back to now for the reveal window when no trip timestamps exist', async () => {
+      prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
+      prisma.trip.findFirst.mockResolvedValue(
+        makeTrip({ completedAt: null, updatedAt: null }),
+      );
+      prisma.review.findFirst.mockResolvedValue(null);
+      prisma.review.create.mockResolvedValue(makeReview());
+      prisma.review.findMany.mockResolvedValue([]);
+
+      await service.createReview(USER_ID, dto);
+
+      const created = prisma.review.create.mock.calls[0][0];
+      expect(created.data.visibleAt).toBeInstanceOf(Date);
+    });
+
     it('should create a trip-bound review when bookingId is provided', async () => {
       const dtoWithBooking = { ...dto, bookingId: 'booking-uuid' };
       prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
@@ -692,6 +752,345 @@ describe('ReviewsService', () => {
         service.getBookingReviewStatus('outsider', 'booking-uuid'),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.review.findMany).not.toHaveBeenCalled();
+    });
+
+    it('reports an empty exchange when the trip has no reviews yet', async () => {
+      prisma.booking.findUnique.mockResolvedValue({
+        id: 'booking-uuid',
+        renterId: USER_ID,
+        ownerId: OWNER_ID,
+        trip: { id: 'trip-1' },
+      });
+      prisma.review.findMany.mockResolvedValue([]);
+
+      const result = await service.getBookingReviewStatus(
+        USER_ID,
+        'booking-uuid',
+      );
+
+      expect(result.submitted).toBe(false);
+      expect(result.counterpartSubmitted).toBe(false);
+      expect(result.ownReview).toBeNull();
+      expect(result.receivedReview).toBeNull();
+      expect(result.revealAt).toBeNull();
+    });
+
+    it('throws NotFoundException when the booking is missing', async () => {
+      prisma.booking.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getBookingReviewStatus(USER_ID, 'missing-booking'),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.review.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty status when the booking has no trip', async () => {
+      prisma.booking.findUnique.mockResolvedValue({
+        id: 'booking-uuid',
+        renterId: USER_ID,
+        ownerId: OWNER_ID,
+        trip: null,
+      });
+
+      const result = await service.getBookingReviewStatus(
+        USER_ID,
+        'booking-uuid',
+      );
+
+      expect(result.submitted).toBe(false);
+      expect(result.counterpartSubmitted).toBe(false);
+      expect(result.isRevealed).toBe(false);
+      expect(result.ownReview).toBeNull();
+      expect(result.receivedReview).toBeNull();
+      expect(result.revealAt).toBeNull();
+      expect(prisma.review.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // revealEligibleReviews / revealTripReviewsIfComplete edge paths
+  // =========================================================================
+  describe('reveal scheduling edge cases', () => {
+    it('returns 0 and skips updates when no reviews are due', async () => {
+      prisma.review.findMany.mockResolvedValue([]);
+
+      const count = await service.revealEligibleReviews();
+
+      expect(count).toBe(0);
+      expect(prisma.review.updateMany).not.toHaveBeenCalled();
+      expect(prisma.review.update).not.toHaveBeenCalled();
+    });
+
+    it('skips trust effects for reviews already applied', async () => {
+      const dueReview = makeReview({
+        rating: 1,
+        visibleAt: new Date(Date.now() - 1000),
+        trustAppliedAt: new Date(),
+        vehicle: { ownerId: OWNER_ID },
+      });
+      prisma.review.findMany.mockResolvedValueOnce([dueReview]);
+      prisma.review.updateMany.mockResolvedValue({ count: 1 });
+
+      const count = await service.revealEligibleReviews();
+
+      expect(count).toBe(1);
+      expect(trustScoreService.recordViolation).not.toHaveBeenCalled();
+      expect(prisma.vehicle.update).not.toHaveBeenCalled();
+      expect(prisma.review.update).not.toHaveBeenCalled();
+    });
+
+    it('applies trust effects to the renter for an owner-to-renter review', async () => {
+      const dueReview = makeReview({
+        id: 'owner-review',
+        userId: OWNER_ID,
+        revieweeId: USER_ID,
+        reviewType: ReviewType.OWNER_TO_RENTER,
+        rating: 5,
+        visibleAt: new Date(Date.now() - 1000),
+        vehicle: { ownerId: OWNER_ID },
+      });
+      prisma.review.findMany.mockResolvedValueOnce([dueReview]);
+      prisma.review.updateMany.mockResolvedValue({ count: 1 });
+      prisma.review.update.mockResolvedValue(dueReview);
+
+      const count = await service.revealEligibleReviews();
+
+      expect(count).toBe(1);
+      // Owner-to-renter reviews never recompute the vehicle average.
+      expect(prisma.vehicle.update).not.toHaveBeenCalled();
+      expect(trustScoreService.recordPositiveEvent).toHaveBeenCalledWith(
+        USER_ID,
+        'GOOD_REVIEW_RECEIVED',
+        1,
+        'Received a good rating',
+        expect.objectContaining({ rating: 5 }),
+      );
+      expect(prisma.review.update).toHaveBeenCalledWith({
+        where: { id: 'owner-review' },
+        data: { trustAppliedAt: expect.any(Date) },
+      });
+    });
+
+    it('skips trust adjustment when no reviewee can be resolved', async () => {
+      const dueReview = makeReview({
+        revieweeId: null,
+        rating: 1,
+        visibleAt: new Date(Date.now() - 1000),
+        vehicle: { ownerId: null },
+      });
+      prisma.review.findMany
+        .mockResolvedValueOnce([dueReview]) // due reviews
+        .mockResolvedValueOnce([]); // updateVehicleRating revealed reviews
+      prisma.review.updateMany.mockResolvedValue({ count: 1 });
+      prisma.review.update.mockResolvedValue(dueReview);
+      prisma.vehicle.update.mockResolvedValue(makeVehicle());
+
+      const count = await service.revealEligibleReviews();
+
+      expect(count).toBe(1);
+      expect(trustScoreService.recordViolation).not.toHaveBeenCalled();
+      expect(
+        trustScoreService.recordPositiveEvent.mock.calls.some(
+          (call) => call[0] === null,
+        ),
+      ).toBe(false);
+    });
+
+    it('reveals both reviews once renter and owner have submitted', async () => {
+      const dto = { vehicleId: VEHICLE_ID, rating: 4, comment: 'Good' };
+      prisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
+      prisma.trip.findFirst.mockResolvedValue(makeTrip());
+      prisma.review.findFirst.mockResolvedValue(null);
+      prisma.review.create.mockResolvedValue(makeReview({ rating: 4 }));
+      // revealTripReviewsIfComplete sees both sides already applied → reveal only.
+      prisma.review.findMany.mockResolvedValue([
+        makeReview({
+          id: 'renter-side',
+          reviewType: ReviewType.RENTER_TO_OWNER,
+          trustAppliedAt: new Date(),
+        }),
+        makeReview({
+          id: 'owner-side',
+          userId: OWNER_ID,
+          revieweeId: USER_ID,
+          reviewType: ReviewType.OWNER_TO_RENTER,
+          trustAppliedAt: new Date(),
+        }),
+      ]);
+      prisma.review.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.createReview(USER_ID, dto);
+
+      expect(prisma.review.updateMany).toHaveBeenCalledWith({
+        where: { tripId: 'trip-1', revealedAt: null },
+        data: { revealedAt: expect.any(Date) },
+      });
+    });
+  });
+
+  // =========================================================================
+  // applyConsecutiveLowRatingPenalty
+  // =========================================================================
+  describe('consecutive low-rating penalty', () => {
+    const revealLowRatingForOwner = async () => {
+      const dueReview = makeReview({
+        rating: 2,
+        visibleAt: new Date(Date.now() - 1000),
+        vehicle: { ownerId: OWNER_ID },
+      });
+      prisma.review.updateMany.mockResolvedValue({ count: 1 });
+      prisma.review.update.mockResolvedValue(dueReview);
+      prisma.vehicle.update.mockResolvedValue(makeVehicle());
+      return dueReview;
+    };
+
+    it('penalizes an owner for three consecutive low ratings', async () => {
+      const dueReview = await revealLowRatingForOwner();
+      prisma.review.findMany
+        .mockResolvedValueOnce([dueReview]) // due reviews
+        .mockResolvedValueOnce([dueReview]) // updateVehicleRating
+        .mockResolvedValueOnce([
+          makeReview({ id: 'r1', rating: 1 }),
+          makeReview({ id: 'r2', rating: 2 }),
+          makeReview({ id: 'r3', rating: 2 }),
+        ]); // recent three
+      prisma.vehicle.findMany.mockResolvedValue([{ id: VEHICLE_ID }]);
+
+      await service.revealEligibleReviews();
+
+      expect(trustScoreService.recordViolation).toHaveBeenCalledWith(
+        OWNER_ID,
+        'BAD_REVIEW_RECEIVED',
+        5,
+        'Received 3 consecutive low ratings',
+        expect.objectContaining({ streak: 3 }),
+        false,
+      );
+    });
+
+    it('skips the streak penalty when the owner has no vehicles', async () => {
+      const dueReview = await revealLowRatingForOwner();
+      prisma.review.findMany
+        .mockResolvedValueOnce([dueReview]) // due reviews
+        .mockResolvedValueOnce([]); // updateVehicleRating
+      prisma.vehicle.findMany.mockResolvedValue([]);
+
+      await service.revealEligibleReviews();
+
+      // Only the single low-rating violation (delta 3); no streak penalty.
+      expect(trustScoreService.recordViolation).toHaveBeenCalledTimes(1);
+      expect(trustScoreService.recordViolation).toHaveBeenCalledWith(
+        OWNER_ID,
+        'BAD_REVIEW_RECEIVED',
+        3,
+        'Received a low rating',
+        expect.objectContaining({ rating: 2 }),
+      );
+    });
+
+    it('treats a null owned-vehicle lookup as an empty list', async () => {
+      const dueReview = await revealLowRatingForOwner();
+      prisma.review.findMany
+        .mockResolvedValueOnce([dueReview]) // due reviews
+        .mockResolvedValueOnce([]); // updateVehicleRating
+      // Prisma returns a nullish result → the `?? []` guard must apply.
+      prisma.vehicle.findMany.mockResolvedValue(null);
+
+      await service.revealEligibleReviews();
+
+      expect(trustScoreService.recordViolation).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the streak penalty when the recent ratings are not all low', async () => {
+      const dueReview = await revealLowRatingForOwner();
+      prisma.review.findMany
+        .mockResolvedValueOnce([dueReview]) // due reviews
+        .mockResolvedValueOnce([dueReview]) // updateVehicleRating
+        .mockResolvedValueOnce([
+          makeReview({ id: 'r1', rating: 1 }),
+          makeReview({ id: 'r2', rating: 5 }),
+          makeReview({ id: 'r3', rating: 2 }),
+        ]); // recent three (mixed)
+      prisma.vehicle.findMany.mockResolvedValue([{ id: VEHICLE_ID }]);
+
+      await service.revealEligibleReviews();
+
+      // Single low-rating violation only; streak (delta 5) not triggered.
+      expect(trustScoreService.recordViolation).toHaveBeenCalledTimes(1);
+      expect(trustScoreService.recordViolation).toHaveBeenCalledWith(
+        OWNER_ID,
+        'BAD_REVIEW_RECEIVED',
+        3,
+        'Received a low rating',
+        expect.objectContaining({ rating: 2 }),
+      );
+    });
+  });
+
+  // =========================================================================
+  // getTrustScoreBreakdown — audit payload branch
+  // =========================================================================
+  describe('getTrustScoreBreakdown — audit payload', () => {
+    it('includes recent events and active warnings when audit is requested', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 90 }));
+      prisma.review.count.mockResolvedValue(2);
+      prisma.vehicle.findMany.mockResolvedValue([]);
+      prisma.booking.count.mockResolvedValue(0);
+      prisma.trip.count.mockResolvedValue(0);
+      prisma.trustScoreEvent.aggregate.mockResolvedValue({
+        _sum: { delta: 0 },
+      });
+      prisma.trustScoreWarning.count.mockResolvedValue(0);
+      trustScoreService.getUserTrustProfile.mockResolvedValueOnce({
+        tier: { level: 4, label: 'Tốt' },
+        recentEvents: [{ id: 'evt-1' }],
+        activeWarnings: [{ id: 'warn-1' }],
+      });
+
+      const result = await service.getTrustScoreBreakdown(USER_ID, true);
+
+      expect(result.tier).toEqual({ level: 4, label: 'Tốt' });
+      expect(result.recentEvents).toEqual([{ id: 'evt-1' }]);
+      expect(result.activeWarnings).toEqual([{ id: 'warn-1' }]);
+    });
+
+    it('defaults audit collections to empty arrays when the profile omits them', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 90 }));
+      prisma.review.count.mockResolvedValue(0);
+      prisma.vehicle.findMany.mockResolvedValue([]);
+      prisma.booking.count.mockResolvedValue(0);
+      prisma.trip.count.mockResolvedValue(0);
+      prisma.trustScoreEvent.aggregate.mockResolvedValue({
+        _sum: { delta: 0 },
+      });
+      prisma.trustScoreWarning.count.mockResolvedValue(0);
+      trustScoreService.getUserTrustProfile.mockResolvedValueOnce({
+        tier: { level: 2, label: 'Thấp' },
+        recentEvents: undefined,
+        activeWarnings: undefined,
+      });
+
+      const result = await service.getTrustScoreBreakdown(USER_ID, true);
+
+      expect(result.recentEvents).toEqual([]);
+      expect(result.activeWarnings).toEqual([]);
+    });
+
+    it('skips the trust profile lookup when userId is falsy and audit is off', async () => {
+      prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 88 }));
+      prisma.review.count.mockResolvedValue(0);
+      prisma.vehicle.findMany.mockResolvedValue([]);
+      prisma.booking.count.mockResolvedValue(0);
+      prisma.trip.count.mockResolvedValue(0);
+      prisma.trustScoreEvent.aggregate.mockResolvedValue({
+        _sum: { delta: 0 },
+      });
+      prisma.trustScoreWarning.count.mockResolvedValue(0);
+
+      const result = await service.getTrustScoreBreakdown('', false);
+
+      expect(result.tier).toBeUndefined();
+      expect(trustScoreService.getUserTrustProfile).not.toHaveBeenCalled();
     });
   });
 });

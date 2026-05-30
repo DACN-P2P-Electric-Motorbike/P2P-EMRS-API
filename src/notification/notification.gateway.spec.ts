@@ -72,6 +72,49 @@ describe('NotificationGateway', () => {
     expect(client.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('disconnects and logs when JWT verification throws', async () => {
+    jwtService.verifyAsync.mockRejectedValue(new Error('invalid signature'));
+
+    await gateway.handleConnection(client);
+
+    expect(client.disconnect).toHaveBeenCalledTimes(1);
+    expect(gateway.getOnlineUsersCount()).toBe(0);
+  });
+
+  it('logs a plain disconnect when the socket never authenticated', () => {
+    client.data = {};
+
+    expect(() => gateway.handleDisconnect(client)).not.toThrow();
+    expect(gateway.getOnlineUsersCount()).toBe(0);
+  });
+
+  it('tolerates disconnect for a user that has no tracked sockets', () => {
+    client.data = { userId: 'ghost-user' };
+
+    expect(() => gateway.handleDisconnect(client)).not.toThrow();
+    expect(gateway.isUserOnline('ghost-user')).toBe(false);
+  });
+
+  it('keeps the user online when one of several sockets disconnects', async () => {
+    jwtService.verifyAsync.mockResolvedValue({ sub: 'user-1', role: 'RENTER' });
+    await gateway.handleConnection(client);
+
+    const secondClient = {
+      ...client,
+      id: 'socket-2',
+      data: {},
+      join: jest.fn(),
+      emit: jest.fn(),
+    };
+    await gateway.handleConnection(secondClient);
+    expect(gateway.isUserOnline('user-1')).toBe(true);
+
+    gateway.handleDisconnect(client);
+
+    expect(gateway.isUserOnline('user-1')).toBe(true);
+    expect(gateway.getOnlineUsersCount()).toBe(1);
+  });
+
   it('removes user socket mappings on disconnect', async () => {
     jwtService.verifyAsync.mockResolvedValue({ id: 'user-1', role: 'OWNER' });
     await gateway.handleConnection(client);

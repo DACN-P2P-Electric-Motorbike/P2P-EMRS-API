@@ -90,6 +90,68 @@ describe('KycService', () => {
     });
   });
 
+  it('returns the stored verification status when KYC exists', async () => {
+    prisma.kycVerification.findUnique.mockResolvedValue(verification);
+
+    await expect(service.getStatus('user-1')).resolves.toMatchObject({
+      status: KycStatus.PENDING,
+      verification: { id: 'kyc-1', status: KycStatus.PENDING },
+    });
+  });
+
+  it('rejects admin reviews that try to set the status back to PENDING', async () => {
+    await expect(
+      service.review('kyc-1', { status: KycStatus.PENDING }, 'admin-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.kycVerification.findUnique).not.toHaveBeenCalled();
+    expect(prisma.kycVerification.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects KYC with a stored reason and skips trust score updates', async () => {
+    prisma.kycVerification.findUnique.mockResolvedValue(verification);
+    prisma.kycVerification.update.mockResolvedValue({
+      ...verification,
+      status: KycStatus.REJECTED,
+      rejectionReason: 'Blurry ID',
+      reviewedBy: 'admin-1',
+    });
+
+    await expect(
+      service.review(
+        'kyc-1',
+        { status: KycStatus.REJECTED, rejectionReason: '  Blurry ID  ' },
+        'admin-1',
+      ),
+    ).resolves.toMatchObject({ status: KycStatus.REJECTED });
+
+    expect(prisma.kycVerification.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: KycStatus.REJECTED,
+          rejectionReason: 'Blurry ID',
+        }),
+      }),
+    );
+    expect(trustScoreService.recordPositiveEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not re-award trust score when re-approving an already approved KYC', async () => {
+    prisma.kycVerification.findUnique.mockResolvedValue({
+      ...verification,
+      status: KycStatus.APPROVED,
+    });
+    prisma.kycVerification.update.mockResolvedValue({
+      ...verification,
+      status: KycStatus.APPROVED,
+      reviewedBy: 'admin-1',
+    });
+
+    await service.review('kyc-1', { status: KycStatus.APPROVED }, 'admin-1');
+
+    expect(trustScoreService.recordPositiveEvent).not.toHaveBeenCalled();
+  });
+
   it('lists submissions for admin review with pagination', async () => {
     prisma.kycVerification.findMany.mockResolvedValue([
       {
@@ -119,6 +181,21 @@ describe('KycService', () => {
         take: 5,
       }),
     );
+  });
+
+  it('applies default pagination and no status filter for admin listing', async () => {
+    prisma.kycVerification.findMany.mockResolvedValue([]);
+    prisma.kycVerification.count.mockResolvedValue(0);
+
+    await expect(service.listForAdmin({})).resolves.toMatchObject({
+      data: [],
+      pagination: { total: 0, page: 1, limit: 20, totalPages: 0 },
+    });
+
+    expect(prisma.kycVerification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: {}, skip: 0, take: 20 }),
+    );
+    expect(prisma.kycVerification.count).toHaveBeenCalledWith({ where: {} });
   });
 
   it('approves KYC and records a one-time positive trust event', async () => {
@@ -185,5 +262,13 @@ describe('KycService', () => {
     await expect(
       service.assertApproved('user-1', 'vehicle'),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('uses the booking action label when blocking an unverified booking', async () => {
+    prisma.kycVerification.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.assertApproved('user-1', 'booking'),
+    ).rejects.toThrow('create a booking');
   });
 });
