@@ -20,6 +20,19 @@ describe('JwtAuthGuard', () => {
     expect(guard.canActivate(context)).toBe(true);
   });
 
+  it('delegates to passport for protected routes', () => {
+    reflector.getAllAndOverride.mockReturnValue(false);
+    const context = { getHandler: jest.fn(), getClass: jest.fn() } as any;
+    const superCanActivate = jest
+      .spyOn(Object.getPrototypeOf(JwtAuthGuard.prototype), 'canActivate')
+      .mockReturnValue(true);
+
+    expect(guard.canActivate(context)).toBe(true);
+    expect(superCanActivate).toHaveBeenCalledWith(context);
+
+    superCanActivate.mockRestore();
+  });
+
   it('returns authenticated users and rejects invalid requests', () => {
     const user = { id: 'user-1' };
 

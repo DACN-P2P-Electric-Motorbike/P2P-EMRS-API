@@ -7,6 +7,7 @@
  * Unit tests for VehiclesController.
  * VehiclesService is fully mocked — no DB, no HTTP server.
  */
+import * as jwt from 'jsonwebtoken';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
@@ -262,6 +263,205 @@ describe('VehiclesController', () => {
           batteryType: 'SWAPPABLE',
           minBatteryHealth: 90,
         }),
+      );
+    });
+
+    it('should use the authenticated user id as excludeOwnerId when req.user is present', async () => {
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue({
+        vehicles: [],
+        total: 0,
+      });
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { user: { id: 'auth-user-1' } as any },
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeOwnerId: 'auth-user-1' }),
+      );
+    });
+
+    it('should derive excludeOwnerId from a valid bearer token when req.user is absent', async () => {
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue({
+        vehicles: [],
+        total: 0,
+      });
+      process.env.JWT_SECRET = 'test-secret';
+      const token = jwt.sign({ sub: 'token-user-1' }, 'test-secret');
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeOwnerId: 'token-user-1' }),
+      );
+    });
+
+    it('should take the first authorization header value when provided as an array', async () => {
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue({
+        vehicles: [],
+        total: 0,
+      });
+      process.env.JWT_SECRET = 'test-secret';
+      const token = jwt.sign({ sub: 'token-user-2' }, 'test-secret');
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { headers: { authorization: [`Bearer ${token}`] } as any },
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeOwnerId: 'token-user-2' }),
+      );
+    });
+
+    it('should yield undefined excludeOwnerId when the authorization header is missing', async () => {
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue({
+        vehicles: [],
+        total: 0,
+      });
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { headers: {} },
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeOwnerId: undefined }),
+      );
+    });
+
+    it('should yield undefined excludeOwnerId for a non-bearer authorization scheme', async () => {
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue({
+        vehicles: [],
+        total: 0,
+      });
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { headers: { authorization: 'Basic abc123' } },
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeOwnerId: undefined }),
+      );
+    });
+
+    it('should yield undefined excludeOwnerId when the bearer token is invalid', async () => {
+      mockVehiclesService.getAvailableVehicles.mockResolvedValue({
+        vehicles: [],
+        total: 0,
+      });
+      process.env.JWT_SECRET = 'test-secret';
+
+      await controller.getAvailableVehicles(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { headers: { authorization: 'Bearer not-a-real-token' } },
+      );
+
+      expect(mockVehiclesService.getAvailableVehicles).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeOwnerId: undefined }),
+      );
+    });
+  });
+
+  // ─── toggleAvailability ──────────────────────────────────────────────────────
+  describe('PATCH /:id/toggle-availability', () => {
+    it('should delegate to service.toggleAvailability and return the vehicle', async () => {
+      const toggled = VehicleEntity.fromPrisma(
+        createMockVehicle({ isAvailable: false }),
+      );
+      mockVehiclesService.toggleAvailability.mockResolvedValue(toggled);
+      const user = createMockUser();
+
+      const result = await controller.toggleAvailability(VEHICLE_ID, user);
+
+      expect(result.isAvailable).toBe(false);
+      expect(mockVehiclesService.toggleAvailability).toHaveBeenCalledWith(
+        VEHICLE_ID,
+        user.id,
+        user.roles,
       );
     });
   });

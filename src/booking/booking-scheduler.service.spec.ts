@@ -53,6 +53,15 @@ describe('BookingSchedulerService', () => {
     );
   });
 
+  it('does nothing when there are no stale pending bookings', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+
+    await service.expireStalePendingBookings();
+
+    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
   it('auto-cancels confirmed bookings that reached pickup time without completed payment', async () => {
     prisma.booking.findMany.mockResolvedValue([
       { id: 'unpaid', renterId: 'r1', ownerId: 'o1', payment: null },
@@ -239,5 +248,159 @@ describe('BookingSchedulerService', () => {
       }),
     );
     expect(notificationGateway.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('skips all reminders when no notification service is wired up', async () => {
+    // Default service in beforeEach is constructed without a notification service.
+    await service.sendThresholdReminders();
+
+    expect(prisma.booking.findMany).not.toHaveBeenCalled();
+  });
+
+  it('sends check-in overdue and checkout reminders for their windows', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    service = new BookingSchedulerService(
+      prisma as any,
+      eventEmitter as any,
+      notificationService as any,
+    );
+    const overdueBooking = {
+      id: 'overdue-booking',
+      renterId: 'renter-1',
+      ownerId: 'owner-1',
+      startTime: new Date('2026-05-24T01:00:00.000Z'),
+      endTime: new Date('2026-05-24T05:00:00.000Z'),
+    };
+    const checkoutBooking = {
+      id: 'checkout-booking',
+      renterId: 'renter-2',
+      ownerId: 'owner-2',
+      startTime: new Date('2026-05-24T01:00:00.000Z'),
+      endTime: new Date('2026-05-24T05:00:00.000Z'),
+    };
+    prisma.booking.findMany
+      .mockResolvedValueOnce([]) // pickup
+      .mockResolvedValueOnce([overdueBooking]) // check-in overdue
+      .mockResolvedValueOnce([checkoutBooking]) // checkout
+      .mockResolvedValueOnce([]); // late return
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    await service.sendThresholdReminders();
+
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: 'renter-1',
+        title: 'Cần hoàn tất check-in',
+        bookingId: 'overdue-booking',
+        data: expect.objectContaining({ reminderKind: 'CHECK_IN_OVERDUE' }),
+      }),
+    );
+    expect(notificationService.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receiverId: 'renter-2',
+        type: NotificationType.TRIP_REMINDER,
+        title: 'Sắp đến giờ trả xe',
+        bookingId: 'checkout-booking',
+        data: expect.objectContaining({ reminderKind: 'CHECK_OUT_SOON' }),
+      }),
+    );
+  });
+
+  it('skips creating a notification when one already exists (dedupe)', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    service = new BookingSchedulerService(
+      prisma as any,
+      eventEmitter as any,
+      notificationService as any,
+    );
+    const booking = {
+      id: 'booking-1',
+      renterId: 'renter-1',
+      ownerId: 'owner-1',
+      startTime: new Date('2026-05-24T03:30:00.000Z'),
+      endTime: new Date('2026-05-24T05:30:00.000Z'),
+    };
+    prisma.booking.findMany
+      .mockResolvedValueOnce([booking])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    prisma.notification.findFirst.mockResolvedValue({ id: 'existing' });
+
+    await service.sendThresholdReminders();
+
+    expect(notificationService.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('logs and recovers when a reminder fails to send', async () => {
+    const notificationService = {
+      createNotification: jest
+        .fn()
+        .mockRejectedValue(new Error('notification store offline')),
+    };
+    service = new BookingSchedulerService(
+      prisma as any,
+      eventEmitter as any,
+      notificationService as any,
+    );
+    const errorSpy = jest
+      .spyOn((service as any).logger, 'error')
+      .mockImplementation(() => undefined);
+    const booking = {
+      id: 'booking-err',
+      renterId: 'renter-1',
+      ownerId: 'owner-1',
+      startTime: new Date('2026-05-24T03:30:00.000Z'),
+      endTime: new Date('2026-05-24T05:30:00.000Z'),
+    };
+    prisma.booking.findMany
+      .mockResolvedValueOnce([booking])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    await expect(service.sendThresholdReminders()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to send'),
+    );
+  });
+
+  it('deduplicates recipients when renter and owner are the same user', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn().mockReturnValue(false),
+      sendToUser: jest.fn(),
+    };
+    service = new BookingSchedulerService(
+      prisma as any,
+      eventEmitter as any,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    const booking = {
+      id: 'self-booking',
+      renterId: 'same-user',
+      ownerId: 'same-user',
+      startTime: new Date('2026-05-24T03:30:00.000Z'),
+      endTime: new Date('2026-05-24T05:30:00.000Z'),
+    };
+    prisma.booking.findMany
+      .mockResolvedValueOnce([booking])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    await service.sendThresholdReminders();
+
+    expect(notificationService.createNotification).toHaveBeenCalledTimes(1);
   });
 });

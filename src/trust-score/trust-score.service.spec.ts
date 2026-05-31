@@ -250,8 +250,27 @@ describe('TrustScoreService', () => {
     ).resolves.toBeNull();
   });
 
-  it('records transaction milestones only on every tenth completed transaction', async () => {
-    prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 100 }));
+  it('records a manual admin adjustment with the admin id in metadata', async () => {
+    prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 60 }));
+    prisma.user.update.mockResolvedValue(makeUser({ trustScore: 75 }));
+    prisma.trustScoreEvent.create.mockResolvedValue({});
+
+    await expect(
+      service.recordManualAdjustment(USER_ID, 15, 'Goodwill credit', 'admin-1'),
+    ).resolves.toEqual(expect.objectContaining({ trustScore: 75 }));
+
+    expect(prisma.trustScoreEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: TrustScoreEventType.MANUAL_ADJUSTMENT,
+          reason: 'Goodwill credit',
+          metadata: { adminId: 'admin-1' },
+        }),
+      }),
+    );
+  });
+
+  it('records transaction milestones only on every tenth completed transaction', async () => {    prisma.user.findUnique.mockResolvedValue(makeUser({ trustScore: 100 }));
     prisma.user.update.mockResolvedValue(makeUser({ trustScore: 103 }));
     prisma.trustScoreEvent.create.mockResolvedValue({});
 

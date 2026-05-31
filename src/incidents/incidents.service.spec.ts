@@ -1591,4 +1591,1098 @@ describe('IncidentsService', () => {
       }),
     );
   });
+
+  // =========================================================================
+  // Guard paths and additional branch coverage
+  // =========================================================================
+
+  it('creates a trip-issue incident with mechanical defaults', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+    prisma.incidentReport.create.mockResolvedValue(
+      makeIncident({ category: IncidentCategory.MECHANICAL_ISSUE }),
+    );
+
+    await service.createFromTripIssue({
+      tripId: TRIP_ID,
+      bookingId: BOOKING_ID,
+      reporterId: RENTER_ID,
+      description: 'Motor cut out mid-ride',
+    });
+
+    expect(prisma.incidentReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          category: IncidentCategory.MECHANICAL_ISSUE,
+          severity: IncidentSeverity.MEDIUM,
+        }),
+      }),
+    );
+  });
+
+  it('throws when verified evidence uploads are submitted without the receipt service', async () => {
+    const serviceWithoutReceipts = new IncidentsService(
+      prisma as unknown as PrismaService,
+    );
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+    await expect(
+      serviceWithoutReceipts.createReport(RENTER_ID, [], {
+        bookingId: BOOKING_ID,
+        category: IncidentCategory.DAMAGE,
+        description: 'Upload without verification support',
+        evidenceUploads: [
+          { url: 'https://cdn.example.com/x.jpg', receipt: 'r' },
+        ],
+      }),
+    ).rejects.toThrow('Verified incident evidence uploads are unavailable');
+  });
+
+  it('rejects a report with a blank description', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+    await expect(
+      service.createReport(RENTER_ID, [], {
+        bookingId: BOOKING_ID,
+        category: IncidentCategory.OTHER,
+        description: '   ',
+      }),
+    ).rejects.toThrow('Incident description is required');
+  });
+
+  it('rejects a report whose tripId does not match the booking', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+    await expect(
+      service.createReport(RENTER_ID, [], {
+        bookingId: BOOKING_ID,
+        tripId: 'other-trip',
+        category: IncidentCategory.OTHER,
+        description: 'Trip mismatch',
+      }),
+    ).rejects.toThrow('Incident trip must belong to the booking');
+  });
+
+  it('rejects a report whose post-trip charge does not belong to the booking', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking());
+
+    await expect(
+      service.createReport(RENTER_ID, [], {
+        bookingId: BOOKING_ID,
+        category: IncidentCategory.OTHER,
+        description: 'Charge mismatch',
+        postTripChargeId: 'charge-not-mine',
+      }),
+    ).rejects.toThrow('Post-trip charge must belong to the booking');
+  });
+
+  it('hides booking incidents from non-participants in listForBooking', async () => {
+    prisma.booking.findUnique.mockResolvedValue({
+      id: BOOKING_ID,
+      renterId: RENTER_ID,
+      ownerId: OWNER_ID,
+    });
+
+    await expect(
+      service.listForBooking(BOOKING_ID, 'stranger', [UserRole.RENTER]),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws NotFoundException when claim summary booking is missing', async () => {
+    prisma.booking.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.getClaimSummaryForBooking(BOOKING_ID, RENTER_ID, [
+        UserRole.RENTER,
+      ]),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws NotFoundException when listing annotations for a missing booking', async () => {
+    prisma.booking.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.listEvidenceAnnotationsForBooking(BOOKING_ID),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  describe('createEvidenceAnnotation guards', () => {
+    it('throws NotFoundException when the booking is missing', async () => {
+      prisma.booking.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.createEvidenceAnnotation(BOOKING_ID, ADMIN_ID, {
+          targetType: EvidenceAnnotationTargetType.INCIDENT_REPORT,
+          targetId: 'incident-uuid',
+          note: 'note',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('requires a non-empty note', async () => {
+      prisma.booking.findUnique.mockResolvedValue({ id: BOOKING_ID });
+
+      await expect(
+        service.createEvidenceAnnotation(BOOKING_ID, ADMIN_ID, {
+          targetType: EvidenceAnnotationTargetType.INCIDENT_REPORT,
+          targetId: 'incident-uuid',
+          note: '   ',
+        }),
+      ).rejects.toThrow('Evidence annotation note is required');
+    });
+
+    it('rejects a claim case that does not belong to the booking', async () => {
+      prisma.booking.findUnique.mockResolvedValue({ id: BOOKING_ID });
+      prisma.incidentReport.findFirst.mockResolvedValue({ id: 'incident-uuid' });
+      prisma.claimCase.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.createEvidenceAnnotation(BOOKING_ID, ADMIN_ID, {
+          targetType: EvidenceAnnotationTargetType.INCIDENT_REPORT,
+          targetId: 'incident-uuid',
+          claimCaseId: 'foreign-claim',
+          note: 'note',
+        }),
+      ).rejects.toThrow('Claim case must belong to the booking');
+    });
+
+    it('annotates a post-trip charge target that belongs to the booking', async () => {
+      prisma.booking.findUnique.mockResolvedValue({ id: BOOKING_ID });
+      prisma.postTripCharge.findFirst.mockResolvedValue({ id: CHARGE_ID });
+      prisma.evidenceAnnotation.create.mockResolvedValue(
+        makeEvidenceAnnotation({
+          targetType: EvidenceAnnotationTargetType.POST_TRIP_CHARGE,
+          targetId: CHARGE_ID,
+        }),
+      );
+
+      await service.createEvidenceAnnotation(BOOKING_ID, ADMIN_ID, {
+        targetType: EvidenceAnnotationTargetType.POST_TRIP_CHARGE,
+        targetId: CHARGE_ID,
+        note: 'Charge evidence',
+      });
+
+      expect(prisma.postTripCharge.findFirst).toHaveBeenCalledWith({
+        where: { id: CHARGE_ID, bookingId: BOOKING_ID },
+        select: { id: true },
+      });
+      expect(prisma.evidenceAnnotation.create).toHaveBeenCalled();
+    });
+
+    it('annotates a vehicle-handover target that belongs to the booking', async () => {
+      prisma.booking.findUnique.mockResolvedValue({ id: BOOKING_ID });
+      prisma.vehicleHandover.findFirst.mockResolvedValue({ id: 'handover-uuid' });
+      prisma.evidenceAnnotation.create.mockResolvedValue(
+        makeEvidenceAnnotation({
+          targetType: EvidenceAnnotationTargetType.VEHICLE_HANDOVER,
+          targetId: 'handover-uuid',
+        }),
+      );
+
+      await service.createEvidenceAnnotation(BOOKING_ID, ADMIN_ID, {
+        targetType: EvidenceAnnotationTargetType.VEHICLE_HANDOVER,
+        targetId: 'handover-uuid',
+        note: 'Handover evidence',
+      });
+
+      expect(prisma.vehicleHandover.findFirst).toHaveBeenCalledWith({
+        where: { id: 'handover-uuid', bookingId: BOOKING_ID },
+        select: { id: true },
+      });
+    });
+
+    it('resolves a handover-photo target through its parent handover', async () => {
+      prisma.booking.findUnique.mockResolvedValue({ id: BOOKING_ID });
+      prisma.handoverPhoto.findFirst.mockResolvedValue({ id: 'photo-uuid' });
+      prisma.evidenceAnnotation.create.mockResolvedValue(
+        makeEvidenceAnnotation({
+          targetType: EvidenceAnnotationTargetType.HANDOVER_PHOTO,
+          targetId: 'photo-uuid',
+        }),
+      );
+
+      await service.createEvidenceAnnotation(BOOKING_ID, ADMIN_ID, {
+        targetType: EvidenceAnnotationTargetType.HANDOVER_PHOTO,
+        targetId: 'photo-uuid',
+        note: 'Photo evidence',
+      });
+
+      expect(prisma.handoverPhoto.findFirst).toHaveBeenCalledWith({
+        where: { id: 'photo-uuid', handover: { bookingId: BOOKING_ID } },
+        select: { id: true },
+      });
+    });
+  });
+
+  describe('createOrRefreshClaimCase guards', () => {
+    it('throws NotFoundException when the booking is missing', async () => {
+      prisma.booking.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.createOrRefreshClaimCase(BOOKING_ID, ADMIN_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses to open a claim case without any claim activity', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [],
+          postTripCharges: [],
+          depositLedger: { id: 'd', status: DepositLedgerStatus.HELD },
+          ownerPayout: null,
+          claimCase: null,
+        }),
+      );
+
+      await expect(
+        service.createOrRefreshClaimCase(BOOKING_ID, ADMIN_ID),
+      ).rejects.toThrow('without incidents, charges, deposit blockers');
+    });
+
+    it('refuses to refresh a finalized claim case', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          claimCase: makeClaimCase({ status: ClaimCaseStatus.RESOLVED }),
+        }),
+      );
+
+      await expect(
+        service.createOrRefreshClaimCase(BOOKING_ID, ADMIN_ID),
+      ).rejects.toThrow('Finalized claim cases cannot be refreshed');
+    });
+  });
+
+  it('filters the admin claim queue by claim status', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([makeClaimCase()]);
+
+    await service.getAdminClaimCases({
+      status: ClaimCaseStatus.OPEN,
+      limit: 25,
+    });
+
+    expect(prisma.claimCase.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: ClaimCaseStatus.OPEN },
+        take: 25,
+      }),
+    );
+  });
+
+  it('counts high and medium risk cases in the queue summary', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        id: 'high-risk',
+        booking: makeClaimCaseBookingForRisk(),
+      }),
+      makeClaimCase({
+        id: 'medium-risk',
+        booking: makeClaimCaseBookingForRisk({
+          renter: {
+            id: RENTER_ID,
+            fullName: 'Renter One',
+            email: 'renter@example.com',
+            trustScore: 100,
+          },
+          depositLedger: {
+            id: 'deposit-uuid',
+            status: DepositLedgerStatus.HELD,
+            heldAmount: 500_000,
+          },
+          postTripCharges: [],
+          incidentReports: [
+            {
+              id: 'incident-high',
+              severity: IncidentSeverity.HIGH,
+              status: IncidentStatus.OPEN,
+              createdAt: new Date('2026-05-23T03:30:00.000Z'),
+            },
+          ],
+        }),
+      }),
+    ]);
+
+    const summary = await service.getAdminClaimCaseQueueSummary(ADMIN_ID);
+
+    expect(summary.highRisk).toBe(1);
+    expect(summary.mediumRisk).toBe(1);
+  });
+
+  describe('updateClaimCaseAssignment guards', () => {
+    it('throws NotFoundException for a missing claim case', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateClaimCaseAssignment('missing', ADMIN_ID, {
+          action: ClaimCaseAssignmentAction.ASSIGN_SELF,
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses to reassign a finalized claim case', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(
+        makeClaimCase({ status: ClaimCaseStatus.APPROVED }),
+      );
+
+      await expect(
+        service.updateClaimCaseAssignment('claim-case-uuid', ADMIN_ID, {
+          action: ClaimCaseAssignmentAction.ASSIGN_SELF,
+        }),
+      ).rejects.toThrow('Finalized claim cases cannot be reassigned');
+    });
+
+    it('keeps a non-open claim case status when self-assigning', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(
+        makeClaimCase({ status: ClaimCaseStatus.UNDER_REVIEW }),
+      );
+      prisma.claimCase.update.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.UNDER_REVIEW,
+          assignedAdminId: ADMIN_ID,
+        }),
+      );
+
+      await service.updateClaimCaseAssignment('claim-case-uuid', ADMIN_ID, {
+        action: ClaimCaseAssignmentAction.ASSIGN_SELF,
+      });
+
+      expect(prisma.claimCase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            assignedAdminId: ADMIN_ID,
+            status: ClaimCaseStatus.UNDER_REVIEW,
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('reviewClaimCase guards', () => {
+    it('throws NotFoundException for a missing claim case', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.reviewClaimCase('missing', ADMIN_ID, {
+          decision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses to review a finalized claim case', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(
+        makeClaimCase({ status: ClaimCaseStatus.REJECTED }),
+      );
+
+      await expect(
+        service.reviewClaimCase('claim-case-uuid', ADMIN_ID, {
+          decision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        }),
+      ).rejects.toThrow('Finalized claim cases cannot be reviewed');
+    });
+
+    it('rejects a second review whose decision differs from the first', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          firstDecision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+          firstReviewedBy: 'admin-one',
+        }),
+      );
+
+      await expect(
+        service.reviewClaimCase('claim-case-uuid', ADMIN_ID, {
+          decision: ClaimCaseOutcome.OWNER_CLAIM_REJECTED,
+        }),
+      ).rejects.toThrow('Second claim review must match the first decision');
+    });
+
+    it('resolves to REJECTED when both reviews reject the owner claim', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          firstDecision: ClaimCaseOutcome.OWNER_CLAIM_REJECTED,
+          firstReviewedBy: 'admin-one',
+        }),
+      );
+      prisma.claimCase.update.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.REJECTED,
+          outcome: ClaimCaseOutcome.OWNER_CLAIM_REJECTED,
+        }),
+      );
+
+      const result = await service.reviewClaimCase(
+        'claim-case-uuid',
+        ADMIN_ID,
+        { decision: ClaimCaseOutcome.OWNER_CLAIM_REJECTED },
+      );
+
+      expect(result.status).toBe(ClaimCaseStatus.REJECTED);
+      expect(prisma.claimCase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: ClaimCaseStatus.REJECTED,
+          }),
+        }),
+      );
+    });
+
+    it('resolves to RESOLVED when both reviews require no action', async () => {
+      prisma.claimCase.findUnique.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          firstDecision: ClaimCaseOutcome.NO_ACTION_REQUIRED,
+          firstReviewedBy: 'admin-one',
+          firstReviewNotes: 'No further action',
+        }),
+      );
+      prisma.claimCase.update.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.RESOLVED,
+          outcome: ClaimCaseOutcome.NO_ACTION_REQUIRED,
+        }),
+      );
+
+      // Pass no notes so the resolutionNotes falls back to firstReviewNotes.
+      const result = await service.reviewClaimCase(
+        'claim-case-uuid',
+        ADMIN_ID,
+        { decision: ClaimCaseOutcome.NO_ACTION_REQUIRED },
+      );
+
+      expect(result.status).toBe(ClaimCaseStatus.RESOLVED);
+      expect(prisma.claimCase.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: ClaimCaseStatus.RESOLVED,
+            resolutionNotes: 'No further action',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('updateStatus guards', () => {
+    it('rejects an unsupported review status', async () => {
+      await expect(
+        service.updateStatus('incident-uuid', ADMIN_ID, {
+          status: IncidentStatus.OPEN,
+        }),
+      ).rejects.toThrow('Unsupported incident review status');
+    });
+
+    it('throws NotFoundException for a missing incident', async () => {
+      prisma.incidentReport.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateStatus('missing', ADMIN_ID, {
+          status: IncidentStatus.UNDER_REVIEW,
+        }),
+      ).rejects.toThrow('Incident report not found');
+    });
+
+    it('refuses to change a finalized incident', async () => {
+      prisma.incidentReport.findUnique.mockResolvedValue(
+        makeIncident({ status: IncidentStatus.RESOLVED }),
+      );
+
+      await expect(
+        service.updateStatus('incident-uuid', ADMIN_ID, {
+          status: IncidentStatus.UNDER_REVIEW,
+        }),
+      ).rejects.toThrow('Finalized incidents cannot be changed');
+    });
+
+    it('moves an incident under review without resolving it', async () => {
+      prisma.incidentReport.findUnique.mockResolvedValue(makeIncident());
+      prisma.incidentReport.update.mockResolvedValue(
+        makeIncident({ status: IncidentStatus.UNDER_REVIEW }),
+      );
+
+      await service.updateStatus('incident-uuid', ADMIN_ID, {
+        status: IncidentStatus.UNDER_REVIEW,
+        adminNotes: '  ',
+      });
+
+      expect(prisma.incidentReport.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: IncidentStatus.UNDER_REVIEW,
+            adminNotes: null,
+            resolvedAt: null,
+          }),
+        }),
+      );
+    });
+  });
+
+  it('exposes the open incident statuses', () => {
+    expect(IncidentsService.openStatuses()).toEqual([
+      IncidentStatus.OPEN,
+      IncidentStatus.UNDER_REVIEW,
+    ]);
+  });
+
+  it('creates a report on a booking that has no trip', async () => {
+    prisma.booking.findUnique.mockResolvedValue(makeBooking({ trip: null }));
+    prisma.incidentReport.create.mockResolvedValue(
+      makeIncident({ tripId: null }),
+    );
+
+    await service.createReport(RENTER_ID, [], {
+      bookingId: BOOKING_ID,
+      category: IncidentCategory.OTHER,
+      description: 'General issue, no trip linked',
+    });
+
+    expect(prisma.incidentReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ tripId: null }),
+      }),
+    );
+  });
+
+  it('refreshes a pending-second-review claim case while keeping its status', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeClaimBooking({
+        depositLedger: null,
+        ownerPayout: null,
+        postTripCharges: [],
+        incidentReports: [makeIncident({ status: IncidentStatus.OPEN })],
+        claimCase: makeClaimCase({
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+        }),
+      }),
+    );
+    prisma.claimCase.upsert.mockResolvedValue(
+      makeClaimCase({ status: ClaimCaseStatus.PENDING_SECOND_REVIEW }),
+    );
+
+    await service.createOrRefreshClaimCase(BOOKING_ID, ADMIN_ID);
+
+    expect(prisma.claimCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          // No deposit ledger or payout → snapshot uses NO_DEPOSIT_LEDGER/NO_PAYOUT.
+          summary: expect.stringContaining('deposit NO_DEPOSIT_LEDGER'),
+        }),
+      }),
+    );
+  });
+
+  it('notifies participants even when the realtime gateway reports them offline', async () => {
+    const notificationService = {
+      createNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+    };
+    const notificationGateway = {
+      isUserOnline: jest.fn().mockReturnValue(false),
+      sendToUser: jest.fn(),
+    };
+    const offlineService = new IncidentsService(
+      prisma as unknown as PrismaService,
+      notificationService as any,
+      notificationGateway as any,
+    );
+    prisma.claimCase.findUnique.mockResolvedValue(makeClaimCase());
+    prisma.claimCase.update.mockResolvedValue(
+      makeClaimCase({
+        status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+        firstDecision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        firstReviewedBy: ADMIN_ID,
+        booking: { id: BOOKING_ID, renterId: RENTER_ID, ownerId: RENTER_ID },
+      }),
+    );
+
+    await offlineService.reviewClaimCase('claim-case-uuid', ADMIN_ID, {
+      decision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+    });
+
+    // Renter and owner are the same id here → a single deduped recipient.
+    expect(notificationService.createNotification).toHaveBeenCalledTimes(1);
+    expect(notificationGateway.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('orders equal-status equal-due claim cases by recency', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([
+      makeClaimCase({
+        id: 'older-finalized',
+        status: ClaimCaseStatus.APPROVED,
+        outcome: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        createdAt: new Date('2026-05-24T01:00:00.000Z'),
+        updatedAt: new Date('2026-05-24T01:00:00.000Z'),
+      }),
+      makeClaimCase({
+        id: 'newer-finalized',
+        status: ClaimCaseStatus.APPROVED,
+        outcome: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+        createdAt: new Date('2026-05-24T01:30:00.000Z'),
+        updatedAt: new Date('2026-05-24T01:30:00.000Z'),
+      }),
+    ]);
+
+    const cases = await service.getAdminClaimCases({ limit: 100 });
+
+    // Both finalized → COMPLETED status, null dueAt → fall back to createdAt desc.
+    expect(cases.map((claimCase) => claimCase.id)).toEqual([
+      'newer-finalized',
+      'older-finalized',
+    ]);
+  });
+
+  it('builds an admin claim summary when evidence annotations are absent', async () => {
+    const { evidenceAnnotations, ...bookingWithoutAnnotations } =
+      makeClaimBooking();
+    void evidenceAnnotations;
+    prisma.booking.findUnique.mockResolvedValue(bookingWithoutAnnotations);
+
+    const summary = await service.getClaimSummaryForBooking(
+      BOOKING_ID,
+      ADMIN_ID,
+      [UserRole.ADMIN],
+    );
+
+    expect(summary.evidenceAnnotations).toEqual([]);
+    expect(summary.timeline.map((event) => event.type)).not.toContain(
+      'EVIDENCE_ANNOTATED',
+    );
+  });
+
+  it('coerces string timeline timestamps into dates', async () => {
+    prisma.booking.findUnique.mockResolvedValue(
+      makeClaimBooking({
+        payment: {
+          id: 'payment-uuid',
+          status: 'COMPLETED',
+          amount: 700_000,
+          // A string paidAt must be coerced into a Date for the timeline.
+          paidAt: '2026-05-22T12:05:00.000Z',
+        },
+      }),
+    );
+
+    const summary = await service.getClaimSummaryForBooking(
+      BOOKING_ID,
+      RENTER_ID,
+      [UserRole.RENTER],
+    );
+
+    const paymentEvent = summary.timeline.find(
+      (event) => event.type === 'PAYMENT_COMPLETED',
+    );
+    expect(paymentEvent?.occurredAt).toBeInstanceOf(Date);
+    expect(paymentEvent?.occurredAt.toISOString()).toBe(
+      '2026-05-22T12:05:00.000Z',
+    );
+  });
+
+  it('defaults the admin queue limit and MINE filter when inputs are omitted', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([]);
+
+    // No limit → defaults to 50; MINE without adminId → empty-string match.
+    await service.getAdminClaimCases({
+      assignment: ClaimCaseAssignmentFilter.MINE,
+    });
+
+    expect(prisma.claimCase.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { assignedAdminId: '' },
+        take: 50,
+      }),
+    );
+  });
+
+  it('clamps a zero limit up to the default for the admin queue', async () => {
+    prisma.claimCase.findMany.mockResolvedValue([]);
+
+    await service.getAdminClaimCases({ limit: 0 });
+
+    expect(prisma.claimCase.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 50 }),
+    );
+  });
+
+  it('clamps the admin incident queue limit between 1 and 100', async () => {
+    prisma.incidentReport.findMany.mockResolvedValue([]);
+
+    await service.getAdminQueue(0);
+    expect(prisma.incidentReport.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ take: 50 }),
+    );
+
+    await service.getAdminQueue(5000);
+    expect(prisma.incidentReport.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ take: 100 }),
+    );
+  });
+
+  describe('claim summary blockers and next actions', () => {
+    it('surfaces release and payout actions when no blockers remain', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [],
+          postTripCharges: [],
+          depositLedger: {
+            id: 'deposit-uuid',
+            status: DepositLedgerStatus.HELD,
+            heldAmount: 500_000,
+            releasedAmount: 0,
+          },
+          ownerPayout: {
+            id: 'payout-uuid',
+            bookingId: BOOKING_ID,
+            ownerId: OWNER_ID,
+            status: PayoutStatus.PENDING,
+            payoutAmount: 170_000,
+            holdReason: null,
+            createdBy: ADMIN_ID,
+            createdAt: new Date('2026-05-23T05:00:00.000Z'),
+          },
+          claimCase: null,
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.canReleaseDeposit).toBe(true);
+      expect(summary.canProcessPayout).toBe(true);
+      expect(summary.nextActions.map((action) => action.action)).toEqual(
+        expect.arrayContaining([
+          'Release remaining deposit',
+          'Process owner payout',
+        ]),
+      );
+    });
+
+    it('flags approved-but-uncaptured charges as a blocker', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [],
+          postTripCharges: [
+            {
+              id: CHARGE_ID,
+              bookingId: BOOKING_ID,
+              tripId: TRIP_ID,
+              type: PostTripChargeType.DAMAGE,
+              status: PostTripChargeStatus.APPROVED,
+              amount: 120_000,
+              createdAt: new Date('2026-05-23T03:30:00.000Z'),
+              updatedAt: new Date('2026-05-23T03:30:00.000Z'),
+            },
+          ],
+          depositLedger: {
+            id: 'deposit-uuid',
+            status: DepositLedgerStatus.HELD,
+            heldAmount: 500_000,
+          },
+          ownerPayout: null,
+          claimCase: null,
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.blockers.map((blocker) => blocker.code)).toContain(
+        'APPROVED_CHARGES_NOT_CAPTURED',
+      );
+      expect(summary.nextActions.map((action) => action.action)).toContain(
+        'Capture approved charges or waive them',
+      );
+    });
+
+    it('asks for a first review while a claim case is open', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          claimCase: makeClaimCase({ status: ClaimCaseStatus.OPEN }),
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.nextActions.map((action) => action.action)).toContain(
+        'Submit first claim review decision',
+      );
+    });
+
+    it('asks for a second review while a claim case is pending second review', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          claimCase: makeClaimCase({
+            status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          }),
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.nextActions.map((action) => action.action)).toContain(
+        'Complete second-admin claim review',
+      );
+    });
+
+    it('reports a NO_CLAIM summary for a booking without any claim activity', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [],
+          postTripCharges: [],
+          depositLedger: null,
+          ownerPayout: null,
+          claimCase: null,
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.status).toBe('NO_CLAIM');
+      expect(summary.statusLabel).toBe('No claim activity');
+      expect(summary.nextActions).toEqual([]);
+    });
+
+    it('reports an OPEN summary and prompts opening a claim case', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [makeIncident({ status: IncidentStatus.OPEN })],
+          postTripCharges: [],
+          depositLedger: null,
+          ownerPayout: null,
+          claimCase: null,
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.status).toBe('OPEN');
+      expect(summary.statusLabel).toBe('Claim opened');
+      expect(summary.nextActions.map((action) => action.action)).toEqual(
+        expect.arrayContaining([
+          'Open durable claim case',
+          'Move incident reports under review',
+        ]),
+      );
+    });
+
+    it('reports an AWAITING_CHARGE_REVIEW summary when only charges need review', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [],
+          postTripCharges: [
+            {
+              id: CHARGE_ID,
+              bookingId: BOOKING_ID,
+              tripId: TRIP_ID,
+              type: PostTripChargeType.DAMAGE,
+              status: PostTripChargeStatus.PENDING_REVIEW,
+              amount: 120_000,
+              createdAt: new Date('2026-05-23T03:30:00.000Z'),
+              updatedAt: new Date('2026-05-23T03:30:00.000Z'),
+            },
+          ],
+          depositLedger: null,
+          ownerPayout: null,
+          claimCase: makeClaimCase({ status: ClaimCaseStatus.UNDER_REVIEW }),
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.status).toBe('AWAITING_CHARGE_REVIEW');
+      expect(summary.statusLabel).toBe('Awaiting post-trip charge review');
+    });
+
+    it('suggests preparing an owner payout once a claim resolves with none on file', async () => {
+      prisma.booking.findUnique.mockResolvedValue(
+        makeClaimBooking({
+          incidentReports: [
+            makeIncident({ status: IncidentStatus.RESOLVED }),
+          ],
+          postTripCharges: [],
+          depositLedger: null,
+          ownerPayout: null,
+          claimCase: makeClaimCase({ status: ClaimCaseStatus.RESOLVED }),
+        }),
+      );
+
+      const summary = await service.getClaimSummaryForBooking(
+        BOOKING_ID,
+        RENTER_ID,
+        [UserRole.RENTER],
+      );
+
+      expect(summary.status).toBe('RESOLVED');
+      expect(summary.nextActions.map((action) => action.action)).toContain(
+        'Create or refresh owner payout',
+      );
+    });
+  });
+
+  describe('notification failure handling', () => {
+    it('logs and swallows participant notification errors during review', async () => {
+      const notificationService = {
+        createNotification: jest
+          .fn()
+          .mockRejectedValue(new Error('notification down')),
+      };
+      const loggingService = new IncidentsService(
+        prisma as unknown as PrismaService,
+        notificationService as any,
+      );
+      prisma.claimCase.findUnique.mockResolvedValue(makeClaimCase());
+      prisma.claimCase.update.mockResolvedValue(
+        makeClaimCase({
+          status: ClaimCaseStatus.PENDING_SECOND_REVIEW,
+          firstDecision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED,
+          firstReviewedBy: ADMIN_ID,
+          booking: { id: BOOKING_ID, renterId: RENTER_ID, ownerId: OWNER_ID },
+        }),
+      );
+
+      const result = await loggingService.reviewClaimCase(
+        'claim-case-uuid',
+        ADMIN_ID,
+        { decision: ClaimCaseOutcome.OWNER_CLAIM_APPROVED },
+      );
+
+      expect(result.status).toBe(ClaimCaseStatus.PENDING_SECOND_REVIEW);
+      expect(notificationService.createNotification).toHaveBeenCalled();
+    });
+
+    it('logs and swallows SLA escalation notification errors', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-05-25T00:15:00.000Z'));
+      const notificationService = {
+        createNotification: jest
+          .fn()
+          .mockRejectedValue(new Error('escalation down')),
+      };
+      const loggingService = new IncidentsService(
+        prisma as unknown as PrismaService,
+        notificationService as any,
+      );
+      prisma.claimCase.findMany.mockResolvedValue([
+        makeClaimCase({
+          id: 'overdue-error-case',
+          caseNumber: 'CLM-ERR',
+          assignedAdminId: ADMIN_ID,
+          status: ClaimCaseStatus.OPEN,
+          createdAt: new Date('2026-05-23T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-23T00:00:00.000Z'),
+        }),
+      ]);
+      prisma.user.findMany.mockResolvedValue([{ id: ADMIN_ID }]);
+      prisma.notification.findFirst.mockResolvedValue(null);
+
+      try {
+        await expect(
+          loggingService.sendClaimCaseSlaEscalationAlerts(),
+        ).resolves.toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(notificationService.createNotification).toHaveBeenCalled();
+    });
+
+    it('skips SLA escalation entirely when no notification service is configured', async () => {
+      const bareService = new IncidentsService(
+        prisma as unknown as PrismaService,
+      );
+
+      await expect(
+        bareService.sendClaimCaseSlaEscalationAlerts(),
+      ).resolves.toBeUndefined();
+      expect(prisma.claimCase.findMany).not.toHaveBeenCalled();
+    });
+
+    it('creates SLA escalation notifications without realtime push when admins are offline', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-05-25T00:15:00.000Z'));
+      const notificationService = {
+        createNotification: jest
+          .fn()
+          .mockResolvedValue({ id: 'notification-1' }),
+      };
+      const notificationGateway = {
+        isUserOnline: jest.fn().mockReturnValue(false),
+        sendToUser: jest.fn(),
+        broadcastToAdmins: jest.fn(),
+      };
+      const offlineService = new IncidentsService(
+        prisma as unknown as PrismaService,
+        notificationService as any,
+        notificationGateway as any,
+      );
+      prisma.claimCase.findMany.mockResolvedValue([
+        makeClaimCase({
+          id: 'overdue-offline-case',
+          caseNumber: 'CLM-OFFLINE',
+          assignedAdminId: ADMIN_ID,
+          status: ClaimCaseStatus.OPEN,
+          createdAt: new Date('2026-05-23T00:00:00.000Z'),
+          updatedAt: new Date('2026-05-23T00:00:00.000Z'),
+        }),
+      ]);
+      prisma.user.findMany.mockResolvedValue([{ id: ADMIN_ID }]);
+      prisma.notification.findFirst.mockResolvedValue(null);
+
+      try {
+        await offlineService.sendClaimCaseSlaEscalationAlerts();
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(notificationService.createNotification).toHaveBeenCalled();
+      expect(notificationGateway.sendToUser).not.toHaveBeenCalled();
+      // Overdue case still triggers the admin broadcast even when offline.
+      expect(notificationGateway.broadcastToAdmins).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips on-track claim cases when sending SLA escalations', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-05-24T01:30:00.000Z'));
+      const notificationService = { createNotification: jest.fn() };
+      const onTrackService = new IncidentsService(
+        prisma as unknown as PrismaService,
+        notificationService as any,
+      );
+      prisma.claimCase.findMany.mockResolvedValue([
+        makeClaimCase({
+          id: 'on-track-case',
+          status: ClaimCaseStatus.OPEN,
+          createdAt: new Date('2026-05-24T01:00:00.000Z'),
+          updatedAt: new Date('2026-05-24T01:00:00.000Z'),
+        }),
+      ]);
+
+      try {
+        await onTrackService.sendClaimCaseSlaEscalationAlerts();
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(notificationService.createNotification).not.toHaveBeenCalled();
+    });
+  });
 });

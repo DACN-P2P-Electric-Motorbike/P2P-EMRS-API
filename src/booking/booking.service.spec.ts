@@ -563,6 +563,41 @@ describe('BookingsService', () => {
       ).rejects.toThrow('Booking duration cannot exceed 30 days');
     });
 
+    it('should auto-approve and confirm the booking when the vehicle has instant book enabled', async () => {
+      const vehicle = createAvailableVehicle({ instantBook: true });
+      const pendingBooking = createMockBooking({
+        status: BookingStatus.PENDING,
+      });
+      const confirmedBooking = createMockBooking({
+        status: BookingStatus.CONFIRMED,
+        confirmedAt: new Date(),
+      });
+      mockVehicleDelegate.findUnique.mockResolvedValue(vehicle);
+      mockBookingDelegate.findMany.mockResolvedValue([]);
+      mockBookingDelegate.create.mockResolvedValue(pendingBooking);
+      mockBookingDelegate.update.mockResolvedValue(confirmedBooking);
+
+      const result = await service.createBooking(
+        RENTER_ID,
+        buildCreateBookingDto() as any,
+      );
+
+      expect(result.status).toBe(BookingStatus.CONFIRMED);
+      expect(mockBookingDelegate.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: pendingBooking.id },
+          data: expect.objectContaining({
+            status: BookingStatus.CONFIRMED,
+            confirmedAt: expect.any(Date),
+          }),
+        }),
+      );
+      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
+        'booking.approved',
+        expect.any(Object),
+      );
+    });
+
     it('should throw NotFoundException when vehicleId does not exist', async () => {
       // Arrange
       mockVehicleDelegate.findUnique.mockResolvedValue(null);
@@ -815,6 +850,66 @@ describe('BookingsService', () => {
       expect(preview.forfeitedRoadsideSupportAmount).toBe(15000);
       expect(preview.refundAmount).toBe(565000);
       expect(preview.forfeitedAmount).toBe(65000);
+    });
+
+    it('grants the owner a full refund and trust penalty in the cancellation preview', async () => {
+      const booking = {
+        ...createMockBooking({
+          status: BookingStatus.CONFIRMED,
+          startTime: futureDate(12),
+          totalPrice: 100000,
+          deposit: 500000,
+        }),
+        payment: { amount: 600000, status: PaymentStatus.COMPLETED },
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      const preview = await service.getCancellationRefundPreview(
+        BOOKING_ID,
+        BOOKING_OWNER_ID,
+      );
+
+      expect(preview.policyCode).toBe('OWNER_FULL_REFUND');
+      expect(preview.rentalRefundRate).toBe(1);
+      expect(preview.refundableRentalAmount).toBe(100000);
+      expect(preview.refundableDepositAmount).toBe(500000);
+      expect(preview.refundAmount).toBe(600000);
+      expect(preview.trustPenalty).toBe(10);
+    });
+
+    it('throws NotFoundException when previewing a missing booking', async () => {
+      mockBookingDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getCancellationRefundPreview('missing-booking', RENTER_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws BadRequestException when previewing a booking the user is not involved in', async () => {
+      const booking = {
+        ...createMockBooking({
+          renterId: RENTER_ID,
+          ownerId: BOOKING_OWNER_ID,
+        }),
+        payment: null,
+      };
+      mockBookingDelegate.findUnique.mockResolvedValue(booking);
+
+      await expect(
+        service.getCancellationRefundPreview(BOOKING_ID, THIRD_PARTY_ID),
+      ).rejects.toThrow(
+        'You can only preview cancellation for bookings you are involved in',
+      );
+    });
+
+    it('throws NotFoundException when cancelling a missing booking', async () => {
+      mockBookingDelegate.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.cancelBooking('missing-booking', RENTER_ID, {
+          reason: 'Gone',
+        } as any),
+      ).rejects.toThrow('Booking not found');
     });
 
     it('should set booking status to CANCELLED when called by the renter', async () => {

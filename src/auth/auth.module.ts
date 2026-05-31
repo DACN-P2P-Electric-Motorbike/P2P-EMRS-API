@@ -9,6 +9,7 @@ import { MailModule } from '../mail/mail.module';
 import { VehiclesModule } from 'src/vehicles';
 import { SecurityModule } from '../security/security.module';
 import { TrustScoreModule } from '../trust-score/trust-score.module';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { TrustScoreModule } from '../trust-score/trust-score.module';
     VehiclesModule,
     SecurityModule,
     TrustScoreModule,
+    UploadModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

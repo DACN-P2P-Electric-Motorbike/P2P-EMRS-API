@@ -135,6 +135,90 @@ describe('NotificationService', () => {
     expect(result.id).toBe('notification-1');
   });
 
+  it('logs and swallows Firebase initialization failures', async () => {
+    config.get.mockReturnValue('not-valid-json{');
+
+    await service.onModuleInit();
+
+    expect((service as any).fcmInitialized).toBe(false);
+    expect(firebaseState.initializeApp).not.toHaveBeenCalled();
+  });
+
+  it('logs when the async push delivery rejects without blocking creation', async () => {
+    (service as any).fcmInitialized = true;
+    prisma.$queryRaw.mockRejectedValueOnce(new Error('db down'));
+
+    const result = await service.createNotification({
+      receiverId: 'user-1',
+      type: NotificationType.SYSTEM_ALERT,
+      title: 'Title',
+      message: 'Message',
+    });
+
+    expect(result.id).toBe('notification-1');
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('rethrows when multicast push delivery fails', async () => {
+    (service as any).fcmInitialized = true;
+    prisma.$queryRaw.mockResolvedValue([{ token: 'good-token' }]);
+    firebaseState.sendEachForMulticast.mockRejectedValueOnce(
+      new Error('fcm offline'),
+    );
+
+    await expect(
+      (service as any).sendPushNotification({
+        receiverId: 'user-1',
+        type: NotificationType.SYSTEM_ALERT,
+        title: 'Title',
+        message: 'Message',
+      }),
+    ).rejects.toThrow('fcm offline');
+  });
+
+  it('sends a successful multicast without deactivating any tokens', async () => {
+    (service as any).fcmInitialized = true;
+    prisma.$queryRaw.mockResolvedValue([{ token: 'good-token' }]);
+    firebaseState.sendEachForMulticast.mockResolvedValueOnce({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true }],
+    });
+
+    await (service as any).sendPushNotification({
+      receiverId: 'user-1',
+      type: NotificationType.SYSTEM_ALERT,
+      title: 'Title',
+      message: 'Message',
+    });
+
+    expect(firebaseState.sendEachForMulticast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ bookingId: '' }),
+      }),
+    );
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('handles failed tokens that report no error object', async () => {
+    (service as any).fcmInitialized = true;
+    prisma.$queryRaw.mockResolvedValue([{ token: 'bad-token' }]);
+    firebaseState.sendEachForMulticast.mockResolvedValueOnce({
+      successCount: 0,
+      failureCount: 1,
+      responses: [{ success: false }],
+    });
+
+    await (service as any).sendPushNotification({
+      receiverId: 'user-1',
+      type: NotificationType.SYSTEM_ALERT,
+      title: 'Title',
+      message: 'Message',
+    });
+
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
   it('sends multicast push notifications and deactivates failed tokens', async () => {
     (service as any).fcmInitialized = true;
     prisma.$queryRaw.mockResolvedValue([
@@ -223,6 +307,14 @@ describe('NotificationService', () => {
     });
     expect(result.unreadCount).toBe(1);
     expect(result.notifications[0].id).toBe('notification-1');
+  });
+
+  it('applies default pagination when limit and offset are omitted', async () => {
+    await service.getUserNotifications('user-1');
+
+    expect(prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 50, skip: 0 }),
+    );
   });
 
   it('marks notifications read and deletes only the current users notifications', async () => {

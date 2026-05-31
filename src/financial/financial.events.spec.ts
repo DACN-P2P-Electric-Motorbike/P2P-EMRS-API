@@ -69,4 +69,24 @@ describe('FinancialEventListener', () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  it('swallows post-trip charge calculation failures', async () => {
+    financialService.recalculatePostTripChargesForBooking.mockRejectedValueOnce(
+      new Error('charge calc failed'),
+    );
+
+    await expect(
+      listener.handleTripCompleted(
+        new TripCompletedEvent(
+          'trip-1',
+          'booking-1',
+          'renter-1',
+          'owner-1',
+          'vehicle-1',
+          10,
+          60,
+        ),
+      ),
+    ).resolves.toBeUndefined();
+  });
 });
