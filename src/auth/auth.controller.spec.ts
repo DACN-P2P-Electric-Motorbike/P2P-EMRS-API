@@ -4,13 +4,16 @@
  * method with the right args (or returns the injected user for profile reads).
  */
 import { UserRole } from '@prisma/client';
+import { BadRequestException } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { UploadService } from '../upload/upload.service';
 import { UserEntity } from './entities/user.entity';
 
 describe('AuthController', () => {
   let controller: AuthController;
   let service: jest.Mocked<AuthService>;
+  let uploadService: jest.Mocked<UploadService>;
 
   const user = {
     id: 'user-1',
@@ -23,6 +26,7 @@ describe('AuthController', () => {
       register: jest.fn().mockResolvedValue({ accessToken: 'token' }),
       login: jest.fn().mockResolvedValue({ accessToken: 'token' }),
       updateProfile: jest.fn().mockResolvedValue(user),
+      updateAvatarUrl: jest.fn().mockResolvedValue(user),
       requestSensitiveActionOtp: jest
         .fn()
         .mockResolvedValue({ message: 'OTP sent' }),
@@ -32,7 +36,13 @@ describe('AuthController', () => {
       becomeOwner: jest.fn().mockResolvedValue({ id: 'vehicle-1' }),
     } as unknown as jest.Mocked<AuthService>;
 
-    controller = new AuthController(service);
+    uploadService = {
+      uploadFile: jest
+        .fn()
+        .mockResolvedValue({ url: 'https://cdn/avatars/x.jpg', key: 'k' }),
+    } as unknown as jest.Mocked<UploadService>;
+
+    controller = new AuthController(service, uploadService);
   });
 
   it('POST /register delegates to AuthService.register', async () => {
@@ -62,6 +72,24 @@ describe('AuthController', () => {
 
     await expect(controller.updateProfile('user-1', dto)).resolves.toBe(user);
     expect(service.updateProfile).toHaveBeenCalledWith('user-1', dto);
+  });
+
+  it('POST /upload-avatar uploads the file and saves the resulting URL', async () => {
+    const file = { originalname: 'a.jpg' } as Express.Multer.File;
+
+    await expect(controller.uploadAvatar('user-1', file)).resolves.toBe(user);
+    expect(uploadService.uploadFile).toHaveBeenCalledWith(file, 'avatars');
+    expect(service.updateAvatarUrl).toHaveBeenCalledWith(
+      'user-1',
+      'https://cdn/avatars/x.jpg',
+    );
+  });
+
+  it('POST /upload-avatar rejects a request without a file', async () => {
+    await expect(
+      controller.uploadAvatar('user-1', undefined as unknown as Express.Multer.File),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(uploadService.uploadFile).not.toHaveBeenCalled();
   });
 
   it('POST /request-sensitive-otp delegates to AuthService.requestSensitiveActionOtp', async () => {

@@ -5,6 +5,9 @@ import {
   Get,
   Body,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -14,8 +17,11 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthService } from './auth.service';
+import { UploadService } from '../upload/upload.service';
 import { RegisterDto, LoginDto } from './dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
@@ -36,7 +42,11 @@ import { CreateVehicleDto } from 'src/vehicles';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly uploadService: UploadService,
+  ) {}
+
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -121,6 +131,40 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ): Promise<UserEntity> {
     return this.authService.updateProfile(userId, dto);
+  }
+
+  @Post('upload-avatar')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload and set the current user avatar',
+    description:
+      'Uploads an image to storage and saves the resulting URL on the user profile.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Avatar uploaded and saved',
+    type: UserEntity,
+  })
+  async uploadAvatar(
+    @CurrentUser('id') userId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<UserEntity> {
+    if (!file) {
+      throw new BadRequestException('Avatar image file is required');
+    }
+    const uploaded = await this.uploadService.uploadFile(file, 'avatars');
+    return this.authService.updateAvatarUrl(userId, uploaded.url);
   }
 
   @Post('request-sensitive-otp')

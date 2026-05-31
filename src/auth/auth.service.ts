@@ -263,6 +263,29 @@ export class AuthService {
     return this.toUserEntity(user);
   }
 
+  /**
+   * Persist a new avatar URL for the authenticated user and return the
+   * refreshed profile entity. The actual file upload to S3 is handled by the
+   * controller via UploadService; this only stores the resulting URL.
+   */
+  async updateAvatarUrl(userId: string, avatarUrl: string): Promise<UserEntity> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl },
+    });
+
+    this.logger.log(`Avatar updated for user ${userId}`);
+    return this.toUserEntity(updated);
+  }
+
   async requestSensitiveActionOtp(
     userId: string,
     dto: RequestSensitiveActionOtpDto,

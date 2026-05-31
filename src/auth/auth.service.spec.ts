@@ -740,6 +740,34 @@ describe('AuthService — register / login / OTP flows', () => {
     });
   });
 
+  describe('updateAvatarUrl', () => {
+    it('throws when the user is missing', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await expect(
+        service.updateAvatarUrl(USER_ID, 'https://cdn/a.jpg'),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('persists the new avatar URL and returns the refreshed entity', async () => {
+      prisma.user.findUnique.mockResolvedValue(makePrismaUser());
+      prisma.user.update.mockResolvedValue(
+        makePrismaUser({ avatarUrl: 'https://cdn/a.jpg' }),
+      );
+
+      const result = await service.updateAvatarUrl(
+        USER_ID,
+        'https://cdn/a.jpg',
+      );
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { avatarUrl: 'https://cdn/a.jpg' },
+      });
+      expect(result.avatarUrl).toBe('https://cdn/a.jpg');
+    });
+  });
+
   // -------------------------------------------------------------------------
   // forgotPassword
   // -------------------------------------------------------------------------
