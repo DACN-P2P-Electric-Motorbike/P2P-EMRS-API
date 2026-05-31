@@ -97,4 +97,18 @@ describe('AdminUsersService', () => {
       'admin-1',
     );
   });
+
+  it('throws when adjusting trust score for a missing user', async () => {
+    repository.findById.mockResolvedValueOnce(null);
+
+    await expect(
+      service.adjustTrustScore(
+        'missing',
+        { delta: -5, reason: 'Confirmed report' },
+        'admin-1',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(trustScoreService.recordManualAdjustment).not.toHaveBeenCalled();
+  });
 });

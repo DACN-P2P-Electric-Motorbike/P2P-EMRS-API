@@ -1,11 +1,22 @@
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'node:crypto';
 import { IncidentEvidenceReceiptService } from './incident-evidence-receipt.service';
 
 const makeConfig = (values: Record<string, string | undefined>) =>
   ({
     get: jest.fn((key: string) => values[key]),
   }) as unknown as ConfigService;
+
+/** Builds a structurally-valid, correctly-signed receipt for an arbitrary payload. */
+const signReceipt = (secret: string, encodedPayload: string): string => {
+  const signedValue = `incident-upload:v1:${encodedPayload}`;
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(signedValue)
+    .digest('base64url');
+  return `${signedValue}:${signature}`;
+};
 
 describe('IncidentEvidenceReceiptService', () => {
   const uploaderId = 'renter-uuid';
@@ -54,5 +65,33 @@ describe('IncidentEvidenceReceiptService', () => {
     expect(() => new IncidentEvidenceReceiptService(makeConfig({}))).toThrow(
       'JWT_SECRET is required',
     );
+  });
+
+  it('rejects receipts with a malformed structure', () => {
+    const service = new IncidentEvidenceReceiptService(
+      makeConfig({ JWT_SECRET: 'receipt-secret' }),
+    );
+
+    expect(() => service.verify('only:two', uploaderId, url)).toThrow(
+      BadRequestException,
+    );
+    expect(() =>
+      service.verify('wrong:prefix:payload:signature', uploaderId, url),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      service.verify('incident-upload:v1::signature', uploaderId, url),
+    ).toThrow(BadRequestException);
+  });
+
+  it('rejects a correctly-signed receipt whose payload is not valid JSON', () => {
+    const secret = 'receipt-secret';
+    const service = new IncidentEvidenceReceiptService(
+      makeConfig({ JWT_SECRET: secret }),
+    );
+    const encodedPayload = Buffer.from('not-json').toString('base64url');
+
+    expect(() =>
+      service.verify(signReceipt(secret, encodedPayload), uploaderId, url),
+    ).toThrow(BadRequestException);
   });
 });
